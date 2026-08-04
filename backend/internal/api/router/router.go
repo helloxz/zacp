@@ -4,6 +4,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/zacp/zacp/internal/api/handlers"
+	"github.com/zacp/zacp/internal/api/middleware"
 	"github.com/zacp/zacp/internal/ws"
 )
 
@@ -16,6 +17,8 @@ func New(
 	eventBridge *ws.EventBridge,
 ) *gin.Engine {
 	r := gin.Default()
+	// 跨域访问（前端 dev 直连后端；开发默认允许所有来源，见 middleware.CORS）
+	r.Use(middleware.CORS())
 	r.GET("/healthz", chatHandler.Health)
 
 	v1 := r.Group("/api/v1")
@@ -32,6 +35,7 @@ func New(
 
 		// 会话管理
 		v1.POST("/sessions", sessionHandler.CreateSession)
+		v1.GET("/sessions", sessionHandler.ListRecentSessions)
 		v1.GET("/sessions/:id", sessionHandler.GetSession)
 		v1.DELETE("/sessions/:id", sessionHandler.DeleteSession)
 		v1.GET("/workspaces/:id/sessions", sessionHandler.ListSessions)
@@ -39,6 +43,10 @@ func New(
 		// 消息管理
 		v1.POST("/sessions/:id/messages", sessionHandler.SendMessage)
 		v1.GET("/sessions/:id/messages", sessionHandler.GetMessages)
+
+		// 会话配置项（模型/思考强度/mode 等，agent 支持才返回非空）
+		v1.GET("/sessions/:id/config-options", sessionHandler.GetConfigOptions)
+		v1.POST("/sessions/:id/config-options", sessionHandler.SetConfigOption)
 
 		// Chat（兼容旧 demo）
 		v1.POST("/chat", chatHandler.Chat)

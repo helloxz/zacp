@@ -32,6 +32,9 @@ type Bridge struct {
 	events []Event
 	// onEvent is optional live callback (e.g. print to stdout).
 	onEvent func(Event)
+	// permissionHandler 将权限请求转发给外部（如 WebSocket 前端交互式选择）；
+	// 非 autoApprove 时优先使用，未设置时维持默认（autoApprove 放行 / 否则取消）。
+	permissionHandler func(acp.RequestPermissionRequest) (acp.RequestPermissionResponse, error)
 }
 
 // Ensure Bridge implements acp.Client.
@@ -50,6 +53,15 @@ func (b *Bridge) SetOnEvent(fn func(Event)) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.onEvent = fn
+}
+
+// SetPermissionHandler sets an interactive permission handler (optional).
+// 当非 autoApprove 时，RequestPermission 会把请求交给该处理器（如转发 WebSocket 前端），
+// 由用户选择后回传 outcome；未设置时维持默认行为（见 RequestPermission）。
+func (b *Bridge) SetPermissionHandler(fn func(acp.RequestPermissionRequest) (acp.RequestPermissionResponse, error)) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.permissionHandler = fn
 }
 
 // Reset clears buffered events (call before each Prompt).
@@ -91,13 +103,24 @@ func (b *Bridge) push(e Event) {
 
 // RequestPermission implements acp.Client.
 func (b *Bridge) RequestPermission(ctx context.Context, params acp.RequestPermissionRequest) (acp.RequestPermissionResponse, error) {
+	b.mu.Lock()
+	autoApprove := b.autoApprove
+	handler := b.permissionHandler
+	b.mu.Unlock()
+
+	// 交互式权限：非自动批准且设置了处理器时，转发给外部（WebSocket 前端弹窗），
+	// 由用户选择后回传 outcome；否则走默认（autoApprove 放行 / 无交互则取消）。
+	if handler != nil && !autoApprove {
+		return handler(params)
+	}
+
 	title := ""
 	if params.ToolCall.Title != nil {
 		title = *params.ToolCall.Title
 	}
-	b.log.Info("permission requested", "title", title, "options", len(params.Options))
+	b.log.Info("permission requested", "title", title, "options", len(params.Options), "autoApprove", autoApprove)
 
-	if b.autoApprove {
+	if autoApprove {
 		for _, o := range params.Options {
 			if o.Kind == acp.PermissionOptionKindAllowOnce || o.Kind == acp.PermissionOptionKindAllowAlways {
 				return acp.RequestPermissionResponse{
@@ -119,7 +142,7 @@ func (b *Bridge) RequestPermission(ctx context.Context, params acp.RequestPermis
 		}, nil
 	}
 
-	// Non-auto: cancel (API demo cannot interactively prompt yet).
+	// Non-auto: cancel (no interactive handler configured).
 	return acp.RequestPermissionResponse{
 		Outcome: acp.RequestPermissionOutcome{Cancelled: &acp.RequestPermissionOutcomeCancelled{}},
 	}, nil

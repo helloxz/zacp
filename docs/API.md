@@ -8,6 +8,7 @@
 - **WebSocket**: `ws://localhost:8680/api/v1/ws`
 - **Content-Type**: `application/json`
 - **时间格式**: ISO 8601 (UTC)
+- **CORS**: 后端已全局启用跨域中间件（开发默认 `Access-Control-Allow-Origin: *`，支持 OPTIONS 预检）；前端跨端口直连后端（如 dev 页 `:8681` → API `:8680`）无需额外配置
 
 ---
 
@@ -21,14 +22,15 @@ GET /agents
 
 **响应**:
 ```json
-[
-  {
-    "agentId": "reasonix",
-    "name": "Reasonix",
-    "running": true,
-    "sessionId": "sess_xxx"
-  }
-]
+{
+  "agents": [
+    {
+      "agentId": "reasonix",
+      "name": "Reasonix",
+      "running": true
+    }
+  ]
+}
 ```
 
 ### 获取 Agent 状态
@@ -49,16 +51,20 @@ GET /workspaces
 
 **响应**:
 ```json
-[
-  {
-    "id": 1,
-    "path": "/home/user/project",
-    "name": "my-project",
-    "lastUsed": "2025-01-21T10:30:00Z",
-    "createdAt": "2025-01-20T08:00:00Z",
-    "updatedAt": "2025-01-21T10:30:00Z"
-  }
-]
+{
+  "workspaces": [
+    {
+      "id": 1,
+      "path": "/home/user/project",
+      "name": "my-project",
+      "isDefault": false,
+      "archived": false,
+      "lastUsed": "2025-01-21T10:30:00Z",
+      "createdAt": "2025-01-20T08:00:00Z",
+      "updatedAt": "2025-01-21T10:30:00Z"
+    }
+  ]
+}
 ```
 
 ### 创建工作目录
@@ -105,10 +111,11 @@ POST /sessions
 ```json
 {
   "workspaceId": 1,
-  "agentId": "reasonix",
-  "title": "新会话"  // 可选
+  "agentId": "reasonix"
 }
 ```
+
+**说明**: `workspaceId` **可选**（缺省/0 时回退默认工作区：`is_default` 标记 → `session.default_cwd` 路径 → 按 default_cwd 新建）；`agentId` 必填。
 
 **响应**:
 ```json
@@ -132,6 +139,38 @@ POST /sessions
 GET /sessions/:id
 ```
 
+### 获取最近活跃会话（全局列表，侧栏数据源）
+
+```
+GET /sessions?limit=50
+```
+
+**查询参数**:
+- `limit`: 每页数量，默认 50，上限 200
+
+**响应**:
+```json
+{
+  "sessions": [
+    {
+      "id": 1,
+      "workspaceId": 1,
+      "agentId": "reasonix",
+      "acpSessionId": "acp_sess_xxx",
+      "title": "会话标题",
+      "status": "active",
+      "createdAt": "2025-01-21T10:30:00Z",
+      "updatedAt": "2025-01-21T10:35:00Z",
+      "workspace": {
+        "id": 1,
+        "path": "/home/user/project",
+        "name": "my-project"
+      }
+    }
+  ]
+}
+```
+
 ### 删除会话
 
 ```
@@ -146,16 +185,18 @@ GET /workspaces/:id/sessions
 
 **响应**:
 ```json
-[
-  {
-    "id": 1,
-    "workspaceId": 1,
-    "agentId": "reasonix",
-    "title": "会话标题",
-    "status": "active",
-    "createdAt": "2025-01-21T10:30:00Z"
-  }
-]
+{
+  "sessions": [
+    {
+      "id": 1,
+      "workspaceId": 1,
+      "agentId": "reasonix",
+      "title": "会话标题",
+      "status": "active",
+      "createdAt": "2025-01-21T10:30:00Z"
+    }
+  ]
+}
 ```
 
 ---
@@ -178,47 +219,54 @@ POST /sessions/:id/messages
 **响应**:
 ```json
 {
-  "id": 1,
-  "sessionId": 1,
-  "role": "user",
-  "content": "帮我写一个函数",
-  "createdAt": "2025-01-21T10:30:00Z"
+  "message": {
+    "id": 1,
+    "sessionId": 1,
+    "role": "user",
+    "content": "帮我写一个函数",
+    "createdAt": "2025-01-21T10:30:00Z"
+  }
 }
 ```
 
 **说明**: 
-- 此接口为同步接口，会等待 Agent 响应完成后返回
+- 此接口为同步接口，会等待 Agent 响应完成后返回（返回的 `message` 为 assistant 回复）
 - 实时流式响应请使用 WebSocket
 
 ### 获取会话消息列表
 
 ```
-GET /sessions/:id/messages?page=1&pageSize=50
+GET /sessions/:id/messages?limit=50&offset=0
 ```
 
 **查询参数**:
-- `page`: 页码，默认 1
-- `pageSize`: 每页数量，默认 50
+- `limit`: 每页数量，默认 50
+- `offset`: 偏移量，默认 0
 
 **响应**:
 ```json
-[
-  {
-    "id": 1,
-    "sessionId": 1,
-    "role": "user",
-    "content": "用户消息",
-    "createdAt": "2025-01-21T10:30:00Z"
-  },
-  {
-    "id": 2,
-    "sessionId": 1,
-    "role": "assistant",
-    "content": "助手回复",
-    "events": "{...}",
-    "createdAt": "2025-01-21T10:30:05Z"
-  }
-]
+{
+  "messages": [
+    {
+      "id": 1,
+      "sessionId": 1,
+      "role": "user",
+      "content": "用户消息",
+      "createdAt": "2025-01-21T10:30:00Z"
+    },
+    {
+      "id": 2,
+      "sessionId": 1,
+      "role": "assistant",
+      "content": "助手回复",
+      "events": "{...}",
+      "createdAt": "2025-01-21T10:30:05Z"
+    }
+  ],
+  "total": 2,
+  "limit": 50,
+  "offset": 0
+}
 ```
 
 **消息角色 (role)**:
@@ -228,12 +276,63 @@ GET /sessions/:id/messages?page=1&pageSize=50
 
 ---
 
+## 4.1 会话配置项 (Config Options)
+
+> 来自 ACP `session/new` 响应的 `configOptions`（模型 / 思考强度 / mode 等）。
+> Agent 不支持时返回空数组，前端隐藏配置 UI。
+
+### 获取会话配置项
+
+```
+GET /sessions/:id/config-options
+```
+
+**响应**:
+```json
+{
+  "configOptions": [
+    {
+      "id": "model",
+      "name": "模型",
+      "category": "model",
+      "type": "select",
+      "currentValue": "gpt-4o",
+      "options": [
+        { "value": "gpt-4o", "name": "GPT-4o" },
+        { "value": "gpt-4o-mini", "name": "GPT-4o mini" }
+      ]
+    },
+    {
+      "id": "thought_level",
+      "name": "深度思考",
+      "type": "boolean",
+      "currentValue": true
+    }
+  ]
+}
+```
+
+### 设置会话配置项
+
+```
+POST /sessions/:id/config-options
+```
+
+**请求体**:
+```json
+{ "optionId": "model", "valueId": "gpt-4o" }
+```
+
+**说明**: `select` 型传 `valueId`（选项 value）；`boolean` 型传 `"true"` / `"false"`。后端同步调 ACP `session/set_config_option` 并回写 `currentValue`。
+
+---
+
 ## 5. WebSocket 实时通信
 
 ### 连接
 
 ```
-ws://localhost:8080/api/v1/ws
+ws://localhost:8680/api/v1/ws
 ```
 
 ### 消息格式
@@ -246,16 +345,20 @@ ws://localhost:8080/api/v1/ws
 ```json
 {
   "type": "prompt",
-  "sessionId": "1",
+  "sessionId": "acp_sess_xxx",
+  "agentId": "reasonix",
   "message": "帮我写代码"
 }
 ```
+
+**说明**: `sessionId` 为 **ACP session id**（`GET /sessions/:id` 响应的 `acpSessionId`），非数据库 id；`agentId` 用于无绑定连接动态绑定。服务端会先落库用户消息（首条自动生成会话标题），Agent 完成后落库助手回复并广播 `turn.done`。
 
 #### 取消操作 (cancel)
 ```json
 {
   "type": "cancel",
-  "sessionId": "1"
+  "sessionId": "acp_sess_xxx",
+  "agentId": "reasonix"
 }
 ```
 
@@ -291,18 +394,20 @@ ws://localhost:8080/api/v1/ws
 {
   "type": "event",
   "event": {
-    "type": "agentMessageChunk",
-    "content": { "text": "你好" }
+    "type": "agent_message",
+    "text": "你好"
   }
 }
 ```
 
-**事件类型**:
-- `agentMessageChunk`: Agent 消息片段（流式文本）
-- `toolCall`: 工具调用开始
-- `toolCallUpdate`: 工具调用更新
+**事件类型**（`event.type`，对齐 `internal/acp/client` 的简化事件）:
+- `agent_message`: Agent 文本片段（流式文本，前端追加到回复末尾）
+- `agent_thought`: Agent 思考片段
+- `user_message`: 用户消息回显
+- `tool_call`: 工具调用开始（含 `toolId` / `title` / `status`）
+- `tool_call_update`: 工具调用状态更新
 - `plan`: 计划步骤
-- `turn_complete`: 一轮对话完成
+- `other`: 未识别更新
 
 #### 轮次完成 (turn.done)
 ```json
@@ -317,14 +422,20 @@ ws://localhost:8080/api/v1/ws
 ```json
 {
   "type": "permission.request",
-  "permissionId": "perm_xxx",
-  "toolCall": { "name": "write_file", "args": {...} },
+  "permissionId": "perm-1750000000000000000",
+  "toolCall": {
+    "toolCallId": "call_xxx",
+    "title": "写入文件",
+    "status": "running"
+  },
   "options": [
-    { "id": "allow", "label": "允许" },
-    { "id": "deny", "label": "拒绝" }
+    { "optionId": "allow", "name": "允许一次", "kind": "allow_once" },
+    { "optionId": "deny", "name": "拒绝", "kind": "deny_once" }
   ]
 }
 ```
+
+**说明**: 前端弹窗展示 toolCall 与 options，用户选择后回传 `permission` 消息（`permissionId` + `optionId`）；后端 60s 未收到回传自动取消（Cancelled outcome）。非 `auto_approve` 配置下才走此交互。
 
 #### 错误 (error)
 ```json

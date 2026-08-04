@@ -3,10 +3,7 @@
  *
  * 用法：
  * ```ts
- * import { http, ApiError } from '@/api'
- *
- * const { agents } = await http.get<{ agents: Agent[] }>('/api/v1/agents')
- * await http.post('/api/v1/sessions', { body: { agentId: 'reasonix' } })
+ * import { http, ApiError, fetchAgents, fetchRecentSessions } from '@/api'
  * ```
  *
  * 基础域名由 `VITE_API_BASE_URL` 自动拼接（见 `@/config/env`），
@@ -14,3 +11,129 @@
  */
 export { http, request } from './http'
 export { ApiError, type ApiErrorBody, type RequestOptions, type HttpMethod } from './types'
+
+// ---------------------------------------------------------------------------
+// 业务 API（P1 起使用；每个函数对应一个后端端点，返回解包后的数据）
+// ---------------------------------------------------------------------------
+
+import { http } from './http'
+import type {
+  Agent,
+  ChatMessage,
+  ChatSession,
+  ConfigOption,
+  MessagePage,
+  Workspace,
+} from '@/types/models'
+
+/** GET /api/v1/agents — Agent 状态列表 */
+export async function fetchAgents(): Promise<Agent[]> {
+  const data = await http.get<{ agents: Agent[] }>('/api/v1/agents')
+  return data.agents
+}
+
+/** GET /api/v1/workspaces — 工作区列表（按最近使用排序） */
+export async function fetchWorkspaces(): Promise<Workspace[]> {
+  const data = await http.get<{ workspaces: Workspace[] }>('/api/v1/workspaces')
+  return data.workspaces
+}
+
+/** POST /api/v1/workspaces — 创建工作区（校验路径存在） */
+export async function createWorkspace(path: string): Promise<Workspace> {
+  const data = await http.post<{ workspace: Workspace }>('/api/v1/workspaces', {
+    body: { path },
+  })
+  return data.workspace
+}
+
+/** GET /api/v1/sessions — 最近活跃会话（侧栏数据源） */
+export async function fetchRecentSessions(limit = 50): Promise<ChatSession[]> {
+  const data = await http.get<{ sessions: ChatSession[] }>('/api/v1/sessions', {
+    query: { limit },
+  })
+  return data.sessions
+}
+
+/** GET /api/v1/workspaces/:id/sessions — 按工作区列会话 */
+export async function fetchSessionsByWorkspace(
+  workspaceId: number,
+): Promise<ChatSession[]> {
+  const data = await http.get<{ sessions: ChatSession[] }>(
+    `/api/v1/workspaces/${workspaceId}/sessions`,
+  )
+  return data.sessions
+}
+
+/** GET /api/v1/sessions/:id — 会话详情 */
+export async function fetchSession(sessionId: number): Promise<ChatSession> {
+  const data = await http.get<{ session: ChatSession }>(
+    `/api/v1/sessions/${sessionId}`,
+  )
+  return data.session
+}
+
+/** POST /api/v1/sessions — 创建会话；workspaceId 缺省时后端回退默认工作区 */
+export interface CreateSessionInput {
+  agentId: string
+  workspaceId?: number
+}
+
+export async function createSession(
+  input: CreateSessionInput,
+): Promise<ChatSession> {
+  const data = await http.post<{ session: ChatSession }>('/api/v1/sessions', {
+    body: { agentId: input.agentId, workspaceId: input.workspaceId ?? 0 },
+  })
+  return data.session
+}
+
+/** DELETE /api/v1/sessions/:id — 删除会话（软删除 + 停 agent） */
+export async function deleteSession(sessionId: number): Promise<void> {
+  await http.delete(`/api/v1/sessions/${sessionId}`)
+}
+
+/** GET /api/v1/sessions/:id/messages — 消息历史（分页） */
+export async function fetchMessages(
+  sessionId: number,
+  limit = 50,
+  offset = 0,
+): Promise<MessagePage> {
+  return http.get<MessagePage>(
+    `/api/v1/sessions/${sessionId}/messages`,
+    { query: { limit, offset } },
+  )
+}
+
+/** POST /api/v1/sessions/:id/messages — 同步发送并等待回复（P1 用；P2 换 WebSocket 流式） */
+export async function sendMessage(
+  sessionId: number,
+  content: string,
+  signal?: AbortSignal,
+): Promise<ChatMessage> {
+  const data = await http.post<{ message: ChatMessage }>(
+    `/api/v1/sessions/${sessionId}/messages`,
+    { body: { content }, signal },
+  )
+  return data.message
+}
+
+/** GET /api/v1/sessions/:id/config-options — 会话配置项（模型/思考强度/mode；agent 不支持时为空数组） */
+export async function fetchConfigOptions(
+  sessionId: number,
+): Promise<ConfigOption[]> {
+  const data = await http.get<{ configOptions: ConfigOption[] }>(
+    `/api/v1/sessions/${sessionId}/config-options`,
+  )
+  return data.configOptions
+}
+
+/** POST /api/v1/sessions/:id/config-options — 设置会话配置项（如切换模型） */
+export async function setConfigOption(
+  sessionId: number,
+  optionId: string,
+  valueId: string,
+): Promise<void> {
+  await http.post(`/api/v1/sessions/${sessionId}/config-options`, {
+    body: { optionId, valueId },
+  })
+}

@@ -93,12 +93,12 @@ func main() {
 	wsHandler := ws.NewHandler(wsHub, log)
 
 	// 创建 EventBridge
-	eventBridge := ws.NewEventBridge(wsHandler, mgr, log)
+	eventBridge := ws.NewEventBridge(wsHandler, mgr, sessionRepo, messageRepo, log)
 	log.Info("event bridge created")
 
 	// 创建 Service
 	workspaceSvc := service.NewWorkspaceService(workspaceRepo)
-	sessionSvc := service.NewSessionService(workspaceRepo, sessionRepo, messageRepo, mgr)
+	sessionSvc := service.NewSessionService(workspaceRepo, sessionRepo, messageRepo, mgr, cfg.Session.DefaultCwd)
 
 	// 创建 Handler
 	workspaceHandler := handlers.NewWorkspaceHandler(workspaceSvc)

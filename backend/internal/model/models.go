@@ -38,9 +38,12 @@ type Session struct {
 	ACPSessionID string         `gorm:"" json:"acpSessionId,omitempty"`    // ACP 协议层 session ID
 	Title        string         `gorm:"" json:"title"`                     // 会话标题（可从首轮对话生成）
 	Status       SessionStatus  `gorm:"index;default:'active'" json:"status"`
-	CreatedAt    time.Time      `json:"createdAt"`
-	UpdatedAt    time.Time      `json:"updatedAt"`
-	DeletedAt    gorm.DeletedAt `gorm:"index" json:"-"`
+	// ConfigOptions 会话配置项（模型/思考强度/mode 等）原始 JSON（model.ConfigOptionDTO 数组）；
+	// 由 service 转换存储，不直接暴露给前端 JSON（经 /config-options 端点返回）。
+	ConfigOptions string    `gorm:"type:text" json:"-"`
+	CreatedAt     time.Time `json:"createdAt"`
+	UpdatedAt     time.Time `json:"updatedAt"`
+	DeletedAt     gorm.DeletedAt `gorm:"index" json:"-"`
 
 	// 关联
 	Workspace Workspace `gorm:"foreignKey:WorkspaceID" json:"workspace,omitempty"`

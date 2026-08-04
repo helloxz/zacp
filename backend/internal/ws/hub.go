@@ -174,16 +174,19 @@ func (c *Client) Send(msg ServerMessage) {
 func (c *Client) handleMessage(ctx context.Context, msg ClientMessage) {
 	c.mu.Lock()
 	bridge := c.bridge
-	sessionID := c.sessionID
-	agentID := c.agentID
 	c.mu.Unlock()
 
 	switch msg.Type {
 	case MsgTypePrompt:
 		c.hub.log.Info("received prompt", "sessionID", msg.SessionID, "message", msg.Message)
+		// 无绑定连接（GET /api/v1/ws）通过消息里的 sessionId/agentId 动态绑定，
+		// 使后续事件/turn.done 广播（按 GetSessionID 匹配）能回送到本连接。
+		if msg.SessionID != "" {
+			c.BindSession(msg.SessionID, msg.AgentID)
+		}
 		if bridge != nil {
 			go func() {
-				if err := bridge.HandlePrompt(ctx, sessionID, agentID, msg.Message); err != nil {
+				if err := bridge.HandlePrompt(ctx, msg.SessionID, msg.AgentID, msg.Message); err != nil {
 					c.hub.log.Error("handle prompt error", "error", err)
 					c.Send(ServerMessage{
 						Type:    MsgTypeError,
@@ -196,9 +199,12 @@ func (c *Client) handleMessage(ctx context.Context, msg ClientMessage) {
 
 	case MsgTypeCancel:
 		c.hub.log.Info("received cancel", "sessionID", msg.SessionID)
+		if msg.SessionID != "" {
+			c.BindSession(msg.SessionID, msg.AgentID)
+		}
 		if bridge != nil {
 			go func() {
-				if err := bridge.HandleCancel(ctx, sessionID, agentID); err != nil {
+				if err := bridge.HandleCancel(ctx, msg.SessionID, msg.AgentID); err != nil {
 					c.hub.log.Error("handle cancel error", "error", err)
 				}
 			}()
@@ -206,7 +212,9 @@ func (c *Client) handleMessage(ctx context.Context, msg ClientMessage) {
 
 	case MsgTypePermission:
 		c.hub.log.Info("received permission", "permissionID", msg.PermissionID, "optionID", msg.OptionID)
-		// TODO: 实现权限响应逻辑
+		if bridge != nil && msg.PermissionID != "" && msg.OptionID != "" {
+			bridge.ResolvePermission(msg.PermissionID, msg.OptionID)
+		}
 
 	case MsgTypePing:
 		c.Send(ServerMessage{Type: MsgTypePong})

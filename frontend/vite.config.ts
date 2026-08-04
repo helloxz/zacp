@@ -51,9 +51,9 @@ export default defineConfig({
     port: 8681,
     strictPort: true,
     proxy: {
-      // 开发期把 REST/WS 前缀转到后端（默认 8080）
+      // 开发期把 REST/WS 前缀转到后端（默认 8680，与 config.toml / cmd/server 默认一致）
       '/api': {
-        target: 'http://127.0.0.1:8080',
+        target: 'http://127.0.0.1:8680',
         changeOrigin: true,
         ws: true,
       },

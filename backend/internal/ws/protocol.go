@@ -23,9 +23,11 @@ const (
 type ClientMessage struct {
 	Type MessageType `json:"type"`
 
-	// prompt 消息字段
+	// prompt / cancel 消息字段
 	SessionID string `json:"sessionId,omitempty"`
-	Message   string `json:"message,omitempty"`
+	// AgentID 用于无绑定连接（GET /api/v1/ws）时标识 agent；绑定连接可省略。
+	AgentID string `json:"agentId,omitempty"`
+	Message string `json:"message,omitempty"`
 
 	// permission 消息字段
 	PermissionID string `json:"permissionId,omitempty"`

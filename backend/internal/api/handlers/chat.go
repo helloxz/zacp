@@ -71,7 +71,7 @@ func (h *ChatHandler) Chat(c *gin.Context) {
 
 	if sessionID == "" {
 		// 尝试创建 session
-		newSessionID, err := h.Mgr.CreateSession(c.Request.Context(), agentID, "")
+		newSessionID, _, err := h.Mgr.CreateSession(c.Request.Context(), agentID, "")
 		if err != nil {
 			c.JSON(http.StatusBadGateway, gin.H{
 				"error": gin.H{"code": "session_error", "message": err.Error()},

@@ -50,6 +50,17 @@ func (r *WorkspaceRepository) List() ([]model.Workspace, error) {
 	return workspaces, err
 }
 
+// GetDefault 获取默认工作区（is_default = true；config session.default_cwd 对应的路径）。
+// 未标记时返回 error，调用方回退到 defaultCwd 路径。
+func (r *WorkspaceRepository) GetDefault() (*model.Workspace, error) {
+	var workspace model.Workspace
+	err := r.db.Where("is_default = ?", true).First(&workspace).Error
+	if err != nil {
+		return nil, err
+	}
+	return &workspace, nil
+}
+
 // Update 更新工作目录
 func (r *WorkspaceRepository) Update(workspace *model.Workspace) error {
 	return r.db.Save(workspace).Error
@@ -101,6 +112,16 @@ func (r *SessionRepository) ListByWorkspace(workspaceID uint) ([]model.Session, 
 	return sessions, err
 }
 
+// ListRecent 列出最近活跃的会话（全局，跨工作区；预加载 Workspace 供前端分组展示）。
+func (r *SessionRepository) ListRecent(limit int) ([]model.Session, error) {
+	var sessions []model.Session
+	err := r.db.Preload("Workspace").
+		Order("updated_at DESC").
+		Limit(limit).
+		Find(&sessions).Error
+	return sessions, err
+}
+
 // Update 更新会话
 func (r *SessionRepository) Update(session *model.Session) error {
 	return r.db.Save(session).Error
@@ -111,6 +132,23 @@ func (r *SessionRepository) UpdateACPSessionID(id uint, acpSessionID string) err
 	return r.db.Model(&model.Session{}).
 		Where("id = ?", id).
 		Update("acp_session_id", acpSessionID).Error
+}
+
+// GetByACPSessionID 根据 ACP 协议层 session ID 获取会话（WS prompt 落库路由用）
+func (r *SessionRepository) GetByACPSessionID(acpSessionID string) (*model.Session, error) {
+	var session model.Session
+	err := r.db.Where("acp_session_id = ?", acpSessionID).First(&session).Error
+	if err != nil {
+		return nil, err
+	}
+	return &session, nil
+}
+
+// Touch 更新会话最近活跃时间（WS turn 完成后驱动侧栏排序）
+func (r *SessionRepository) Touch(id uint) error {
+	return r.db.Model(&model.Session{}).
+		Where("id = ?", id).
+		Update("updated_at", time.Now()).Error
 }
 
 // UpdateStatus 更新会话状态
@@ -125,6 +163,13 @@ func (r *SessionRepository) UpdateTitle(id uint, title string) error {
 	return r.db.Model(&model.Session{}).
 		Where("id = ?", id).
 		Update("title", title).Error
+}
+
+// UpdateConfigOptions 更新会话配置项 JSON（模型/思考强度/mode 等）
+func (r *SessionRepository) UpdateConfigOptions(id uint, configJSON string) error {
+	return r.db.Model(&model.Session{}).
+		Where("id = ?", id).
+		Update("config_options", configJSON).Error
 }
 
 // Delete 删除会话（软删除）

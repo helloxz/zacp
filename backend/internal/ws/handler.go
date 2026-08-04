@@ -1,6 +1,7 @@
 package ws
 
 import (
+	"context"
 	"log/slog"
 	"net/http"
 
@@ -34,8 +35,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request, bridge *Even
 	client := h.hub.NewClient(conn)
 	client.SetBridge(bridge)
 
-	// 启动读写协程
-	ctx := r.Context()
+	// 注意：不能用 r.Context() 作为连接生命周期——HTTP handler 返回后 request context
+	// 会被取消，导致读写协程立即退出、连接关闭。必须使用独立的 context，
+	// 连接的生命周期由 conn 关闭（ReadPump 出错 → unregister → 关 send → WritePump 退出）驱动。
+	ctx := context.Background()
 	go client.WritePump(ctx)
 	go client.ReadPump(ctx)
 
@@ -64,8 +67,8 @@ func (h *Handler) ServeHTTPWithSession(sessionID, agentID string, bridge *EventB
 			AgentID:   agentID,
 		})
 
-		// 启动读写协程
-		ctx := r.Context()
+		// 与 ServeHTTP 同理：使用独立 context，不能用 r.Context()
+		ctx := context.Background()
 		go client.WritePump(ctx)
 		go client.ReadPump(ctx)
 

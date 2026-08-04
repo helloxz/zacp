@@ -97,7 +97,7 @@ func main() {
 	})
 
 	// 创建 session
-	sessionID, err := mgr.CreateSession(ctx, *agentID, *cwd)
+	sessionID, _, err := mgr.CreateSession(ctx, *agentID, *cwd)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "failed to create session: %v\n", err)
 		os.Exit(1)

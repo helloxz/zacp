@@ -171,14 +171,15 @@ func (m *Manager) StopAgent(agentID string) error {
 	return nil
 }
 
-// CreateSession 在指定 agent 上创建新 session。
-func (m *Manager) CreateSession(ctx context.Context, agentID, cwd string) (string, error) {
+// CreateSession 在指定 agent 上创建新 session，返回 session ID 与 agent 下发的配置项
+// （模型/思考强度/mode 等，来自 session/new 响应的 configOptions）。
+func (m *Manager) CreateSession(ctx context.Context, agentID, cwd string) (string, []acp.SessionConfigOption, error) {
 	m.mu.Lock()
 	conn, exists := m.agents[agentID]
 	m.mu.Unlock()
 
 	if !exists {
-		return "", fmt.Errorf("agent '%s' not started", agentID)
+		return "", nil, fmt.Errorf("agent '%s' not started", agentID)
 	}
 
 	provider, _ := m.registry.Get(agentID)
@@ -186,11 +187,33 @@ func (m *Manager) CreateSession(ctx context.Context, agentID, cwd string) (strin
 		cwd = provider.ResolveCwd(m.defaultCwd)
 	}
 
-	sessionID, err := conn.CreateSession(ctx, cwd)
+	sessionID, configOptions, err := conn.CreateSession(ctx, cwd)
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
-	return string(sessionID), nil
+	return string(sessionID), configOptions, nil
+}
+
+// SetSessionConfigOption 设置会话配置项（如切换模型/思考强度/mode）。
+func (m *Manager) SetSessionConfigOption(ctx context.Context, agentID, sessionID, configID, valueID string) error {
+	m.mu.Lock()
+	conn, exists := m.agents[agentID]
+	m.mu.Unlock()
+	if !exists {
+		return fmt.Errorf("agent '%s' not started", agentID)
+	}
+	return conn.SetSessionConfigOption(ctx, sessionID, configID, valueID)
+}
+
+// SetSessionConfigOptionBoolean 设置会话配置项（boolean 型开关）。
+func (m *Manager) SetSessionConfigOptionBoolean(ctx context.Context, agentID, sessionID, configID string, value bool) error {
+	m.mu.Lock()
+	conn, exists := m.agents[agentID]
+	m.mu.Unlock()
+	if !exists {
+		return fmt.Errorf("agent '%s' not started", agentID)
+	}
+	return conn.SetSessionConfigOptionBoolean(ctx, sessionID, configID, value)
 }
 
 // LoadSession 恢复已有 session（用于会话恢复）。
@@ -382,12 +405,12 @@ func (c *AgentConnection) Start(ctx context.Context) error {
 }
 
 // CreateSession 创建新 session。
-func (c *AgentConnection) CreateSession(ctx context.Context, cwd string) (acp.SessionId, error) {
+func (c *AgentConnection) CreateSession(ctx context.Context, cwd string) (acp.SessionId, []acp.SessionConfigOption, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
 	if !c.started || c.conn == nil {
-		return "", fmt.Errorf("agent not started")
+		return "", nil, fmt.Errorf("agent not started")
 	}
 
 	sess, err := c.conn.NewSession(ctx, acp.NewSessionRequest{
@@ -395,7 +418,7 @@ func (c *AgentConnection) CreateSession(ctx context.Context, cwd string) (acp.Se
 		McpServers: []acp.McpServer{},
 	})
 	if err != nil {
-		return "", fmt.Errorf("create session: %w", err)
+		return "", nil, fmt.Errorf("create session: %w", err)
 	}
 
 	c.currentSession = &SessionState{
@@ -404,8 +427,8 @@ func (c *AgentConnection) CreateSession(ctx context.Context, cwd string) (acp.Se
 		Created: time.Now(),
 	}
 
-	c.log.Info("session created", "agent", c.provider.ID, "sessionId", sess.SessionId, "cwd", cwd)
-	return sess.SessionId, nil
+	c.log.Info("session created", "agent", c.provider.ID, "sessionId", sess.SessionId, "cwd", cwd, "configOptions", len(sess.ConfigOptions))
+	return sess.SessionId, sess.ConfigOptions, nil
 }
 
 // LoadSession 恢复已有 session。
@@ -490,6 +513,51 @@ func (c *AgentConnection) Cancel(ctx context.Context, sessionID acp.SessionId) e
 	}
 
 	return c.conn.Cancel(ctx, acp.CancelNotification{SessionId: sessionID})
+}
+
+// SetSessionConfigOption 设置会话配置项（select 型，如模型/思考强度/mode 切换）。
+func (c *AgentConnection) SetSessionConfigOption(ctx context.Context, sessionID, configID, valueID string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if !c.started || c.conn == nil {
+		return fmt.Errorf("agent not started")
+	}
+
+	_, err := c.conn.SetSessionConfigOption(ctx, acp.SetSessionConfigOptionRequest{
+		ValueId: &acp.SetSessionConfigOptionValueId{
+			SessionId: acp.SessionId(sessionID),
+			ConfigId:  acp.SessionConfigId(configID),
+			Value:     acp.SessionConfigValueId(valueID),
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("set config option: %w", err)
+	}
+	return nil
+}
+
+// SetSessionConfigOptionBoolean 设置会话配置项（boolean 型开关）。
+func (c *AgentConnection) SetSessionConfigOptionBoolean(ctx context.Context, sessionID, configID string, value bool) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if !c.started || c.conn == nil {
+		return fmt.Errorf("agent not started")
+	}
+
+	_, err := c.conn.SetSessionConfigOption(ctx, acp.SetSessionConfigOptionRequest{
+		Boolean: &acp.SetSessionConfigOptionBoolean{
+			SessionId: acp.SessionId(sessionID),
+			ConfigId:  acp.SessionConfigId(configID),
+			Type:      "boolean",
+			Value:     value,
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("set config option: %w", err)
+	}
+	return nil
 }
 
 // Close 关闭 agent 连接。

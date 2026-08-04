@@ -13,7 +13,7 @@ ACP 多 Agent 网关的 Web UI（会话、流式输出、权限确认等）。
 | 路由 | Vue Router |
 | 国际化 | vue-i18n（`zh-CN` / `en-US`） |
 | 包管理 | **仅 Bun**（勿用 npm / pnpm / yarn） |
-| 实时 | 浏览器原生 WebSocket（后续） |
+| 实时 | 浏览器原生 WebSocket（后端 `/api/v1/ws` 已实现，前端对接为 P2） |
 
 ## 开发
 
@@ -70,18 +70,19 @@ const { agents } = await http.get<{ agents: unknown[] }>('/api/v1/agents')
 
 ```text
 src/
-├── api/           # REST 封装（后续）
-├── config/        # 环境变量等运行时配置
-├── components/    # 可复用组件
-├── composables/   # 组合式函数（含语言切换）
-├── layouts/       # 布局
+├── api/           # REST 封装（P1 接线）
+├── components/
+│   ├── chat/      # 对话区组件（ChatPane / Composer / MessageList…）
+│   └── shell/     # 壳层组件（AppSidebar / SessionList / SettingsDrawer…）
+├── composables/   # 组合式函数（语言切换；WS 封装为 P2）
+├── layouts/       # 布局（AppShell：侧栏 + 主区）
 ├── locales/       # vue-i18n 文案（zh-CN / en-US）
-├── pages/         # 页面
+├── pages/         # 页面（ShellPage 挂 AppShell）
 ├── router/        # Vue Router
-├── stores/        # Pinia
+├── stores/        # Pinia（app / agent / session）
 ├── styles/        # Tailwind 入口
 ├── types/         # TS 类型
-├── utils/         # 纯函数工具
+├── utils/         # 纯函数工具（含相对时间）
 ├── App.vue
 └── main.ts
 ```
@@ -90,7 +91,7 @@ src/
 
 - 语言：`zh-CN`、`en-US`
 - 解析顺序：`localStorage`（`zacp.locale`）→ `navigator.language`（`zh*` → 中文，否则英文）→ 兜底 `zh-CN`
-- 切换入口：顶栏 / 设置页（无 URL 语言前缀）
+- 切换入口：设置抽屉 / 顶栏（无 URL 语言前缀）
 - 切换时同步：`vue-i18n` + Naive `NConfigProvider` locale + `document.documentElement.lang`
 - **不翻译** Agent 流式内容、工具调用结果、用户代码
 
@@ -121,4 +122,16 @@ src/
 |------|------|
 | [docs/frontend/development.md](../docs/frontend/development.md) | **前端开发说明**（环境变量、HTTP 库、WebSocket） |
 | [docs/frontend/chat-shell-ui-design.md](../docs/frontend/chat-shell-ui-design.md) | 对话壳层 UI 设计 |
+| [docs/frontend/implementation-plan.md](../docs/frontend/implementation-plan.md) | 壳层 UI **实施计划**（P0-P3 任务与验收） |
 | [AGENTS.md](../AGENTS.md) | 全仓库协作约定 |
+
+## 当前进度
+
+| 阶段 | 内容 | 状态 |
+|------|------|------|
+| P0 | 壳层静态：AppShell + 侧栏 + 空态/会话中 + Composer + 设置抽屉（假数据动线） | ✅ 完成 |
+| P1 | REST 接线：types/store 换真数据 + 后端补全局会话列表接口 | 待办 |
+| P2 | WebSocket 流式：useAcpSocket、发送/停止、流式追加 | 待办 |
+| P3 | 增强：权限弹窗、工具调用卡片、侧栏折叠 | 待办 |
+
+> P0 数据为 store 内假数据（`stores/agent.ts` / `stores/session.ts`），组件不感知真假；P1 仅替换 store 实现。

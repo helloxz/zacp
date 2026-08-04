@@ -21,9 +21,10 @@ func NewSessionHandler(svc *service.SessionService) *SessionHandler {
 
 // CreateSession 创建新会话
 // POST /api/v1/sessions
+// workspaceId 可选：为 0 / 缺省时回退默认工作区（见 service.resolveWorkspace）。
 func (h *SessionHandler) CreateSession(c *gin.Context) {
 	var req struct {
-		WorkspaceID uint   `json:"workspaceId" binding:"required"`
+		WorkspaceID uint   `json:"workspaceId"`
 		AgentID     string `json:"agentId" binding:"required"`
 	}
 
@@ -87,6 +88,81 @@ func (h *SessionHandler) ListSessions(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"sessions": sessions})
+}
+
+// ListRecentSessions 列出最近活跃的会话（全局，侧栏数据源）
+// GET /api/v1/sessions?limit=50
+func (h *SessionHandler) ListRecentSessions(c *gin.Context) {
+	limit := 50
+	if l := c.Query("limit"); l != "" {
+		if parsed, err := strconv.Atoi(l); err == nil && parsed > 0 {
+			limit = parsed
+		}
+	}
+
+	sessions, err := h.svc.ListRecentSessions(limit)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": gin.H{"code": "list_sessions_failed", "message": err.Error()},
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"sessions": sessions})
+}
+
+// GetConfigOptions 获取会话配置项（模型/思考强度/mode 等）
+// GET /api/v1/sessions/:id/config-options
+func (h *SessionHandler) GetConfigOptions(c *gin.Context) {
+	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": gin.H{"code": "invalid_id", "message": "invalid session id"},
+		})
+		return
+	}
+
+	opts, err := h.svc.GetConfigOptions(uint(id))
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{
+			"error": gin.H{"code": "session_not_found", "message": err.Error()},
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"configOptions": opts})
+}
+
+// SetConfigOption 设置会话配置项（如切换模型/思考强度/mode）
+// POST /api/v1/sessions/:id/config-options
+func (h *SessionHandler) SetConfigOption(c *gin.Context) {
+	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": gin.H{"code": "invalid_id", "message": "invalid session id"},
+		})
+		return
+	}
+
+	var req struct {
+		OptionID string `json:"optionId" binding:"required"`
+		ValueID  string `json:"valueId" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": gin.H{"code": "invalid_request", "message": err.Error()},
+		})
+		return
+	}
+
+	if err := h.svc.SetConfigOption(c.Request.Context(), uint(id), req.OptionID, req.ValueID); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": gin.H{"code": "set_config_option_failed", "message": err.Error()},
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"ok": true})
 }
 
 // DeleteSession 删除会话

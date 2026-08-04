@@ -129,6 +129,11 @@ func runMigrations(db *gorm.DB) error {
 			Name:    "workspace_archived_and_default",
 			Func:    migrateV2,
 		},
+		{
+			Version: 3,
+			Name:    "session_config_options",
+			Func:    migrateV3,
+		},
 	}
 
 	// 执行未应用的迁移
@@ -169,4 +174,9 @@ func migrateV1(db *gorm.DB) error {
 func migrateV2(db *gorm.DB) error {
 	// AutoMigrate 会为已有表添加新列；archived / is_default 默认 false。
 	return db.AutoMigrate(&model.Workspace{})
+}
+
+// migrateV3 为 sessions 表添加 config_options 列（ACP 会话配置项 JSON）。
+func migrateV3(db *gorm.DB) error {
+	return db.AutoMigrate(&model.Session{})
 }
