@@ -118,6 +118,15 @@ func (h *Handler) BroadcastPermissionRequest(sessionID, permissionID string, too
 	})
 }
 
+// BroadcastConfigOptions 向指定会话广播配置项更新（agent 经 session/update 推送，
+// 如切换模型后下发思维强度等新选项；前端据此实时刷新下拉，无需重新进入会话）。
+func (h *Handler) BroadcastConfigOptions(sessionID string, configOptions interface{}) {
+	h.BroadcastToSession(sessionID, ServerMessage{
+		Type:          MsgTypeConfigOptions,
+		ConfigOptions: configOptions,
+	})
+}
+
 // BroadcastError 向指定会话广播错误消息
 func (h *Handler) BroadcastError(sessionID, code, message string) {
 	h.BroadcastToSession(sessionID, ServerMessage{

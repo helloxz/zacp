@@ -37,6 +37,7 @@ export default {
     loadingAgent: '正在启动智能体…',
     loadingSession: '加载会话中…',
     configUpdateFailed: '配置更新失败',
+    reasoning: '思考过程',
     placeholder: '给 Agent 发送消息…',
     enterHint: 'Enter 发送 · Shift+Enter 换行',
     send: '发送',

@@ -252,6 +252,19 @@ export const useSessionStore = defineStore('session', () => {
     }
   }
 
+  /** 追加思维/推理流式文本到占位消息的 reasoning 字段（与正文分离展示） */
+  function appendThoughtChunk(text: string) {
+    const sessionId = currentId.value
+    if (sessionId === null || streamMsgId === -1) {
+      return
+    }
+    const list = messagesById.value[sessionId]
+    const last = list?.[list.length - 1]
+    if (last && last.id === streamMsgId) {
+      last.reasoning = (last.reasoning ?? '') + text
+    }
+  }
+
   /** 工具调用事件 → 实时卡片 upsert（同 toolId 更新状态，否则追加） */
   function upsertToolCard(event: WsEvent) {
     const toolId = event.toolId
@@ -301,10 +314,17 @@ export const useSessionStore = defineStore('session', () => {
       return
     }
     await apiSetConfigOption(sessionId, optionId, valueId)
+    // 本地先回写 currentValue（下拉即时反馈）
     const opt = configOptions.value.find((o) => o.id === optionId)
     if (opt) {
       opt.currentValue = valueId
     }
+    // 稍等 agent 处理完成后重新拉取完整配置项：
+    // 模型切换可能改变可选配置（如切到 deepseek 官方模型后出现思维强度选项），
+    // 即使 agent 不推送 config_option_update，主动刷新也能拿到新列表。
+    setTimeout(() => {
+      void loadConfigOptions(sessionId)
+    }, 300)
   }
 
   /** turn.done 收尾：结束流式状态，随后强制刷新为 DB 版本（覆盖本地临时消息） */
@@ -354,9 +374,20 @@ export const useSessionStore = defineStore('session', () => {
           if (e.type === 'agent_message' && e.text) {
             // 流式文本事件：追加到占位消息
             appendStreamChunk(e.text)
+          } else if (e.type === 'agent_thought' && e.text) {
+            // 思维/推理流式事件：追加到占位消息的 reasoning（折叠展示）
+            appendThoughtChunk(e.text)
           } else if (e.type === 'tool_call' || e.type === 'tool_call_update') {
             // 工具调用：实时卡片（title/status 随 update 演进）
             upsertToolCard(e)
+          }
+          break
+        }
+        case 'configOptions': {
+          // agent 推送的配置项更新（如切换模型后下发思维强度等新选项）：
+          // 实时刷新下拉，无需重新进入会话
+          if (msg.configOptions) {
+            configOptions.value = msg.configOptions
           }
           break
         }
@@ -434,6 +465,7 @@ export const useSessionStore = defineStore('session', () => {
       sessionId,
       role: 'assistant',
       content: '',
+      reasoning: '',
       createdAt: new Date().toISOString(),
     }
     messagesById.value[sessionId] = [

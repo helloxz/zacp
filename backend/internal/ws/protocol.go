@@ -15,6 +15,7 @@ const (
 	MsgTypeEvent             MessageType = "event"              // 流式事件（token、工具调用等）
 	MsgTypeTurnDone          MessageType = "turn.done"          // 一轮对话完成
 	MsgTypePermissionRequest MessageType = "permission.request" // 权限请求
+	MsgTypeConfigOptions     MessageType = "configOptions"       // 配置项更新（agent 推送，如切模型后出现思维强度选项）
 	MsgTypeError             MessageType = "error"              // 错误通知
 	MsgTypePong              MessageType = "pong"               // 心跳响应
 )
@@ -53,6 +54,9 @@ type ServerMessage struct {
 	PermissionID string      `json:"permissionId,omitempty"`
 	ToolCall     interface{} `json:"toolCall,omitempty"`
 	Options      interface{} `json:"options,omitempty"`
+
+	// configOptions 消息字段（agent 经 session/update 推送的配置项列表）
+	ConfigOptions interface{} `json:"configOptions,omitempty"`
 
 	// error 消息字段
 	Code    string `json:"code,omitempty"`

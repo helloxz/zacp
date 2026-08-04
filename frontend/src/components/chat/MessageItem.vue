@@ -1,11 +1,14 @@
 <script setup lang="ts">
 import { computed } from 'vue'
+import { useI18n } from 'vue-i18n'
 import type { ChatMessage } from '@/types/models'
 import type { WsEvent } from '@/types/ws'
 import type { ToolCard } from '@/stores/session'
 import ToolCallCard from '@/components/chat/ToolCallCard.vue'
 
 const props = defineProps<{ message: ChatMessage }>()
+
+const { t } = useI18n()
 
 /** user 右对齐 / assistant 左对齐（角色用样式区分，不用气泡色做语义） */
 const isUser = computed(() => props.message.role === 'user')
@@ -43,6 +46,17 @@ const toolCards = computed<ToolCard[]>(() => {
 
 <template>
   <div class="flex flex-col gap-2" :class="isUser ? 'items-end' : 'items-start'">
+    <!-- 思维/推理文本（仅流式期间有值；折叠展示，点击展开查看） -->
+    <details
+      v-if="!isUser && message.reasoning"
+      class="w-full max-w-[85%] rounded-lg bg-amber-50/70 px-3 py-2 text-xs leading-relaxed text-slate-500 ring-1 ring-inset ring-amber-100"
+    >
+      <summary class="cursor-pointer select-none font-medium text-slate-400">
+        {{ t('chat.reasoning') }}
+      </summary>
+      <div class="mt-1.5 whitespace-pre-wrap">{{ message.reasoning }}</div>
+    </details>
+
     <!-- 历史工具调用卡片（assistant 消息上方） -->
     <div v-if="toolCards.length" class="flex w-full max-w-[85%] flex-col gap-2">
       <ToolCallCard v-for="c in toolCards" :key="c.toolId" :card="c" />

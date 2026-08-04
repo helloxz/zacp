@@ -77,14 +77,17 @@ func (b *EventBridge) SetupEventCallback(agentID, sessionID string) error {
 	return nil
 }
 
-// handleConfigOptions 收到 agent 下发的配置项后落库（按 ACP session id 反查 DB 会话）。
+// handleConfigOptions 收到 agent 下发的配置项后落库 + 实时广播给前端。
+// 场景：切换模型后 agent 推送新的 configOptions（如 deepseek 官方模型带思维强度选项），
+// 前端收到广播立即刷新下拉，无需重新进入会话。
 func (b *EventBridge) handleConfigOptions(sessionID string, opts []acp.SessionConfigOption) {
 	dbSession, err := b.sessionRepo.GetByACPSessionID(sessionID)
 	if err != nil {
 		b.log.Warn("config options for unknown session", "sessionID", sessionID, "err", err)
 		return
 	}
-	data, err := json.Marshal(client.ToConfigOptionDTOs(opts))
+	dtos := client.ToConfigOptionDTOs(opts)
+	data, err := json.Marshal(dtos)
 	if err != nil {
 		b.log.Warn("marshal config options failed", "sessionID", sessionID, "err", err)
 		return
@@ -93,6 +96,7 @@ func (b *EventBridge) handleConfigOptions(sessionID string, opts []acp.SessionCo
 		b.log.Warn("save config options failed", "sessionID", sessionID, "err", err)
 		return
 	}
+	b.handler.BroadcastConfigOptions(sessionID, dtos)
 	b.log.Info("config options updated", "sessionID", sessionID, "count", len(opts))
 }
 

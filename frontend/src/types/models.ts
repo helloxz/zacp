@@ -51,6 +51,8 @@ export interface ChatMessage {
   sessionId: number
   role: MessageRole
   content: string
+  /** 思维/推理文本（仅流式本地消息；来自 ACP agent_thought 事件，DB 不持久化） */
+  reasoning?: string
   /** 完整事件 JSON（工具调用等），P0-P1 未消费，P3 渲染工具卡片用 */
   events?: string
   createdAt: string

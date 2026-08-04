@@ -180,11 +180,13 @@ function onKeydown(e: KeyboardEvent) {
       <div class="flex min-w-0 flex-1 flex-nowrap items-center gap-2 overflow-x-auto">
         <!-- bar 模式：agent 下发 configOptions 才显示，否则整段隐藏 -->
         <template v-if="mode === 'bar' && sessionStore.configOptions.length">
-          <!-- 外层 div 定宽限制下拉宽度（n-select 根样式 width:100% 会撑满父级，直接设 class 不生效） -->
+          <!-- 外层 div 定宽限制下拉宽度（n-select 根样式 width:100% 会撑满父级，直接设 class 不生效）；
+               模型下拉内容最长（渠道/模型 完整名），固定更宽；其余选项保持窄宽，避免一行放不下 -->
           <div
             v-for="opt in selectConfigOptions"
             :key="opt.id"
-            class="w-28 shrink-0"
+            class="shrink-0"
+            :class="opt.id === 'model' ? 'w-44' : 'w-28'"
           >
             <n-select
               :value="String(opt.currentValue)"
