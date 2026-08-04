@@ -3,7 +3,9 @@ import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { SendOutline, StopOutline } from '@vicons/ionicons5'
 import { NIcon } from 'naive-ui'
+import type { SelectGroupOption, SelectOption } from 'naive-ui'
 import { useSessionStore } from '@/stores/session'
+import type { ConfigOptionValue } from '@/types/models'
 
 /** Composer 提交载荷（card / bar 共用） */
 export interface ComposerSubmitPayload {
@@ -48,6 +50,36 @@ async function onConfigChange(optionId: string, valueId: string) {
   } catch {
     // 设置失败：保持原值（下轮进入会话时会重新加载）
   }
+}
+
+/**
+ * 把 configOption 的选项列表转成 naive-ui select 的选项/分组结构。
+ * 模型选项名约定为「渠道/模型名」：提取第一个 / 前的内容作为渠道分组标题（group 不可选），
+ * 其下为模型子项，同一渠道聚合为一组；不含 / 的选项保持普通项。
+ * 对全部 select 通用：其余选项（思考模式等）无 / 时不受影响。
+ */
+function buildSelectOptions(
+  options?: ConfigOptionValue[],
+): Array<SelectGroupOption | SelectOption> {
+  const result: Array<SelectGroupOption | SelectOption> = []
+  // 渠道名 → 该渠道下模型子项；Map 保证组间按渠道首次出现顺序、组内按原顺序
+  const groups = new Map<string, SelectOption[]>()
+  for (const v of options ?? []) {
+    const idx = v.name.indexOf('/')
+    if (idx > 0 && idx < v.name.length - 1) {
+      // 「渠道/模型」格式：归入对应渠道分组
+      const channel = v.name.slice(0, idx)
+      const label = v.name.slice(idx + 1)
+      if (!groups.has(channel)) groups.set(channel, [])
+      groups.get(channel)!.push({ label, value: v.value })
+    } else {
+      result.push({ label: v.name, value: v.value })
+    }
+  }
+  for (const [label, children] of groups) {
+    result.push({ type: 'group', label, key: label, children })
+  }
+  return result
 }
 
 const text = ref('')
@@ -117,8 +149,9 @@ function onKeydown(e: KeyboardEvent) {
               :value="String(opt.currentValue)"
               size="tiny"
               class="opt-select"
-              :options="(opt.options ?? []).map((v) => ({ label: v.name, value: v.value }))"
+              :options="buildSelectOptions(opt.options)"
               :consistent-menu-width="false"
+              filterable
               @update:value="(v: string) => onConfigChange(opt.id, v)"
             />
           </div>
