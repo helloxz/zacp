@@ -5,6 +5,7 @@ import {
   createWorkspace as apiCreateWorkspace,
   deleteSession as apiDeleteSession,
   deleteDraftSession as apiDeleteDraftSession,
+  removeWorkspace as apiRemoveWorkspace,
   fetchConfigOptions,
   fetchMessages,
   fetchRecentSessions,
@@ -103,6 +104,15 @@ export const useSessionStore = defineStore('session', () => {
     return ws
   }
 
+  /**
+   * 移除项目（DELETE /api/v1/workspaces/:id，后端软删除）：
+   * 项目从侧栏隐藏（其下会话与消息保留），同路径再次添加时整体恢复。
+   */
+  async function removeWorkspace(workspaceId: number) {
+    await apiRemoveWorkspace(workspaceId)
+    await Promise.all([loadWorkspaces(), loadSessions()])
+  }
+
   async function loadSessions() {
     const list = await fetchRecentSessions(50)
     // 保护本地草稿：后端列表按约定过滤 is_draft=true，但草稿可能正被
@@ -194,8 +204,17 @@ export const useSessionStore = defineStore('session', () => {
    * 使跳转 /sessions/:id 后 activeSession 可解析、标题刷新与 touch 排序生效。
    */
   function promoteDraftSession(session: ChatSession) {
+    // 补 workspace 关联：createSession 响应不带 workspace（后端未预加载），
+    // 兜底从本地 workspaces 匹配，保证转正后侧栏立即按父项目分组显示，
+    // 不依赖「AI 响应后 loadSessions 从 DB 拉回完整数据」才正确归属。
+    // 注意：workspace 可能是空对象（id=0，软删除残留），须按 id 有效性判断。
+    const ws =
+      session.workspace?.id
+        ? session.workspace
+        : workspaces.value.find((w) => w.id === session.workspaceId)
+    const full = ws ? { ...session, workspace: ws } : session
     sessions.value = [
-      session,
+      full,
       ...sessions.value.filter((s) => s.id !== session.id),
     ]
   }
@@ -530,6 +549,7 @@ export const useSessionStore = defineStore('session', () => {
     loadInitial,
     loadWorkspaces,
     createWorkspace,
+    removeWorkspace,
     loadMessages,
     loadConfigOptions,
     setConfigOption,

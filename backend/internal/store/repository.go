@@ -43,6 +43,24 @@ func (r *WorkspaceRepository) GetByPath(path string) (*model.Workspace, error) {
 	return &workspace, nil
 }
 
+// GetByPathIncludingDeleted 根据路径查找工作目录（含已软删除记录）。
+// 用于「移除项目后再次添加相同路径」时找回旧记录并整体恢复（项目 + 其下会话 + 消息）。
+func (r *WorkspaceRepository) GetByPathIncludingDeleted(path string) (*model.Workspace, error) {
+	var workspace model.Workspace
+	err := r.db.Unscoped().Where("path = ?", path).First(&workspace).Error
+	if err != nil {
+		return nil, err
+	}
+	return &workspace, nil
+}
+
+// Restore 恢复软删除的工作目录（清空 deleted_at；恢复后项目连同其下会话重新可见）。
+func (r *WorkspaceRepository) Restore(id uint) error {
+	return r.db.Unscoped().Model(&model.Workspace{}).
+		Where("id = ?", id).
+		Update("deleted_at", nil).Error
+}
+
 // List 列出所有工作目录（按最近使用排序）
 func (r *WorkspaceRepository) List() ([]model.Workspace, error) {
 	var workspaces []model.Workspace

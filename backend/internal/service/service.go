@@ -51,11 +51,26 @@ func (s *WorkspaceService) CreateWorkspace(path string) (*model.Workspace, error
 		return nil, fmt.Errorf("path is not a directory: %s", absPath)
 	}
 
-	// 检查是否已存在（已存在则更新最近使用时间并返回）
+	// 检查是否已存在（未删除的）
 	existing, err := s.repo.GetByPath(absPath)
 	if err == nil && existing != nil {
 		_ = s.repo.Touch(existing.ID)
 		return s.repo.GetByPath(absPath)
+	}
+
+	// 同路径存在已软删除记录（曾被「移除」）：整体恢复（项目 + 其下会话 + 消息），
+	// 语义对齐设计约定「同 path 再添加可解除归档」。恢复不插入新行，避开 path 唯一索引。
+	deleted, derr := s.repo.GetByPathIncludingDeleted(absPath)
+	if derr == nil && deleted != nil {
+		if rerr := s.repo.Restore(deleted.ID); rerr != nil {
+			return nil, fmt.Errorf("failed to restore workspace: %w", rerr)
+		}
+		_ = s.repo.Touch(deleted.ID)
+		restored, gerr := s.repo.GetByPath(absPath)
+		if gerr != nil {
+			return nil, gerr
+		}
+		return restored, nil
 	}
 
 	workspace := &model.Workspace{
@@ -218,6 +233,10 @@ func (s *SessionService) CreateSession(ctx context.Context, workspaceID uint, ag
 		_ = s.mgr.StopAgent(agentID)
 		return nil, fmt.Errorf("failed to save session: %w", err)
 	}
+
+	// 响应携带 workspace 关联（Create 不预加载）：前端转正后侧栏立即按父项目分组，
+	// 无需等待下一次列表刷新（见前端 promoteDraftSession 的兜底逻辑）
+	session.Workspace = *workspace
 
 	return &model.CreateSessionResult{
 		Session:       session,

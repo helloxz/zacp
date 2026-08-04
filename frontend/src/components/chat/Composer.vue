@@ -1,10 +1,10 @@
 <script setup lang="ts">
-import { computed, h, ref, watch } from 'vue'
+import { computed, h, onMounted, ref, watch } from 'vue'
 import type { VNodeChild } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { SendOutline, StopOutline } from '@vicons/ionicons5'
 import { NIcon } from 'naive-ui'
-import type { SelectGroupOption, SelectOption } from 'naive-ui'
+import type { InputInst, SelectGroupOption, SelectOption } from 'naive-ui'
 import { useSessionStore } from '@/stores/session'
 import type { ConfigOptionValue } from '@/types/models'
 
@@ -117,6 +117,22 @@ function renderConfigOptionLabel(option: SelectOption & { modelName?: string }):
 
 const text = ref('')
 const selectedAgentId = ref(props.agentId ?? '')
+const inputRef = ref<InputInst | null>(null)
+
+/** 新建会话空态（card）自动聚焦输入框：进入 /new 即可直接打字。
+ * rAF 延后到布局稳定后再聚焦，避免被遮罩/过渡干扰。 */
+onMounted(() => {
+  if (props.mode === 'card') {
+    requestAnimationFrame(() => inputRef.value?.focus())
+  }
+})
+
+/** 聚焦输入框（供父级在草稿创建完成/切 tab 后重新聚焦） */
+function focus() {
+  inputRef.value?.focus()
+}
+
+defineExpose({ focus })
 
 /** bar 模式会话切换时同步外部 agentId */
 watch(
@@ -157,6 +173,7 @@ function onKeydown(e: KeyboardEvent) {
     class="w-full rounded-2xl border border-slate-200 bg-white p-3 shadow-sm transition-shadow focus-within:border-slate-300 focus-within:shadow-md"
   >
     <n-input
+      ref="inputRef"
       v-model:value="text"
       type="textarea"
       class="composer-input"
@@ -178,10 +195,10 @@ function onKeydown(e: KeyboardEvent) {
     <!-- flex-1：选项容器占满除发送按钮外的剩余宽度；flex-nowrap：选项强制一行，极端情况才横向滚动兜底 -->
     <div class="mt-2 flex items-center justify-between gap-2">
       <div class="flex min-w-0 flex-1 flex-nowrap items-center gap-2 overflow-x-auto">
-        <!-- bar 模式：agent 下发 configOptions 才显示，否则整段隐藏 -->
-        <template v-if="mode === 'bar' && sessionStore.configOptions.length">
-          <!-- 外层 div 定宽限制下拉宽度（n-select 根样式 width:100% 会撑满父级，直接设 class 不生效）；
-               模型下拉内容最长（渠道/模型 完整名），固定更宽；其余选项保持窄宽，避免一行放不下 -->
+        <!-- 配置项（模型/思维强度等）融合进输入卡片；card（新建会话空态）与 bar（会话中）风格一致。
+             外层 div 定宽限制下拉宽度（n-select 根样式 width:100% 会撑满父级，直接设 class 不生效）；
+             模型下拉内容最长（渠道/模型 完整名），固定更宽；其余选项保持窄宽，避免一行放不下 -->
+        <template v-if="sessionStore.configOptions.length">
           <div
             v-for="opt in selectConfigOptions"
             :key="opt.id"

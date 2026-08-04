@@ -12,7 +12,7 @@
  * 设计约束：侧栏只展示转正后的会话；草稿不进列表。
  * A 方案代价：每次切 tab = 真实 session/new（启动 agent 子进程），有启动延迟。
  */
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed, nextTick, onUnmounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 import { useAgentStore } from '@/stores/agent'
@@ -42,24 +42,21 @@ const draftConfigOptions = ref<ConfigOption[]>([])
 /** 草稿创建中（驱动 tab 切换时的加载态） */
 const draftCreating = ref(false)
 
-/** select 型配置项 → 下拉（模型/思考强度/mode） */
-const selectConfigOptions = computed(() =>
-  draftConfigOptions.value.filter((o) => o.type === 'select'),
-)
-
 /**
  * 为指定 agent 创建隐式草稿会话，并加载其 configOptions。
  * 切 tab 前先释放旧草稿，避免堆积空 ACP session。
+ * 注意：draftCreating 必须先置 true（在释放旧草稿之前），
+ * 让遮罩全程覆盖输入卡片，避免「释放→创建」间隙内容区空窗导致的跳动闪烁。
  */
 async function createDraftFor(agentId: string) {
   if (!agentId || draftCreating.value) return
-  // 释放上一个草稿（如有）
-  if (draftSession.value) {
-    await releaseDraft()
-  }
-
   draftCreating.value = true
   try {
+    // 释放上一个草稿（如有）
+    if (draftSession.value) {
+      await releaseDraft()
+    }
+
     const { session, configOptions } = await sessionStore.createSession(
       agentId,
       props.workspaceId,
@@ -67,8 +64,10 @@ async function createDraftFor(agentId: string) {
     )
     draftSession.value = session
     draftConfigOptions.value = configOptions
-    // 同步到 sessionStore.configOptions，使 Composer 下拉可复用
+    // 同步到 sessionStore.configOptions，使 Composer 融合输入框的下拉可复用
     sessionStore.configOptions = configOptions
+    // 草稿视为当前会话：Composer 内置的 setConfigOption 用 currentId 定位后端目标会话
+    sessionStore.currentId = session.id
   } catch (e) {
     sessionStore.streamError = e instanceof Error ? e.message : String(e)
   } finally {
@@ -87,6 +86,7 @@ async function releaseDraft() {
   draftSession.value = null
   draftConfigOptions.value = []
   sessionStore.configOptions = []
+  sessionStore.currentId = null
 }
 
 /** 切 tab：切换 agent → 释放旧草稿 → 创建新草稿 */
@@ -94,16 +94,6 @@ async function onSwitchAgent(agentId: string) {
   if (agentId === selectedAgentId.value) return
   selectedAgentId.value = agentId
   await createDraftFor(agentId)
-}
-
-/** 配置项变更：调后端 set_config_option，成功后本地回写 */
-async function onConfigChange(optionId: string, valueId: string) {
-  if (!draftSession.value) return
-  try {
-    await sessionStore.setConfigOption(optionId, valueId)
-  } catch {
-    // 设置失败：保持原值
-  }
 }
 
 /**
@@ -130,14 +120,33 @@ async function onSubmit(payload: ComposerSubmitPayload) {
   }
 }
 
-/** 首次进入：默认选中第一个可用 agent 并创建草稿 */
-onMounted(async () => {
-  if (!selectedAgentId.value) {
-    const first = agents.value.find((a) => a.running) ?? agents.value[0]
-    if (first) selectedAgentId.value = first.agentId
-  }
-  if (selectedAgentId.value) {
-    await createDraftFor(selectedAgentId.value)
+/** 输入卡片引用（草稿创建完成/切 tab 后重新聚焦输入框） */
+const composerRef = ref<InstanceType<typeof Composer> | null>(null)
+
+/**
+ * agent 列表就绪后默认选中第一个可用 agent 并创建草稿。
+ * 列表由 AppShell 异步加载（GET /api/v1/agents），onMounted 时可能仍为空，
+ * 因此用 watch 兜底：列表到达即补默认选中（immediate 处理已就绪的情况）。
+ */
+watch(
+  () => agents.value,
+  (list) => {
+    if (selectedAgentId.value || list.length === 0) {
+      return
+    }
+    const first = list.find((a) => a.running) ?? list[0]
+    if (first) {
+      selectedAgentId.value = first.agentId
+      void createDraftFor(first.agentId)
+    }
+  },
+  { immediate: true },
+)
+
+/** 草稿创建完成（遮罩消失）后重新聚焦输入框：切 tab 后可直接打字 */
+watch(draftCreating, (creating) => {
+  if (!creating) {
+    void nextTick(() => composerRef.value?.focus())
   }
 })
 
@@ -152,29 +161,7 @@ onUnmounted(() => {
 
 <template>
   <div class="flex min-h-0 flex-1 flex-col">
-    <!-- 顶部 agent tab（单选；对话后由父级路由切到 session 态时此组件卸载，tab 自然消失） -->
-    <div class="border-b border-slate-200 px-4 pt-3">
-      <div class="flex items-center gap-1">
-        <button
-          v-for="a in agents"
-          :key="a.agentId"
-          type="button"
-          :disabled="!a.running"
-          :class="[
-            'shrink-0 rounded-t-md border-b-2 px-4 py-2 text-sm transition-colors',
-            a.agentId === selectedAgentId
-              ? 'border-slate-800 font-medium text-slate-900'
-              : 'border-transparent text-slate-500 hover:text-slate-700',
-            !a.running ? 'cursor-not-allowed opacity-40' : 'cursor-pointer',
-          ]"
-          @click="onSwitchAgent(a.agentId)"
-        >
-          {{ a.name }}
-        </button>
-      </div>
-    </div>
-
-    <!-- 空态内容区：居中输入卡片 -->
+    <!-- 空态内容区：居中欢迎语 + Agent tab + 融合输入卡片 -->
     <div
       class="relative flex min-h-0 flex-1 flex-col items-center justify-center overflow-hidden px-6"
     >
@@ -185,68 +172,62 @@ onUnmounted(() => {
           </h1>
         </div>
 
-        <!-- 加载态：草稿创建中（session/new 启动 agent） -->
-        <div
-          v-if="draftCreating"
-          class="flex items-center gap-2 text-sm text-slate-400"
-        >
-          <span class="inline-block h-4 w-4 animate-spin rounded-full border-2 border-slate-300 border-t-slate-600"></span>
-          {{ t('chat.loadingAgent') }}
+        <!-- Agent 选择 tab：居中显示在欢迎语下方（三个 agent）；
+             对话后路由切到 session 态，本组件卸载、tab 自然隐藏 -->
+        <div class="flex items-center justify-center gap-1">
+          <button
+            v-for="a in agents"
+            :key="a.agentId"
+            type="button"
+            :disabled="!a.running"
+            :class="[
+              'shrink-0 rounded-t-md border-b-2 px-4 py-1.5 text-sm transition-colors',
+              a.agentId === selectedAgentId
+                ? 'border-slate-800 font-medium text-slate-900'
+                : 'border-transparent text-slate-500 hover:text-slate-700',
+              !a.running ? 'cursor-not-allowed opacity-40' : 'cursor-pointer',
+            ]"
+            @click="onSwitchAgent(a.agentId)"
+          >
+            {{ a.name }}
+          </button>
         </div>
 
-        <template v-else>
-          <!-- 发送/草稿创建错误条（可关闭；防止「点击发送无反应」的静默失败） -->
-          <div
-            v-if="sessionStore.streamError"
-            class="flex w-full items-center justify-between rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600 ring-1 ring-inset ring-red-100"
+        <!-- 加载态：切换 agent 时以半透明遮罩覆盖输入卡片（内容保留原位，避免整块替换造成的跳动闪烁）；
+             草稿创建完成（session/new 启动 agent）后遮罩消失，配置项随之更新 -->
+        <div v-if="sessionStore.streamError" class="flex w-full items-center justify-between rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600 ring-1 ring-inset ring-red-100">
+          <span class="truncate">
+            {{ t('chat.errorTitle') }}: {{ sessionStore.streamError }}
+          </span>
+          <button
+            class="ml-3 shrink-0 text-red-400 hover:text-red-600"
+            aria-label="close"
+            @click="sessionStore.clearStreamError()"
           >
-            <span class="truncate">
-              {{ t('chat.errorTitle') }}: {{ sessionStore.streamError }}
+            ✕
+          </button>
+        </div>
+
+        <!-- 融合输入框容器：配置项（模型/工作模式/思维强度）与输入框一体化，风格与 /sessions/:id 一致 -->
+        <div class="relative w-full">
+          <div
+            v-if="draftCreating"
+            class="absolute inset-0 z-10 flex items-center justify-center rounded-2xl bg-white/70 backdrop-blur-[1px]"
+          >
+            <span class="flex items-center gap-2 text-sm text-slate-400">
+              <span class="inline-block h-4 w-4 animate-spin rounded-full border-2 border-slate-300 border-t-slate-600"></span>
+              {{ t('chat.loadingAgent') }}
             </span>
-            <button
-              class="ml-3 shrink-0 text-red-400 hover:text-red-600"
-              aria-label="close"
-              @click="sessionStore.clearStreamError()"
-            >
-              ✕
-            </button>
           </div>
-
-          <!-- 配置项预览（模型/思维程度；agent 不支持时为空，隐藏） -->
-          <div
-            v-if="selectConfigOptions.length > 0"
-            class="flex w-full flex-wrap items-center justify-center gap-3"
-          >
-            <div
-              v-for="opt in selectConfigOptions"
-              :key="opt.id"
-              class="flex items-center gap-2"
-            >
-              <span class="text-xs text-slate-500">{{ opt.name }}</span>
-              <select
-                class="rounded-md border border-slate-200 bg-white px-2 py-1 text-sm"
-                :value="String(opt.currentValue)"
-                @change="onConfigChange(opt.id, ($event.target as HTMLSelectElement).value)"
-              >
-                <option
-                  v-for="o in opt.options"
-                  :key="o.value"
-                  :value="o.value"
-                >
-                  {{ o.name }}
-                </option>
-              </select>
-            </div>
-          </div>
-
           <Composer
+            ref="composerRef"
             mode="card"
             :agent-id="selectedAgentId"
             :sending="sessionStore.streaming"
             @submit="onSubmit"
             @cancel="sessionStore.cancelSend()"
           />
-        </template>
+        </div>
       </div>
     </div>
   </div>

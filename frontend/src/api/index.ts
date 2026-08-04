@@ -38,12 +38,17 @@ export async function fetchWorkspaces(): Promise<Workspace[]> {
   return data.workspaces
 }
 
-/** POST /api/v1/workspaces — 创建工作区（校验路径存在） */
+/** POST /api/v1/workspaces — 创建工作区（校验路径存在；同路径曾被移除时整体恢复） */
 export async function createWorkspace(path: string): Promise<Workspace> {
   const data = await http.post<{ workspace: Workspace }>('/api/v1/workspaces', {
     body: { path },
   })
   return data.workspace
+}
+
+/** DELETE /api/v1/workspaces/:id — 移除项目（后端软删除；同路径再次添加时整体恢复） */
+export async function removeWorkspace(workspaceId: number): Promise<void> {
+  await http.delete(`/api/v1/workspaces/${workspaceId}`)
 }
 
 /** GET /api/v1/sessions — 最近活跃会话（侧栏数据源） */
