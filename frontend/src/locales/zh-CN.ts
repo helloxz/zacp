@@ -28,8 +28,6 @@ export default {
     about: '关于',
     version: '版本',
     confirmDelete: '确定删除该会话？删除后不可恢复。',
-    collapseSidebar: '收起侧栏',
-    expandSidebar: '展开侧栏',
   },
   chat: {
     welcomeMorning: '早上好',

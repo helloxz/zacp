@@ -5,6 +5,8 @@ import router from './router'
 import { setupI18n } from './locales'
 import { resolveInitialLocale } from './utils/locale'
 import './styles/main.css'
+// incremark markdown 渲染主题（CSS 变量 + .incremark-* 前缀类，不影响全局布局）
+import '@incremark/theme/styles.css'
 
 const app = createApp(App)
 const pinia = createPinia()

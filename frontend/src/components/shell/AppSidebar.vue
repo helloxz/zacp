@@ -2,20 +2,14 @@
 import { ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
-import {
-  AddOutline,
-  ChevronBackOutline,
-  ChevronForwardOutline,
-} from '@vicons/ionicons5'
+import { AddOutline } from '@vicons/ionicons5'
 import { NIcon, useMessage } from 'naive-ui'
 import SidebarSessionList from '@/components/shell/SidebarSessionList.vue'
 import UserFooter from '@/components/shell/UserFooter.vue'
 import { useSessionStore } from '@/stores/session'
 import { useAppStore } from '@/stores/app'
 
-defineProps<{ collapsed?: boolean }>()
 const emit = defineEmits<{
-  (e: 'toggle'): void
   (e: 'open-settings'): void
 }>()
 
@@ -70,49 +64,19 @@ async function onCreateProject() {
 </script>
 
 <template>
-  <!-- 侧栏折叠：260px ↔ 64px 图标条（PC 界面，不做移动端抽屉） -->
-  <aside
-    class="flex flex-col border-r border-slate-200 bg-slate-50 transition-[width] duration-200"
-    :class="collapsed ? 'w-16' : 'w-[260px]'"
-  >
-    <!-- 收起态：仅保留「展开」按钮 -->
-    <template v-if="collapsed">
-      <button
-        class="mx-auto mt-3 flex h-9 w-9 items-center justify-center rounded-lg text-slate-500 transition-colors hover:bg-slate-200/60 hover:text-slate-700"
-        :aria-label="t('shell.expandSidebar')"
-        :title="t('shell.expandSidebar')"
-        @click="emit('toggle')"
-      >
-        <n-icon size="20"><ChevronForwardOutline /></n-icon>
-      </button>
-    </template>
+  <!-- 固定宽度侧栏（260px，列表常驻展示，不再支持折叠） -->
+  <aside class="flex w-[260px] flex-col border-r border-slate-200 bg-slate-50">
+    <div class="flex items-center gap-1 p-3">
+      <n-button block secondary class="flex-1" @click="onNewProject">
+        <template #icon>
+          <n-icon><AddOutline /></n-icon>
+        </template>
+        {{ t('shell.newProject') }}
+      </n-button>
+    </div>
 
-    <!-- 展开态：新建项目 + 折叠按钮 + 项目会话列表 + 用户区 -->
-    <template v-else>
-      <div class="flex items-center gap-1 p-3">
-        <n-button block secondary class="flex-1" @click="onNewProject">
-          <template #icon>
-            <n-icon><AddOutline /></n-icon>
-          </template>
-          {{ t('shell.newProject') }}
-        </n-button>
-        <n-button
-          quaternary
-          circle
-          size="small"
-          :aria-label="t('shell.collapseSidebar')"
-          :title="t('shell.collapseSidebar')"
-          @click="emit('toggle')"
-        >
-          <template #icon>
-            <n-icon><ChevronBackOutline /></n-icon>
-          </template>
-        </n-button>
-      </div>
-
-      <SidebarSessionList class="min-h-0 flex-1 overflow-y-auto px-3 pb-4" />
-      <UserFooter @open-settings="emit('open-settings')" />
-    </template>
+    <SidebarSessionList class="min-h-0 flex-1 overflow-y-auto px-3 pb-4" />
+    <UserFooter @open-settings="emit('open-settings')" />
   </aside>
 
   <!-- 新建项目弹窗：输入项目路径 -->

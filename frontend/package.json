@@ -9,6 +9,8 @@
     "preview": "vite preview --host 0.0.0.0 --port 8681"
   },
   "dependencies": {
+    "@incremark/theme": "^1.0.2",
+    "@incremark/vue": "^1.0.2",
     "@vicons/ionicons5": "^0.13.0",
     "naive-ui": "^2.44.1",
     "pinia": "^4.0.2",

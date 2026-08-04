@@ -14,21 +14,6 @@ function openSettings() {
   settingsOpen.value = true
 }
 
-/** 侧栏折叠状态（localStorage 持久化，PC 桌面布局） */
-const SIDEBAR_KEY = 'zacp.sidebarCollapsed'
-const sidebarCollapsed = ref(
-  typeof localStorage !== 'undefined'
-    ? localStorage.getItem(SIDEBAR_KEY) === '1'
-    : false,
-)
-
-function toggleSidebar() {
-  sidebarCollapsed.value = !sidebarCollapsed.value
-  if (typeof localStorage !== 'undefined') {
-    localStorage.setItem(SIDEBAR_KEY, sidebarCollapsed.value ? '1' : '0')
-  }
-}
-
 /** 首屏：拉取 agent 列表 + 工作区 + 最近会话（并行，失败不阻塞壳层渲染）+ 建立 WS 长连接 */
 const agentStore = useAgentStore()
 const sessionStore = useSessionStore()
@@ -42,12 +27,7 @@ onMounted(() => {
 <template>
   <!-- 壳层骨架：左固定侧栏 + 右对话主区；整页内部滚动，避免 body 双滚动条（设计文档 §3） -->
   <div class="flex h-screen overflow-hidden bg-white">
-    <AppSidebar
-      class="shrink-0"
-      :collapsed="sidebarCollapsed"
-      @toggle="toggleSidebar"
-      @open-settings="openSettings"
-    />
+    <AppSidebar class="shrink-0" @open-settings="openSettings" />
     <main class="flex min-w-0 flex-1 flex-col">
       <ChatPane />
     </main>

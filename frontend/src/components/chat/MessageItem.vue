@@ -1,17 +1,33 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { IncremarkContent } from '@incremark/vue'
 import type { ChatMessage } from '@/types/models'
 import type { WsEvent } from '@/types/ws'
 import type { ToolCard } from '@/stores/session'
+import { useSessionStore } from '@/stores/session'
 import ToolCallCard from '@/components/chat/ToolCallCard.vue'
 
 const props = defineProps<{ message: ChatMessage }>()
 
 const { t } = useI18n()
+const sessionStore = useSessionStore()
 
 /** user 右对齐 / assistant 左对齐（角色用样式区分，不用气泡色做语义） */
 const isUser = computed(() => props.message.role === 'user')
+
+/**
+ * 流式终态判定：仅当「当前 turn 仍在流式」且「本条就是流式占位消息（列表最后一条）」时
+ * 视为未完成；incremark 据此决定块状态（pending/completed）与渐入动画。
+ * turn.done / cancelSend 后 streaming=false，消息转终态，再由 store 刷新 DB 最终内容。
+ */
+const isFinished = computed(
+  () =>
+    !(
+      sessionStore.streaming &&
+      sessionStore.activeMessages.at(-1)?.id === props.message.id
+    ),
+)
 
 /**
  * 历史工具调用卡片：解析 assistant 消息的 events JSON（client.Event 数组），
@@ -57,20 +73,38 @@ const toolCards = computed<ToolCard[]>(() => {
       <div class="mt-1.5 whitespace-pre-wrap">{{ message.reasoning }}</div>
     </details>
 
-    <!-- 历史工具调用卡片（assistant 消息上方） -->
-    <div v-if="toolCards.length" class="flex w-full max-w-[85%] flex-col gap-2">
+    <!-- 历史工具调用卡片（assistant 消息上方，与正文同宽） -->
+    <div v-if="toolCards.length" class="flex w-full flex-col gap-2">
       <ToolCallCard v-for="c in toolCards" :key="c.toolId" :card="c" />
     </div>
 
+    <!-- user：右对齐气泡；assistant：markdown 全宽渲染（边框+阴影与气泡区分，样式由 incremark 主题提供） -->
     <div
-      class="max-w-[85%] whitespace-pre-wrap rounded-2xl px-3.5 py-2.5 text-sm leading-relaxed"
-      :class="
-        isUser
-          ? 'rounded-br-md bg-green-50 text-slate-900 ring-1 ring-inset ring-green-100'
-          : 'rounded-bl-md bg-slate-100 text-slate-800'
-      "
+      v-if="isUser"
+      class="max-w-[85%] whitespace-pre-wrap rounded-2xl rounded-br-md bg-green-50 px-3.5 py-2.5 text-sm leading-relaxed text-slate-900 ring-1 ring-inset ring-green-100"
     >
       {{ message.content }}
     </div>
+    <IncremarkContent
+      v-else
+      class="w-full min-w-0 rounded-xl border border-slate-200/80 bg-white px-4 py-3 text-sm leading-relaxed shadow-sm"
+      :content="message.content"
+      :is-finished="isFinished"
+      :incremark-options="{ htmlTree: true }"
+    />
   </div>
 </template>
+
+<style scoped>
+/*
+ * Tailwind v4 preflight 全局移除了 ul/ol 的 list-style（list-style: none），
+ * 这里只在 AI markdown 内容区域局部恢复列表符号，不动全局。
+ * 任务列表（task-list）保持无圆点（checkbox 形态，主题自带处理）。
+ */
+:deep(ul.incremark-list) {
+  list-style: disc;
+}
+:deep(ol.incremark-list) {
+  list-style: decimal;
+}
+</style>

@@ -19,8 +19,6 @@ export default {
     about: 'About',
     version: 'Version',
     confirmDelete: 'Delete this session? This cannot be undone.',
-    collapseSidebar: 'Collapse sidebar',
-    expandSidebar: 'Expand sidebar',
   },
   chat: {
     welcomeMorning: 'Good morning',

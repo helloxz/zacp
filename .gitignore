@@ -51,3 +51,6 @@ temp/
 *.tmp
 coverage.out
 coverage.html
+
+# Runtime home accidentally committed in repo root (AGENTS.md: runtime state lives in $ZACP_HOME, default ~/.zacp)
+.zacp/
