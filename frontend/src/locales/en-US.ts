@@ -47,6 +47,9 @@ export default {
     completed: 'Completed',
     error: 'Error',
     unknown: 'Tool call',
+    input: 'Input',
+    output: 'Output',
+    truncated: '… (truncated)',
   },
   permission: {
     title: 'Permission request',

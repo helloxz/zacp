@@ -17,6 +17,31 @@ const sessionStore = useSessionStore()
 const isUser = computed(() => props.message.role === 'user')
 
 /**
+ * 思维/推理文本：
+ * - 流式期间：来自 store 占位消息的 message.reasoning（agent_thought 实时追加）；
+ * - 刷新后/历史消息：Message 表未持久化 reasoning 列，但 agent_thought 事件
+ *   完整落在 events JSON 里，这里按序拼接恢复（与流式 `+=` 的拼接结果一致）。
+ */
+const reasoning = computed(() => {
+  if (props.message.reasoning) {
+    return props.message.reasoning
+  }
+  if (props.message.role !== 'assistant' || !props.message.events) {
+    return ''
+  }
+  try {
+    const events = JSON.parse(props.message.events) as WsEvent[]
+    return events
+      .filter((e) => e.type === 'agent_thought' && e.text)
+      .map((e) => e.text as string)
+      .join('')
+  } catch {
+    // events 不是合法 JSON：静默跳过，不影响文本渲染
+    return ''
+  }
+})
+
+/**
  * 流式终态判定：仅当「当前 turn 仍在流式」且「本条就是流式占位消息（列表最后一条）」时
  * 视为未完成；incremark 据此决定块状态（pending/completed）与渐入动画。
  * turn.done / cancelSend 后 streaming=false，消息转终态，再由 store 刷新 DB 最终内容。
@@ -45,13 +70,31 @@ const toolCards = computed<ToolCard[]>(() => {
         (e.type === 'tool_call' || e.type === 'tool_call_update') &&
         e.toolId
       ) {
-        map.set(e.toolId, e)
+        const existing = map.get(e.toolId)
+        if (existing) {
+          // 合并语义（与流式 upsertToolCard 一致）：update 事件未携带的字段
+          // 保留 tool_call 时的值——title/status 空串、input/output 为 null/undefined
+          // 都视为未携带，避免刷新后入参/出参丢失
+          map.set(e.toolId, {
+            ...existing,
+            ...e,
+            title: e.title || existing.title,
+            status: e.status || existing.status,
+            input: e.input ?? existing.input,
+            output: e.output ?? existing.output,
+          })
+        } else {
+          map.set(e.toolId, e)
+        }
       }
     }
     return [...map.values()].map((e) => ({
       toolId: e.toolId as string,
       title: e.title,
       status: e.status,
+      // 入参/出参透传，供 ToolCallCard 展开详情；旧消息无此字段则为 undefined
+      input: e.input,
+      output: e.output,
     }))
   } catch {
     // events 不是合法 JSON：静默跳过工具卡片，不影响文本渲染
@@ -62,15 +105,16 @@ const toolCards = computed<ToolCard[]>(() => {
 
 <template>
   <div class="flex flex-col gap-2" :class="isUser ? 'items-end' : 'items-start'">
-    <!-- 思维/推理文本（仅流式期间有值；折叠展示，点击展开查看） -->
+    <!-- 思维/推理文本（流式实时 + 历史从 events 恢复；折叠展示，点击展开查看） -->
+    <!-- 与 AI 内容一致：固定占用整个可用内容宽度（w-full），无 max 宽度限制 -->
     <details
-      v-if="!isUser && message.reasoning"
-      class="w-full max-w-[85%] rounded-lg bg-amber-50/70 px-3 py-2 text-xs leading-relaxed text-slate-500 ring-1 ring-inset ring-amber-100"
+      v-if="!isUser && reasoning"
+      class="w-full rounded-lg bg-amber-50/70 px-3 py-2 text-xs leading-relaxed text-slate-500 ring-1 ring-inset ring-amber-100"
     >
       <summary class="cursor-pointer select-none font-medium text-slate-400">
         {{ t('chat.reasoning') }}
       </summary>
-      <div class="mt-1.5 whitespace-pre-wrap">{{ message.reasoning }}</div>
+      <div class="mt-1.5 whitespace-pre-wrap">{{ reasoning }}</div>
     </details>
 
     <!-- 历史工具调用卡片（assistant 消息上方，与正文同宽） -->

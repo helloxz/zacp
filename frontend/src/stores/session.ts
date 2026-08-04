@@ -32,6 +32,10 @@ export interface ToolCard {
   toolId: string
   title?: string
   status?: string
+  /** 工具调用入参（后端透传 RawInput，可能很大，展示时截断/滚动） */
+  input?: unknown
+  /** 工具调用出参（后端透传 RawOutput，可能很大，展示时截断/滚动） */
+  output?: unknown
 }
 
 /** 待处理的权限请求（permission.request 后、用户选择前） */
@@ -292,12 +296,23 @@ export const useSessionStore = defineStore('session', () => {
     }
     const existing = activeToolCards.value.find((c) => c.toolId === toolId)
     if (existing) {
-      if (event.title !== undefined) existing.title = event.title
-      if (event.status !== undefined) existing.status = event.status
+      // title/status 用 truthy 判断：后端把 nil 归一为空串，空串不应覆盖已有标题
+      if (event.title) existing.title = event.title
+      if (event.status) existing.status = event.status
+      // 入参/出参用 != null 判断（null 与 undefined 都视为未携带）：
+      // update 事件通常不携带 input/output，避免把 tool_call 阶段的入参清掉
+      if (event.input != null) existing.input = event.input
+      if (event.output != null) existing.output = event.output
     } else {
       activeToolCards.value = [
         ...activeToolCards.value,
-        { toolId, title: event.title, status: event.status ?? 'running' },
+        {
+          toolId,
+          title: event.title,
+          status: event.status ?? 'running',
+          input: event.input,
+          output: event.output,
+        },
       ]
     }
   }

@@ -27,3 +27,11 @@ body {
     'Microsoft YaHei',
     sans-serif;
 }
+
+/*
+ * 内容宽度容器：AI 消息列表与底部输入框共用，保证两者宽度始终一致。
+ * 调整对话宽度只需改这里（当前 max-w-4xl = 896px）。
+ */
+.content-container {
+  @apply mx-auto w-full max-w-4xl;
+}

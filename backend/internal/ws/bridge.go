@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"reflect"
 	"strings"
 	"sync"
 	"time"
@@ -100,15 +101,39 @@ func (b *EventBridge) handleConfigOptions(sessionID string, opts []acp.SessionCo
 	b.log.Info("config options updated", "sessionID", sessionID, "count", len(opts))
 }
 
+// isNilOrEmpty 严格判空：interface 为 nil、nil 指针/切片/map/channel/func、空字符串
+// 都视为「无值」。SDK 的 RawInput/RawOutput 可能是类型化 nil（如 json.RawMessage），
+// 直接 `!= nil` 判不准确，会把 nil 广播成 "input":null，前端据此覆盖掉已有人参。
+func isNilOrEmpty(v any) bool {
+	if v == nil {
+		return true
+	}
+	rv := reflect.ValueOf(v)
+	switch rv.Kind() {
+	case reflect.Ptr, reflect.Interface, reflect.Slice, reflect.Map, reflect.Chan, reflect.Func:
+		return rv.IsNil()
+	case reflect.String:
+		return rv.Len() == 0
+	}
+	return false
+}
+
 // handleEvent 处理 ACP 事件并广播到 WebSocket
 func (b *EventBridge) handleEvent(sessionID string, event client.Event) {
 	// 将 ACP 事件转换为 WebSocket 事件
 	wsEvent := map[string]interface{}{
-		"type":    event.Type,
-		"text":    event.Text,
-		"title":   event.Title,
-		"status":  event.Status,
-		"toolId":  event.ToolID,
+		"type":   event.Type,
+		"text":   event.Text,
+		"title":  event.Title,
+		"status": event.Status,
+		"toolId": event.ToolID,
+	}
+	// 工具调用入参/出参：严格判空后省略字段，避免广播冗余的 null
+	if !isNilOrEmpty(event.Input) {
+		wsEvent["input"] = event.Input
+	}
+	if !isNilOrEmpty(event.Output) {
+		wsEvent["output"] = event.Output
 	}
 
 	// 广播事件到该会话的所有连接
@@ -311,4 +336,3 @@ func (b *EventBridge) recoverSession(ctx context.Context, dbSession *model.Sessi
 	}
 	return newID, true
 }
-

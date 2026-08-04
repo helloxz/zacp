@@ -21,6 +21,10 @@ type Event struct {
 	Status  string `json:"status,omitempty"`
 	ToolID  string `json:"toolId,omitempty"`
 	RawKind string `json:"rawKind,omitempty"`
+	// Input/Output 为工具调用的入参/出参（对应 ACP 的 RawInput/RawOutput），
+	// 供前端在消息里展开查看详情；nil 时省略不序列化。
+	Input  any `json:"input,omitempty"`
+	Output any `json:"output,omitempty"`
 }
 
 // Bridge is an ACP Client that buffers session updates and auto-approves permissions (demo).
@@ -181,6 +185,9 @@ func (b *Bridge) SessionUpdate(ctx context.Context, params acp.SessionNotificati
 			Title:  u.ToolCall.Title,
 			Status: string(u.ToolCall.Status),
 			ToolID: string(u.ToolCall.ToolCallId),
+			// 入参/出参透传给前端（可能是大 JSON，展示时由前端截断/滚动）
+			Input:  u.ToolCall.RawInput,
+			Output: u.ToolCall.RawOutput,
 		})
 	case u.ToolCallUpdate != nil:
 		status := ""
@@ -196,6 +203,9 @@ func (b *Bridge) SessionUpdate(ctx context.Context, params acp.SessionNotificati
 			Title:  title,
 			Status: status,
 			ToolID: string(u.ToolCallUpdate.ToolCallId),
+			// update 通知语义为替换：非 nil 才覆盖，保持与流式工具卡一致
+			Input:  u.ToolCallUpdate.RawInput,
+			Output: u.ToolCallUpdate.RawOutput,
 		})
 	case u.Plan != nil:
 		b.push(Event{Type: "plan", RawKind: "plan"})

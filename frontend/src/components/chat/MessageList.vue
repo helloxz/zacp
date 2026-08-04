@@ -39,7 +39,7 @@ watch(
 
 <template>
   <div ref="scroller" class="relative overflow-y-auto" @scroll="onScroll">
-    <div class="mx-auto flex w-full max-w-3xl flex-col gap-4 px-4 py-6">
+    <div class="content-container flex flex-col gap-4 px-4 py-6">
       <MessageItem
         v-for="m in sessionStore.activeMessages"
         :key="m.id"

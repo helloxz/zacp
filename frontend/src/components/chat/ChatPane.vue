@@ -119,7 +119,9 @@ function onNewProjectFromHero() {
         </button>
       </div>
 
-      <div class="px-4 pb-4 pt-2">
+      <!-- 底部输入条：与 AI 内容共用 content-container 宽度（max-w-4xl 居中）；
+           左右不加 padding/margin，输入框卡片直接占满容器全宽 -->
+      <div class="content-container pb-4 pt-2">
         <Composer
           mode="bar"
           :agent-id="current.agentId"

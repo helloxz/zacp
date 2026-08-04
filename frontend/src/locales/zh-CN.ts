@@ -60,6 +60,9 @@ export default {
     completed: '完成',
     error: '出错',
     unknown: '工具调用',
+    input: '参数',
+    output: '结果',
+    truncated: '…（内容过长已截断）',
   },
   permission: {
     title: '权限请求',

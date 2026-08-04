@@ -20,6 +20,10 @@ export interface WsEvent {
   title?: string
   status?: string
   toolId?: string
+  /** 工具调用入参（tool_call / tool_call_update 事件携带，可能是大 JSON） */
+  input?: unknown
+  /** 工具调用出参（tool_call / tool_call_update 事件携带，可能是大 JSON） */
+  output?: unknown
 }
 
 /** 权限选项（后端广播 permission.request 的 options 结构） */
