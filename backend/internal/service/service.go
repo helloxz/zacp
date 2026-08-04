@@ -15,6 +15,15 @@ import (
 	"github.com/zacp/zacp/internal/acp/manager"
 	"github.com/zacp/zacp/internal/model"
 	"github.com/zacp/zacp/internal/store"
+	"gorm.io/gorm"
+)
+
+// 配置设置相关的可区分错误（handler 据此映射 HTTP 状态码）
+var (
+	// ErrSessionNotFound 会话不存在或已删除（映射 404）
+	ErrSessionNotFound = errors.New("session not found")
+	// ErrNoACPSession 会话尚未建立 ACP 连接（草稿/连接中断，映射 409）
+	ErrNoACPSession = errors.New("session has no acp session")
 )
 
 // WorkspaceService 工作目录服务
@@ -367,10 +376,13 @@ func (s *SessionService) GetConfigOptions(sessionID uint) ([]model.ConfigOptionD
 func (s *SessionService) SetConfigOption(ctx context.Context, sessionID uint, optionID, valueID string) error {
 	session, err := s.sessionRepo.GetByID(sessionID)
 	if err != nil {
-		return fmt.Errorf("session not found: %w", err)
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return ErrSessionNotFound
+		}
+		return fmt.Errorf("get session: %w", err)
 	}
 	if session.ACPSessionID == "" {
-		return errors.New("session has no acp session")
+		return ErrNoACPSession
 	}
 
 	// 从已存配置项判断类型（缺省按 select 处理）
@@ -389,11 +401,11 @@ func (s *SessionService) SetConfigOption(ctx context.Context, sessionID uint, op
 
 	if optType == "boolean" {
 		val := valueID == "true" || valueID == "1"
-		if err := s.mgr.SetSessionConfigOptionBoolean(ctx, session.AgentID, session.ACPSessionID, optionID, val); err != nil {
+		if err := s.setConfigOptionBooleanWithRecovery(ctx, session, optionID, val); err != nil {
 			return err
 		}
 	} else {
-		if err := s.mgr.SetSessionConfigOption(ctx, session.AgentID, session.ACPSessionID, optionID, valueID); err != nil {
+		if err := s.setConfigOptionWithRecovery(ctx, session, optionID, valueID); err != nil {
 			return err
 		}
 	}
@@ -412,6 +424,57 @@ func (s *SessionService) SetConfigOption(ctx context.Context, sessionID uint, op
 		if data, err := json.Marshal(opts); err == nil {
 			_ = s.sessionRepo.UpdateConfigOptions(sessionID, string(data))
 		}
+	}
+	return nil
+}
+
+// setConfigOptionWithRecovery 执行一次 select 型配置设置；
+// 失败且为「agent 侧会话不存在/已失效」（unknown session，如后端或 agent 重启后
+// DB 中的 acp_session_id 在 agent 内存中已丢失）时，自动恢复会话并重试一次，用户无感知。
+// 恢复策略与 ws bridge 的 prompt 路径一致（manager.RecoverSession）：
+// 优先 ACP session/load 保留 agent 持久化上下文，失败则 session/new 重建并更新 DB。
+func (s *SessionService) setConfigOptionWithRecovery(ctx context.Context, session *model.Session, optionID, valueID string) error {
+	if err := s.mgr.SetSessionConfigOption(ctx, session.AgentID, session.ACPSessionID, optionID, valueID); err == nil {
+		return nil
+	} else if !manager.IsUnknownSessionErr(err) {
+		return err
+	}
+	// 会话失效：恢复后重试一次
+	if err := s.recoverACPSession(ctx, session); err != nil {
+		return fmt.Errorf("session %s lost on agent, recover failed: %w", session.ACPSessionID, err)
+	}
+	return s.mgr.SetSessionConfigOption(ctx, session.AgentID, session.ACPSessionID, optionID, valueID)
+}
+
+// setConfigOptionBooleanWithRecovery boolean 型变体，逻辑同 setConfigOptionWithRecovery。
+func (s *SessionService) setConfigOptionBooleanWithRecovery(ctx context.Context, session *model.Session, optionID string, value bool) error {
+	if err := s.mgr.SetSessionConfigOptionBoolean(ctx, session.AgentID, session.ACPSessionID, optionID, value); err == nil {
+		return nil
+	} else if !manager.IsUnknownSessionErr(err) {
+		return err
+	}
+	if err := s.recoverACPSession(ctx, session); err != nil {
+		return fmt.Errorf("session %s lost on agent, recover failed: %w", session.ACPSessionID, err)
+	}
+	return s.mgr.SetSessionConfigOptionBoolean(ctx, session.AgentID, session.ACPSessionID, optionID, value)
+}
+
+// recoverACPSession 恢复失效的 ACP session；重建时把新 id 更新到 DB（session 对象同步刷新）。
+// cwd 取会话工作区路径（与创建时一致，ACP 协议要求），空则回退 defaultCwd。
+func (s *SessionService) recoverACPSession(ctx context.Context, session *model.Session) error {
+	cwd := session.Workspace.Path
+	if cwd == "" {
+		cwd = s.defaultCwd
+	}
+	newID, rebuilt, err := s.mgr.RecoverSession(ctx, session.AgentID, session.ACPSessionID, cwd)
+	if err != nil {
+		return err
+	}
+	if rebuilt {
+		if err := s.sessionRepo.UpdateACPSessionID(session.ID, newID); err != nil {
+			return fmt.Errorf("update acp session id: %w", err)
+		}
+		session.ACPSessionID = newID
 	}
 	return nil
 }

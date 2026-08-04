@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, h, ref, watch } from 'vue'
+import type { VNodeChild } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { SendOutline, StopOutline } from '@vicons/ionicons5'
 import { NIcon } from 'naive-ui'
@@ -43,12 +44,29 @@ const booleanConfigOptions = computed(() =>
   sessionStore.configOptions.filter((o) => o.type === 'boolean'),
 )
 
+/** 配置项变更失败时的提示（3 秒后自动消失）；成功后清空 */
+const configError = ref('')
+let configErrorTimer: ReturnType<typeof setTimeout> | undefined
+function showConfigError(raw: unknown) {
+  const msg = raw instanceof Error ? raw.message : String(raw)
+  // 后端 message 形如 `set config option: {"code":-32602,"message":"session/set_config_option: invalid value ..."}`
+  // 提取内层 message，用户能直接看懂 agent 拒绝原因（如值已失效/选项未知）
+  const inner = msg.match(/"message":"((?:[^"\\]|\\.)*)"/)
+  configError.value = inner ? inner[1] : msg
+  clearTimeout(configErrorTimer)
+  configErrorTimer = setTimeout(() => {
+    configError.value = ''
+  }, 3000)
+}
+
 /** 配置项变更：调后端 set_config_option，成功后本地回写 currentValue */
 async function onConfigChange(optionId: string, valueId: string) {
   try {
     await sessionStore.setConfigOption(optionId, valueId)
-  } catch {
-    // 设置失败：保持原值（下轮进入会话时会重新加载）
+    configError.value = ''
+  } catch (e) {
+    // 设置失败：保持原值并提示用户真实原因（agent 拒绝时多为列表已过期）
+    showConfigError(e)
   }
 }
 
@@ -57,6 +75,12 @@ async function onConfigChange(optionId: string, valueId: string) {
  * 模型选项名约定为「渠道/模型名」：提取第一个 / 前的内容作为渠道分组标题（group 不可选），
  * 其下为模型子项，同一渠道聚合为一组；不含 / 的选项保持普通项。
  * 对全部 select 通用：其余选项（思考模式等）无 / 时不受影响。
+ *
+ * 关键设计（解决「选中 A 却像传了 B」的感知错位）：
+ * 子项 label 用完整「渠道/模型」名、value 用 agent 下发的完整 value（两者必须一致，agent 才接受）；
+ * 下拉列表内的展示由 renderLabel 剥离渠道前缀只显示模型名（避免组内重复显示渠道），
+ * 而选中后的回显（n-select 固定显示 option.label）则是完整「渠道/模型」，与请求体完全一致，
+ * 用户能看到自己选的是哪个渠道的哪个模型。
  */
 function buildSelectOptions(
   options?: ConfigOptionValue[],
@@ -67,19 +91,28 @@ function buildSelectOptions(
   for (const v of options ?? []) {
     const idx = v.name.indexOf('/')
     if (idx > 0 && idx < v.name.length - 1) {
-      // 「渠道/模型」格式：归入对应渠道分组
+      // 「渠道/模型」格式：归入对应渠道分组；label 保留完整路径供回显，modelName 供下拉展示
       const channel = v.name.slice(0, idx)
-      const label = v.name.slice(idx + 1)
+      const modelName = v.name.slice(idx + 1)
       if (!groups.has(channel)) groups.set(channel, [])
-      groups.get(channel)!.push({ label, value: v.value })
+      groups.get(channel)!.push({ label: v.name, value: v.value, modelName })
     } else {
-      result.push({ label: v.name, value: v.value })
+      // 无 / 的普通选项（思考模式等）：回显与展示一致
+      result.push({ label: v.name, value: v.value, modelName: v.name })
     }
   }
   for (const [label, children] of groups) {
     result.push({ type: 'group', label, key: label, children })
   }
   return result
+}
+
+/**
+ * naive-ui render-label：只影响下拉列表内的选项渲染，不影响选中回显（回显固定用 option.label）。
+ * 分组标题（type=group）无 modelName → 显示渠道名；子项/普通项 → 显示模型名。
+ */
+function renderConfigOptionLabel(option: SelectOption & { modelName?: string }): VNodeChild {
+  return h('span', option.modelName ?? String(option.label))
 }
 
 const text = ref('')
@@ -133,6 +166,14 @@ function onKeydown(e: KeyboardEvent) {
       @keydown="onKeydown"
     />
 
+    <!-- 配置项更新失败提示条：显示 agent 真实拒绝原因（如列表过期），3 秒自动消失 -->
+    <div
+      v-if="configError"
+      class="mt-1.5 rounded bg-red-50 px-2 py-1 text-xs leading-relaxed text-red-500"
+    >
+      {{ t('chat.configUpdateFailed') }}：{{ configError }}
+    </div>
+
     <!-- 底部选项行：左侧配置项（模型/思考强度等），右侧仅图标发送按钮；与输入框同卡片，构成整体 -->
     <!-- flex-1：选项容器占满除发送按钮外的剩余宽度；flex-nowrap：选项强制一行，极端情况才横向滚动兜底 -->
     <div class="mt-2 flex items-center justify-between gap-2">
@@ -150,8 +191,8 @@ function onKeydown(e: KeyboardEvent) {
               size="tiny"
               class="opt-select"
               :options="buildSelectOptions(opt.options)"
+              :render-label="renderConfigOptionLabel"
               :consistent-menu-width="false"
-              filterable
               @update:value="(v: string) => onConfigChange(opt.id, v)"
             />
           </div>

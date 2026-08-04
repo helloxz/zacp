@@ -229,6 +229,46 @@ func (m *Manager) LoadSession(ctx context.Context, agentID, sessionID string) er
 	return conn.LoadSession(ctx, acp.SessionId(sessionID))
 }
 
+// IsUnknownSessionErr 判断 ACP 错误是否为「agent 侧会话不存在/已失效」。
+// 后端或 agent 重启后，DB 中记录的 acp_session_id 在 agent 内存中已丢失，
+// agent 会返回形如 `session/xxx: unknown session <uuid>` 的 JSON-RPC 错误。
+// ws bridge（prompt 路径）与 service（config-options 路径）共用此判断触发自动恢复。
+func IsUnknownSessionErr(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "unknown session")
+}
+
+// RecoverSession 恢复 agent 侧已失效的 ACP session（unknown session 时调用）：
+//  1. 优先 ACP session/load：agent 支持持久化会话时（reasonix 等），可原样恢复对话上下文
+//  2. 失败则 session/new 重建（上下文丢失，但会话可继续使用）
+//
+// 返回最终可用的 ACP session id，以及是否发生了重建（load 成功时 id 不变、rebuilt=false）。
+// 调用方在 rebuilt=true 时需要把新 id 更新到 DB，并（如适用）重新绑定事件回调。
+func (m *Manager) RecoverSession(ctx context.Context, agentID, oldAcpID, cwd string) (string, bool, error) {
+	m.mu.Lock()
+	conn, exists := m.agents[agentID]
+	m.mu.Unlock()
+	if !exists {
+		return "", false, fmt.Errorf("agent '%s' not started", agentID)
+	}
+
+	if err := conn.LoadSession(ctx, acp.SessionId(oldAcpID)); err == nil {
+		m.log.Info("acp session recovered via load", "agent", agentID, "sessionId", oldAcpID)
+		return oldAcpID, false, nil
+	}
+
+	// load 失败：新建 ACP session（沿用 cwd；空时回退 provider 默认工作区）
+	provider, _ := m.registry.Get(agentID)
+	if cwd == "" && provider != nil {
+		cwd = provider.ResolveCwd(m.defaultCwd)
+	}
+	newID, _, err := conn.CreateSession(ctx, cwd)
+	if err != nil {
+		return "", false, fmt.Errorf("recreate acp session: %w", err)
+	}
+	m.log.Info("acp session recreated", "agent", agentID, "old", oldAcpID, "new", newID)
+	return string(newID), true, nil
+}
+
 // Prompt 向指定 session 发送消息。
 func (m *Manager) Prompt(ctx context.Context, agentID, sessionID, message string) (*PromptResult, error) {
 	m.mu.Lock()

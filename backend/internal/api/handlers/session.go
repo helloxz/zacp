@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"errors"
 	"net/http"
 	"strconv"
 
@@ -162,9 +163,22 @@ func (h *SessionHandler) SetConfigOption(c *gin.Context) {
 	}
 
 	if err := h.svc.SetConfigOption(c.Request.Context(), uint(id), req.OptionID, req.ValueID); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": gin.H{"code": "set_config_option_failed", "message": err.Error()},
-		})
+		// 区分错误语义：会话不存在 404、未建立 ACP 连接 409、
+		// agent 拒绝（值无效/选项未知，属客户端参数问题）400，其余为服务器错误 500
+		switch {
+		case errors.Is(err, service.ErrSessionNotFound):
+			c.JSON(http.StatusNotFound, gin.H{
+				"error": gin.H{"code": "session_not_found", "message": err.Error()},
+			})
+		case errors.Is(err, service.ErrNoACPSession):
+			c.JSON(http.StatusConflict, gin.H{
+				"error": gin.H{"code": "no_acp_session", "message": err.Error()},
+			})
+		default:
+			c.JSON(http.StatusBadRequest, gin.H{
+				"error": gin.H{"code": "set_config_option_failed", "message": err.Error()},
+			})
+		}
 		return
 	}
 
