@@ -1,0 +1,31 @@
+{
+  "name": "zacp-frontend",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 0.0.0.0 --port 8681",
+    "build": "vue-tsc -b && vite build",
+    "preview": "vite preview --host 0.0.0.0 --port 8681"
+  },
+  "dependencies": {
+    "@vicons/ionicons5": "^0.13.0",
+    "naive-ui": "^2.44.1",
+    "pinia": "^4.0.2",
+    "vue": "^3.5.40",
+    "vue-i18n": "11",
+    "vue-router": "4"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.3.3",
+    "@types/node": "^24.13.3",
+    "@vitejs/plugin-vue": "^6.0.8",
+    "@vue/tsconfig": "^0.9.1",
+    "tailwindcss": "^4.3.3",
+    "typescript": "~6.0.2",
+    "unplugin-auto-import": "^21.1.0",
+    "unplugin-vue-components": "^32.1.0",
+    "vite": "^8.2.0",
+    "vue-tsc": "^3.3.8"
+  }
+}

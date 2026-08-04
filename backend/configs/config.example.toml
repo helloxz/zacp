@@ -1,0 +1,50 @@
+# zacp 运行时配置样例
+# 复制为 ~/.zacp/config.toml 并按需修改
+# 密钥/Token 不要写在这里，用环境变量注入
+
+[server]
+addr = ":8080"
+mode = "debug"   # debug | release
+
+[session]
+# Agent 默认工作目录（不是 $ZACP_HOME，是代码项目路径）
+default_cwd = "."
+# 开发模式可设为 true 自动批准所有权限请求；生产环境必须 false
+auto_approve = false
+
+[database]
+# 相对路径相对于 $ZACP_HOME（默认 ~/.zacp）
+# 默认 data/zacp.db，即 ~/.zacp/data/zacp.db
+path = "data/zacp.db"
+
+# 多 Agent 配置：每个二进制/ACP 入口一条
+# 前端可查看所有 enabled 的 agent 并切换
+
+[[agents]]
+id = "reasonix"
+name = "Reasonix"
+enabled = true
+transport = "stdio"
+command = "reasonix"   # 或绝对路径，也可设 REASONIX_BIN 环境变量
+args = ["--acp"]
+cwd = ""               # 空则用 session.default_cwd
+
+# 示例：Pi Agent（默认禁用）
+# [[agents]]
+# id = "pi"
+# name = "Pi Agent"
+# enabled = false
+# transport = "stdio"
+# command = "pi"
+# args = ["--acp"]
+# cwd = ""
+
+# 示例：Grok（默认禁用）
+# [[agents]]
+# id = "grok"
+# name = "Grok"
+# enabled = false
+# transport = "stdio"
+# command = "grok"
+# args = ["--acp"]
+# cwd = ""

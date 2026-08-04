@@ -1,4 +1,8 @@
-// Package manager owns ACP agent processes and sessions.
+// Package manager 管理多个 Agent 进程和多个 ACP Session。
+// 核心设计：
+// - Manager 管理多个 AgentConnection（每个 agent ID 一个进程）
+// - 每个 AgentConnection 可以管理多个 Session
+// - 对外暴露：启动/停止 agent、创建/加载 session、发送 prompt、取消等
 package manager
 
 import (
@@ -8,7 +12,6 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -16,94 +19,306 @@ import (
 	acp "github.com/coder/acp-go-sdk"
 
 	acpclient "github.com/zacp/zacp/internal/acp/client"
+	"github.com/zacp/zacp/internal/acp/providers"
 )
 
-// Config for launching an ACP agent over stdio.
-type Config struct {
-	// Command is the agent binary, e.g. "reasonix".
-	Command string
-	// Args defaults to []string{"--acp"} when empty.
-	Args []string
-	// Cwd is the working directory for the agent process and NewSession.
-	Cwd string
-	// AutoApprove auto-allows tool permission requests (demo default true).
-	AutoApprove bool
-	// Env extra env vars for the agent process.
-	Env []string
-}
-
-// Manager holds one agent connection and one demo session (minimal).
+// Manager 管理多个 agent 连接和 session。
 type Manager struct {
-	log    *slog.Logger
-	cfg    Config
-	bridge *acpclient.Bridge
+	log         *slog.Logger
+	registry    *providers.ProviderRegistry
+	autoApprove bool
+	defaultCwd  string
 
-	mu      sync.Mutex
-	cmd     *exec.Cmd
-	conn    *acp.ClientSideConnection
-	stdin   io.WriteCloser
-	session acp.SessionId
-	started bool
-	// procCancel cancels the agent process lifetime (separate from Start handshake timeout).
-	procCancel context.CancelFunc
-	// promptMu serializes Prompt turns (ACP typically one active prompt per session).
-	promptMu sync.Mutex
+	mu     sync.Mutex
+	agents map[string]*AgentConnection // agentID -> connection
 }
 
-// New creates a manager (does not start the agent yet).
+// Config 管理器配置。
+type Config struct {
+	// Registry 是 Provider 注册表。
+	Registry *providers.ProviderRegistry
+	// AutoApprove 是否自动批准权限请求。
+	AutoApprove bool
+	// DefaultCwd 是默认工作目录。
+	DefaultCwd string
+}
+
+// New 创建 Manager（不启动任何 agent）。
 func New(log *slog.Logger, cfg Config) *Manager {
 	if log == nil {
 		log = slog.Default()
 	}
-	if cfg.Command == "" {
-		cfg.Command = resolveReasonix()
-	}
-	if len(cfg.Args) == 0 {
-		cfg.Args = []string{"--acp"}
-	}
-	if cfg.Cwd == "" {
-		if wd, err := os.Getwd(); err == nil {
-			cfg.Cwd = wd
-		} else {
-			cfg.Cwd = "."
-		}
-	}
-	if abs, err := filepath.Abs(cfg.Cwd); err == nil {
-		cfg.Cwd = abs
+	if cfg.DefaultCwd == "" {
+		cfg.DefaultCwd = "."
 	}
 	return &Manager{
-		log:    log,
-		cfg:    cfg,
-		bridge: acpclient.New(log, cfg.AutoApprove),
+		log:         log,
+		registry:    cfg.Registry,
+		autoApprove: cfg.AutoApprove,
+		defaultCwd:  cfg.DefaultCwd,
+		agents:      make(map[string]*AgentConnection),
 	}
 }
 
-// Bridge returns the underlying ACP client bridge (for live event hooks).
-func (m *Manager) Bridge() *acpclient.Bridge { return m.bridge }
-
-// SessionID returns the current ACP session id (empty if not started).
-func (m *Manager) SessionID() string {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	return string(m.session)
+// AgentStatus agent 运行状态。
+type AgentStatus struct {
+	AgentID   string `json:"agentId"`
+	Name      string `json:"name"`
+	Running   bool   `json:"running"`
+	SessionID string `json:"sessionId,omitempty"` // 当前活跃 session（如果有）
 }
 
-// Start launches the agent, initializes ACP, and opens a session.
-// ctx bounds only the handshake (Initialize / NewSession), not the agent process lifetime.
-func (m *Manager) Start(ctx context.Context) error {
+// GetAgentStatus 返回指定 agent 的状态。
+func (m *Manager) GetAgentStatus(agentID string) (*AgentStatus, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if m.started {
+
+	provider, ok := m.registry.Get(agentID)
+	if !ok {
+		return nil, fmt.Errorf("agent '%s' not found", agentID)
+	}
+
+	status := &AgentStatus{
+		AgentID: agentID,
+		Name:    provider.Name,
+		Running: false,
+	}
+
+	if conn, exists := m.agents[agentID]; exists {
+		conn.mu.Lock()
+		status.Running = conn.started
+		if conn.currentSession != nil {
+			status.SessionID = string(conn.currentSession.ID)
+		}
+		conn.mu.Unlock()
+	}
+
+	return status, nil
+}
+
+// ListAgents 返回所有已注册 agent 的状态列表。
+func (m *Manager) ListAgents() []*AgentStatus {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	ids := m.registry.List()
+	result := make([]*AgentStatus, 0, len(ids))
+	for _, id := range ids {
+		provider, _ := m.registry.Get(id)
+		status := &AgentStatus{
+			AgentID: id,
+			Name:    provider.Name,
+			Running: false,
+		}
+		if conn, exists := m.agents[id]; exists {
+			conn.mu.Lock()
+			status.Running = conn.started
+			if conn.currentSession != nil {
+				status.SessionID = string(conn.currentSession.ID)
+			}
+			conn.mu.Unlock()
+		}
+		result = append(result, status)
+	}
+	return result
+}
+
+// StartAgent 启动指定 agent 进程（如果未启动）。
+func (m *Manager) StartAgent(ctx context.Context, agentID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	provider, ok := m.registry.Get(agentID)
+	if !ok {
+		return fmt.Errorf("agent '%s' not found", agentID)
+	}
+
+	// 检查是否已启动
+	if conn, exists := m.agents[agentID]; exists {
+		conn.mu.Lock()
+		running := conn.started
+		conn.mu.Unlock()
+		if running {
+			return nil // 已启动
+		}
+	}
+
+	// 创建新连接
+	conn := NewAgentConnection(m.log, provider, m.autoApprove)
+	if err := conn.Start(ctx); err != nil {
+		return fmt.Errorf("start agent '%s': %w", agentID, err)
+	}
+
+	m.agents[agentID] = conn
+	return nil
+}
+
+// StopAgent 停止指定 agent 进程。
+func (m *Manager) StopAgent(agentID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	conn, exists := m.agents[agentID]
+	if !exists {
+		return nil // 未启动，无需停止
+	}
+
+	if err := conn.Close(); err != nil {
+		return fmt.Errorf("stop agent '%s': %w", agentID, err)
+	}
+
+	delete(m.agents, agentID)
+	return nil
+}
+
+// CreateSession 在指定 agent 上创建新 session。
+func (m *Manager) CreateSession(ctx context.Context, agentID, cwd string) (string, error) {
+	m.mu.Lock()
+	conn, exists := m.agents[agentID]
+	m.mu.Unlock()
+
+	if !exists {
+		return "", fmt.Errorf("agent '%s' not started", agentID)
+	}
+
+	provider, _ := m.registry.Get(agentID)
+	if cwd == "" {
+		cwd = provider.ResolveCwd(m.defaultCwd)
+	}
+
+	sessionID, err := conn.CreateSession(ctx, cwd)
+	if err != nil {
+		return "", err
+	}
+	return string(sessionID), nil
+}
+
+// LoadSession 恢复已有 session（用于会话恢复）。
+func (m *Manager) LoadSession(ctx context.Context, agentID, sessionID string) error {
+	m.mu.Lock()
+	conn, exists := m.agents[agentID]
+	m.mu.Unlock()
+
+	if !exists {
+		return fmt.Errorf("agent '%s' not started", agentID)
+	}
+
+	return conn.LoadSession(ctx, acp.SessionId(sessionID))
+}
+
+// Prompt 向指定 session 发送消息。
+func (m *Manager) Prompt(ctx context.Context, agentID, sessionID, message string) (*PromptResult, error) {
+	m.mu.Lock()
+	conn, exists := m.agents[agentID]
+	m.mu.Unlock()
+
+	if !exists {
+		return nil, fmt.Errorf("agent '%s' not started", agentID)
+	}
+
+	return conn.Prompt(ctx, acp.SessionId(sessionID), message)
+}
+
+// Cancel 取消指定 session 的当前 prompt。
+func (m *Manager) Cancel(ctx context.Context, agentID, sessionID string) error {
+	m.mu.Lock()
+	conn, exists := m.agents[agentID]
+	m.mu.Unlock()
+
+	if !exists {
+		return fmt.Errorf("agent '%s' not started", agentID)
+	}
+
+	return conn.Cancel(ctx, acp.SessionId(sessionID))
+}
+
+// Close 关闭所有 agent 连接。
+func (m *Manager) Close() error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	var errs []error
+	for id, conn := range m.agents {
+		if err := conn.Close(); err != nil {
+			errs = append(errs, fmt.Errorf("close agent '%s': %w", id, err))
+		}
+	}
+	m.agents = make(map[string]*AgentConnection)
+
+	if len(errs) > 0 {
+		return fmt.Errorf("close errors: %v", errs)
+	}
+	return nil
+}
+
+// GetBridge 返回指定 agent 的 bridge（用于事件订阅）。
+func (m *Manager) GetBridge(agentID string) (*acpclient.Bridge, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	conn, exists := m.agents[agentID]
+	if !exists {
+		return nil, fmt.Errorf("agent '%s' not started", agentID)
+	}
+
+	return conn.Bridge(), nil
+}
+
+// AgentConnection 管理单个 agent 进程的连接。
+type AgentConnection struct {
+	log      *slog.Logger
+	provider *providers.Provider
+	bridge   *acpclient.Bridge
+
+	mu            sync.Mutex
+	cmd           *exec.Cmd
+	conn          *acp.ClientSideConnection
+	stdin         io.WriteCloser
+	currentSession *SessionState
+	started       bool
+	procCancel    context.CancelFunc
+	promptMu      sync.Mutex // 序列化 prompt 调用
+}
+
+// SessionState 单个 session 的状态。
+type SessionState struct {
+	ID      acp.SessionId
+	Cwd     string
+	Created time.Time
+}
+
+// NewAgentConnection 创建 agent 连接（不启动进程）。
+func NewAgentConnection(log *slog.Logger, provider *providers.Provider, autoApprove bool) *AgentConnection {
+	if log == nil {
+		log = slog.Default()
+	}
+	return &AgentConnection{
+		log:      log,
+		provider: provider,
+		bridge:   acpclient.New(log, autoApprove),
+	}
+}
+
+// Bridge 返回底层 bridge。
+func (c *AgentConnection) Bridge() *acpclient.Bridge {
+	return c.bridge
+}
+
+// Start 启动 agent 进程并初始化 ACP。
+func (c *AgentConnection) Start(ctx context.Context) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if c.started {
 		return nil
 	}
 
-	// Process lifetime is independent of the handshake timeout context.
+	// 启动进程
 	procCtx, procCancel := context.WithCancel(context.Background())
-	cmd := exec.CommandContext(procCtx, m.cfg.Command, m.cfg.Args...)
-	cmd.Dir = m.cfg.Cwd
-	cmd.Env = append(os.Environ(), m.cfg.Env...)
-	// Agent stderr -> our log for debugging.
-	cmd.Stderr = &logWriter{log: m.log, prefix: "reasonix"}
+	cmd := exec.CommandContext(procCtx, c.provider.Command, c.provider.Args...)
+	cmd.Dir = c.provider.ResolveCwd("")
+	cmd.Env = append(os.Environ(), c.provider.Env...)
+	cmd.Stderr = &logWriter{log: c.log, prefix: c.provider.ID}
 
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
@@ -117,15 +332,16 @@ func (m *Manager) Start(ctx context.Context) error {
 		return fmt.Errorf("stdout pipe: %w", err)
 	}
 
-	m.log.Info("starting agent", "command", m.cfg.Command, "args", m.cfg.Args, "cwd", m.cfg.Cwd)
+	c.log.Info("starting agent", "id", c.provider.ID, "command", c.provider.Command, "cwd", cmd.Dir)
 	if err := cmd.Start(); err != nil {
 		procCancel()
 		_ = stdin.Close()
-		return fmt.Errorf("start %s: %w (is reasonix on PATH? set REASONIX_BIN)", m.cfg.Command, err)
+		return fmt.Errorf("start %s: %w", c.provider.Command, err)
 	}
 
-	conn := acp.NewClientSideConnection(m.bridge, stdin, stdout)
-	conn.SetLogger(m.log)
+	// 初始化 ACP
+	conn := acp.NewClientSideConnection(c.bridge, stdin, stdout)
+	conn.SetLogger(c.log)
 
 	initResp, err := conn.Initialize(ctx, acp.InitializeRequest{
 		ProtocolVersion: acp.ProtocolVersionNumber,
@@ -135,7 +351,7 @@ func (m *Manager) Start(ctx context.Context) error {
 		},
 		ClientInfo: &acp.Implementation{
 			Name:    "zacp",
-			Title:   acp.Ptr("zacp demo"),
+			Title:   acp.Ptr("zacp gateway"),
 			Version: "0.1.0",
 		},
 	})
@@ -145,68 +361,106 @@ func (m *Manager) Start(ctx context.Context) error {
 		_, _ = cmd.Process.Wait()
 		return fmt.Errorf("acp initialize: %w", err)
 	}
-	m.log.Info("acp initialized", "protocol", initResp.ProtocolVersion)
+	c.log.Info("acp initialized", "agent", c.provider.ID, "protocol", initResp.ProtocolVersion)
 
-	sess, err := conn.NewSession(ctx, acp.NewSessionRequest{
-		Cwd:        m.cfg.Cwd,
-		McpServers: []acp.McpServer{},
-	})
-	if err != nil {
-		procCancel()
-		_ = cmd.Process.Kill()
-		_, _ = cmd.Process.Wait()
-		return fmt.Errorf("acp newSession: %w", err)
-	}
-	m.log.Info("session created", "sessionId", sess.SessionId)
+	c.cmd = cmd
+	c.conn = conn
+	c.stdin = stdin
+	c.started = true
+	c.procCancel = procCancel
 
-	m.cmd = cmd
-	m.conn = conn
-	m.stdin = stdin
-	m.session = sess.SessionId
-	m.started = true
-	m.procCancel = procCancel
-
-	// Reap process in background.
+	// 后台回收进程
 	go func() {
 		err := cmd.Wait()
-		m.log.Info("agent process exited", "err", err)
-		m.mu.Lock()
-		m.started = false
-		m.mu.Unlock()
+		c.log.Info("agent process exited", "agent", c.provider.ID, "err", err)
+		c.mu.Lock()
+		c.started = false
+		c.mu.Unlock()
 	}()
 
 	return nil
 }
 
-// ChatResult is the outcome of one prompt turn.
-type ChatResult struct {
-	SessionID  string             `json:"sessionId"`
-	Reply      string             `json:"reply"`
-	StopReason string             `json:"stopReason,omitempty"`
-	Events     []acpclient.Event  `json:"events"`
-	DurationMs int64              `json:"durationMs"`
+// CreateSession 创建新 session。
+func (c *AgentConnection) CreateSession(ctx context.Context, cwd string) (acp.SessionId, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if !c.started || c.conn == nil {
+		return "", fmt.Errorf("agent not started")
+	}
+
+	sess, err := c.conn.NewSession(ctx, acp.NewSessionRequest{
+		Cwd:        cwd,
+		McpServers: []acp.McpServer{},
+	})
+	if err != nil {
+		return "", fmt.Errorf("create session: %w", err)
+	}
+
+	c.currentSession = &SessionState{
+		ID:      sess.SessionId,
+		Cwd:     cwd,
+		Created: time.Now(),
+	}
+
+	c.log.Info("session created", "agent", c.provider.ID, "sessionId", sess.SessionId, "cwd", cwd)
+	return sess.SessionId, nil
 }
 
-// Chat sends a user message and waits for the agent turn to complete.
-func (m *Manager) Chat(ctx context.Context, message string) (*ChatResult, error) {
+// LoadSession 恢复已有 session。
+func (c *AgentConnection) LoadSession(ctx context.Context, sessionID acp.SessionId) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if !c.started || c.conn == nil {
+		return fmt.Errorf("agent not started")
+	}
+
+	_, err := c.conn.LoadSession(ctx, acp.LoadSessionRequest{
+		SessionId: sessionID,
+	})
+	if err != nil {
+		return fmt.Errorf("load session: %w", err)
+	}
+
+	c.currentSession = &SessionState{
+		ID:      sessionID,
+		Created: time.Now(),
+	}
+
+	c.log.Info("session loaded", "agent", c.provider.ID, "sessionId", sessionID)
+	return nil
+}
+
+// PromptResult prompt 执行结果。
+type PromptResult struct {
+	SessionID  string            `json:"sessionId"`
+	Reply      string            `json:"reply"`
+	StopReason string            `json:"stopReason,omitempty"`
+	Events     []acpclient.Event `json:"events"`
+	DurationMs int64             `json:"durationMs"`
+}
+
+// Prompt 发送消息并等待响应。
+func (c *AgentConnection) Prompt(ctx context.Context, sessionID acp.SessionId, message string) (*PromptResult, error) {
 	message = strings.TrimSpace(message)
 	if message == "" {
 		return nil, fmt.Errorf("empty message")
 	}
 
-	m.mu.Lock()
-	if !m.started || m.conn == nil {
-		m.mu.Unlock()
+	c.mu.Lock()
+	if !c.started || c.conn == nil {
+		c.mu.Unlock()
 		return nil, fmt.Errorf("agent not started")
 	}
-	conn := m.conn
-	sessionID := m.session
-	m.mu.Unlock()
+	conn := c.conn
+	c.mu.Unlock()
 
-	m.promptMu.Lock()
-	defer m.promptMu.Unlock()
+	c.promptMu.Lock()
+	defer c.promptMu.Unlock()
 
-	m.bridge.Reset()
+	c.bridge.Reset()
 	start := time.Now()
 
 	resp, err := conn.Prompt(ctx, acp.PromptRequest{
@@ -217,66 +471,47 @@ func (m *Manager) Chat(ctx context.Context, message string) (*ChatResult, error)
 		return nil, fmt.Errorf("prompt: %w", err)
 	}
 
-	return &ChatResult{
+	return &PromptResult{
 		SessionID:  string(sessionID),
-		Reply:      m.bridge.AgentText(),
+		Reply:      c.bridge.AgentText(),
 		StopReason: string(resp.StopReason),
-		Events:     m.bridge.Events(),
+		Events:     c.bridge.Events(),
 		DurationMs: time.Since(start).Milliseconds(),
 	}, nil
 }
 
-// Cancel cancels the current prompt turn if any.
-func (m *Manager) Cancel(ctx context.Context) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if !m.started || m.conn == nil {
+// Cancel 取消当前 prompt。
+func (c *AgentConnection) Cancel(ctx context.Context, sessionID acp.SessionId) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if !c.started || c.conn == nil {
 		return fmt.Errorf("agent not started")
 	}
-	return m.conn.Cancel(ctx, acp.CancelNotification{SessionId: m.session})
+
+	return c.conn.Cancel(ctx, acp.CancelNotification{SessionId: sessionID})
 }
 
-// Close kills the agent process.
-func (m *Manager) Close() error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if m.procCancel != nil {
-		m.procCancel()
-		m.procCancel = nil
+// Close 关闭 agent 连接。
+func (c *AgentConnection) Close() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if c.procCancel != nil {
+		c.procCancel()
+		c.procCancel = nil
 	}
-	if m.cmd != nil && m.cmd.Process != nil {
-		_ = m.cmd.Process.Kill()
+	if c.cmd != nil && c.cmd.Process != nil {
+		_ = c.cmd.Process.Kill()
 	}
-	if m.stdin != nil {
-		_ = m.stdin.Close()
+	if c.stdin != nil {
+		_ = c.stdin.Close()
 	}
-	m.started = false
+	c.started = false
 	return nil
 }
 
-// resolveReasonix finds the reasonix binary.
-func resolveReasonix() string {
-	if v := os.Getenv("REASONIX_BIN"); v != "" {
-		return v
-	}
-	if p, err := exec.LookPath("reasonix"); err == nil {
-		return p
-	}
-	// Common install locations on this machine / pnpm global.
-	candidates := []string{
-		"/home/xiaoz/.local/share/pnpm/global/5/.pnpm/@reasonix+cli-linux-x64@1.17.1-rc.1/node_modules/@reasonix/cli-linux-x64/bin/reasonix",
-		"/data/apps/znode/bin/reasonix",
-		filepath.Join(os.Getenv("HOME"), ".local/share/pnpm/reasonix"),
-	}
-	for _, c := range candidates {
-		if st, err := os.Stat(c); err == nil && !st.IsDir() {
-			return c
-		}
-	}
-	return "reasonix"
-}
-
-// logWriter forwards agent stderr lines to slog.
+// logWriter 将 agent stderr 输出转发到 slog。
 type logWriter struct {
 	log    *slog.Logger
 	prefix string

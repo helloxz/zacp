@@ -9,18 +9,28 @@ backend/server
 # Go
 backend/vendor/
 
-# Config with secrets
+# Runtime config/db live under ~/.zacp (not in repo).
+# Keep ignoring accidental local copies under backend/configs/
+backend/configs/config.toml
 backend/configs/config.yaml
+backend/data/
+*.db
+*.db-wal
+*.db-shm
 .env
 .env.*
 !.env.example
 
-# Node / frontend (when scaffolded)
+# Node / frontend (when scaffolded; package manager is Bun)
 frontend/node_modules/
 frontend/dist/
 frontend/.next/
 frontend/out/
 frontend/coverage/
+# Prefer bun.lock only — ignore other package managers' locks if created by mistake
+frontend/package-lock.json
+frontend/pnpm-lock.yaml
+frontend/yarn.lock
 *.log
 npm-debug.log*
 yarn-debug.log*
