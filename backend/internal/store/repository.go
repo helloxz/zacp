@@ -134,10 +134,13 @@ func (r *SessionRepository) UpdateACPSessionID(id uint, acpSessionID string) err
 		Update("acp_session_id", acpSessionID).Error
 }
 
-// GetByACPSessionID 根据 ACP 协议层 session ID 获取会话（WS prompt 落库路由用）
+// GetByACPSessionID 根据 ACP 协议层 session ID 获取会话（WS prompt 落库路由用）。
+// 预加载 Workspace：服务端重启后 ACP session 失效需重建时，用 workspace.Path 作为新 session 的 cwd。
 func (r *SessionRepository) GetByACPSessionID(acpSessionID string) (*model.Session, error) {
 	var session model.Session
-	err := r.db.Where("acp_session_id = ?", acpSessionID).First(&session).Error
+	err := r.db.Preload("Workspace").
+		Where("acp_session_id = ?", acpSessionID).
+		First(&session).Error
 	if err != nil {
 		return nil, err
 	}

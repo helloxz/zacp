@@ -10,8 +10,7 @@ import (
 	"path/filepath"
 	"time"
 
-	acp "github.com/coder/acp-go-sdk"
-
+	acpclient "github.com/zacp/zacp/internal/acp/client"
 	"github.com/zacp/zacp/internal/acp/manager"
 	"github.com/zacp/zacp/internal/model"
 	"github.com/zacp/zacp/internal/store"
@@ -175,7 +174,7 @@ func (s *SessionService) CreateSession(ctx context.Context, workspaceID uint, ag
 	// 序列化配置项 JSON（会话级持久化，前端经 /config-options 端点读取）
 	configJSON := ""
 	if len(configOptions) > 0 {
-		data, marshalErr := json.Marshal(toConfigOptionDTOs(configOptions))
+		data, marshalErr := json.Marshal(acpclient.ToConfigOptionDTOs(configOptions))
 		if marshalErr == nil {
 			configJSON = string(data)
 		}
@@ -384,66 +383,4 @@ func (s *SessionService) SetConfigOption(ctx context.Context, sessionID uint, op
 	return nil
 }
 
-// toConfigOptionDTOs 将 SDK 的 SessionConfigOption 转为对外 DTO（select/boolean 变体展开）。
-func toConfigOptionDTOs(opts []acp.SessionConfigOption) []model.ConfigOptionDTO {
-	out := make([]model.ConfigOptionDTO, 0, len(opts))
-	for _, opt := range opts {
-		if sel := opt.Select; sel != nil {
-			dto := model.ConfigOptionDTO{
-				ID:           string(sel.Id),
-				Name:         sel.Name,
-				Type:         "select",
-				CurrentValue: string(sel.CurrentValue),
-			}
-			if sel.Description != nil {
-				dto.Description = *sel.Description
-			}
-			if sel.Category != nil {
-				dto.Category = string(*sel.Category)
-			}
-			dto.Options = flattenSelectOptions(sel.Options)
-			out = append(out, dto)
-		} else if b := opt.Boolean; b != nil {
-			dto := model.ConfigOptionDTO{
-				ID:           string(b.Id),
-				Name:         b.Name,
-				Type:         "boolean",
-				CurrentValue: b.CurrentValue,
-			}
-			if b.Description != nil {
-				dto.Description = *b.Description
-			}
-			if b.Category != nil {
-				dto.Category = string(*b.Category)
-			}
-			out = append(out, dto)
-		}
-	}
-	return out
-}
 
-// flattenSelectOptions 展开 select 选项（分组结构拍平成平铺列表，供前端下拉）。
-func flattenSelectOptions(opts acp.SessionConfigSelectOptions) []model.ConfigOptionValueDTO {
-	var values []model.ConfigOptionValueDTO
-	if opts.Ungrouped != nil {
-		for _, v := range *opts.Ungrouped {
-			values = append(values, configOptionValue(v))
-		}
-	}
-	if opts.Grouped != nil {
-		for _, g := range *opts.Grouped {
-			for _, v := range g.Options {
-				values = append(values, configOptionValue(v))
-			}
-		}
-	}
-	return values
-}
-
-func configOptionValue(v acp.SessionConfigSelectOption) model.ConfigOptionValueDTO {
-	dto := model.ConfigOptionValueDTO{Value: string(v.Value), Name: v.Name}
-	if v.Description != nil {
-		dto.Description = *v.Description
-	}
-	return dto
-}

@@ -189,3 +189,6 @@
 | 2026-08-04 | 单一权威：AGENTS.md 移除前端壳层 UI 的重复计划维护（P3 细节、明确不做清单），统一以本文件为唯一准绳；明确本计划仅覆盖 UI，仓库级工程（部署编排等）不在内 |
 | 2026-08-04 | P3 完成（权限弹窗链路：Bridge handler + EventBridge pending/回传 + hub 接通；工具调用卡片实时/历史渲染；侧栏折叠 260↔64 展开/收起按钮；**不做移动端抽屉**） |
 | 2026-08-04 | 修复 P1 遗留 bug：`CreateSession` 构造 session 时误用入参 `workspaceID`（缺省 0）而非解析后的 `workspace.ID`，导致不带 workspaceId 创建会话时外键约束失败（`FOREIGN KEY constraint failed`） |
+| 2026-08-04 | 修复 Ctrl+C 无法退出：`ws.Handler.CloseAll` 持有 hub 读锁遍历时逐个 Close（触发无缓冲 unregister → hub.Run 需写锁）→ 死锁；改为先快照再关闭，并加 5s 优雅关闭超时兜底。实测：有活跃 WS 连接时 SIGINT 4s 内干净退出 |
+| 2026-08-04 | configOptions 双通道：除 `session/new` 响应外，补齐 `session/update` 的 `ConfigOptionUpdate` 通知接收（Bridge handler → EventBridge 落库）；前端 turn.done 后刷新配置项 |
+| 2026-08-04 | 服务端重启后会话恢复：ACP session 是 agent 内存态，重启后 DB 记录仍在但 agent 端丢失（prompt 报 `unknown session`）。后端 `HandlePrompt` 检测到该错误时自动恢复（优先 ACP `session/load` 保留上下文，失败则新建 ACP session 并 `UpdateACPSessionID` 后重试一次）；前端发送前刷新会话拿最新 `acpSessionId` |

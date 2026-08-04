@@ -148,12 +148,19 @@ func (h *Handler) GetSessionClients(sessionID string) int {
 	return count
 }
 
-// CloseAll 关闭所有连接（用于优雅关闭）
+// CloseAll 关闭所有连接（用于优雅关闭）。
+// 注意：不能持有 hub.mu 遍历时逐个 Close——client.Close 会向无缓冲 unregister
+// channel 发送，hub.Run 消费时需获取写锁，而写锁等待本函数持有的读锁 → 死锁。
+// 因此先快照再释放锁，最后逐个关闭。
 func (h *Handler) CloseAll() {
 	h.hub.mu.RLock()
-	defer h.hub.mu.RUnlock()
-
+	clients := make([]*Client, 0, len(h.hub.clients))
 	for client := range h.hub.clients {
+		clients = append(clients, client)
+	}
+	h.hub.mu.RUnlock()
+
+	for _, client := range clients {
 		client.Close()
 	}
 }

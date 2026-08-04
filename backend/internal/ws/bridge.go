@@ -67,8 +67,33 @@ func (b *EventBridge) SetupEventCallback(agentID, sessionID string) error {
 		return b.HandlePermissionRequest(req)
 	})
 
+	// 接收 agent 经 session/update 通知下发的配置项（模型/思考强度/mode 等），
+	// 覆盖 session/new 响应未带 configOptions 的情况，实时落库供前端读取
+	bridge.SetConfigOptionsHandler(func(opts []acp.SessionConfigOption) {
+		b.handleConfigOptions(sessionID, opts)
+	})
+
 	b.log.Info("event callback setup for agent", "agentID", agentID, "sessionID", sessionID)
 	return nil
+}
+
+// handleConfigOptions 收到 agent 下发的配置项后落库（按 ACP session id 反查 DB 会话）。
+func (b *EventBridge) handleConfigOptions(sessionID string, opts []acp.SessionConfigOption) {
+	dbSession, err := b.sessionRepo.GetByACPSessionID(sessionID)
+	if err != nil {
+		b.log.Warn("config options for unknown session", "sessionID", sessionID, "err", err)
+		return
+	}
+	data, err := json.Marshal(client.ToConfigOptionDTOs(opts))
+	if err != nil {
+		b.log.Warn("marshal config options failed", "sessionID", sessionID, "err", err)
+		return
+	}
+	if err := b.sessionRepo.UpdateConfigOptions(dbSession.ID, string(data)); err != nil {
+		b.log.Warn("save config options failed", "sessionID", sessionID, "err", err)
+		return
+	}
+	b.log.Info("config options updated", "sessionID", sessionID, "count", len(opts))
 }
 
 // handleEvent 处理 ACP 事件并广播到 WebSocket
@@ -213,6 +238,17 @@ func (b *EventBridge) HandlePrompt(ctx context.Context, sessionID, agentID, mess
 	}
 
 	result, err := b.manager.Prompt(ctx, agentID, sessionID, message)
+	if err != nil && isUnknownSession(err) {
+		// ACP session 失效（服务端/agent 重启后 DB 记录仍在、agent 端已丢失）：
+		// 自动恢复并重试一次，前端无感知
+		b.log.Warn("acp session invalid, recovering", "sessionID", sessionID, "err", err)
+		if newID, ok := b.recoverSession(ctx, dbSession, agentID, sessionID); ok {
+			sessionID = newID
+			// 事件回调与广播绑定到新 session
+			_ = b.SetupEventCallback(agentID, sessionID)
+			result, err = b.manager.Prompt(ctx, agentID, sessionID, message)
+		}
+	}
 	if err != nil {
 		return err
 	}
@@ -239,4 +275,34 @@ func (b *EventBridge) HandlePrompt(ctx context.Context, sessionID, agentID, mess
 // HandleCancel 处理 WebSocket 的 cancel 消息
 func (b *EventBridge) HandleCancel(ctx context.Context, sessionID, agentID string) error {
 	return b.manager.Cancel(ctx, agentID, sessionID)
+}
+
+// recoverSession 处理 ACP session 失效（服务端/agent 重启后 DB 记录仍在但 agent 端丢失）：
+//  1. 优先 ACP session/load（agent 支持持久化会话时保留对话上下文）
+//  2. 失败则新建 ACP session 并更新 DB 记录，返回新的 ACP session id
+func (b *EventBridge) recoverSession(ctx context.Context, dbSession *model.Session, agentID, oldAcpID string) (string, bool) {
+	if err := b.manager.LoadSession(ctx, agentID, oldAcpID); err == nil {
+		b.log.Info("acp session recovered via load", "sessionID", oldAcpID)
+		return oldAcpID, true
+	}
+
+	cwd := "."
+	if dbSession.Workspace.Path != "" {
+		cwd = dbSession.Workspace.Path
+	}
+	newID, _, err := b.manager.CreateSession(ctx, agentID, cwd)
+	if err != nil {
+		b.log.Error("failed to recreate acp session", "err", err)
+		return "", false
+	}
+	if err := b.sessionRepo.UpdateACPSessionID(dbSession.ID, newID); err != nil {
+		b.log.Error("failed to update acp session id in db", "err", err)
+	}
+	b.log.Info("acp session recreated", "old", oldAcpID, "new", newID)
+	return newID, true
+}
+
+// isUnknownSession 判断 ACP session 失效错误（agent 端 session 不存在）
+func isUnknownSession(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "unknown session")
 }

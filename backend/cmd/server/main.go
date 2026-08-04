@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
@@ -117,9 +118,20 @@ func main() {
 		signal.Notify(ch, syscall.SIGINT, syscall.SIGTERM)
 		sig := <-ch
 		log.Info("shutting down", "signal", sig.String())
-		wsHandler.CloseAll()
-		_ = mgr.Close()
-		os.Exit(0)
+		done := make(chan struct{})
+		go func() {
+			wsHandler.CloseAll()
+			_ = mgr.Close()
+			close(done)
+		}()
+		// 优雅关闭兜底：agent 子进程/WS 清理异常时强制退出，避免 Ctrl+C 卡死
+		select {
+		case <-done:
+			os.Exit(0)
+		case <-time.After(5 * time.Second):
+			log.Error("graceful shutdown timed out, forcing exit")
+			os.Exit(1)
+		}
 	}()
 
 	log.Info("HTTP listening", "addr", *addr)

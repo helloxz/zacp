@@ -32,6 +32,9 @@ type Bridge struct {
 	events []Event
 	// onEvent is optional live callback (e.g. print to stdout).
 	onEvent func(Event)
+	// configOptionsHandler 接收 agent 经 session/update 通知下发的 configOptions
+	// （模型/思考强度/mode 等，可能不在 session/new 响应里，而在后续通知中）。
+	configOptionsHandler func([]acp.SessionConfigOption)
 	// permissionHandler 将权限请求转发给外部（如 WebSocket 前端交互式选择）；
 	// 非 autoApprove 时优先使用，未设置时维持默认（autoApprove 放行 / 否则取消）。
 	permissionHandler func(acp.RequestPermissionRequest) (acp.RequestPermissionResponse, error)
@@ -62,6 +65,14 @@ func (b *Bridge) SetPermissionHandler(fn func(acp.RequestPermissionRequest) (acp
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.permissionHandler = fn
+}
+
+// SetConfigOptionsHandler sets a live config-options sink (optional).
+// 接收 agent 经 session/update 通知下发的配置项（可能不在 session/new 响应中）。
+func (b *Bridge) SetConfigOptionsHandler(fn func([]acp.SessionConfigOption)) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.configOptionsHandler = fn
 }
 
 // Reset clears buffered events (call before each Prompt).
@@ -188,6 +199,14 @@ func (b *Bridge) SessionUpdate(ctx context.Context, params acp.SessionNotificati
 		})
 	case u.Plan != nil:
 		b.push(Event{Type: "plan", RawKind: "plan"})
+	case u.ConfigOptionUpdate != nil:
+		// 会话配置项通知（模型/思考强度/mode 等）：走独立处理器（不混入消息事件流）
+		b.mu.Lock()
+		fn := b.configOptionsHandler
+		b.mu.Unlock()
+		if fn != nil {
+			fn(u.ConfigOptionUpdate.ConfigOptions)
+		}
 	default:
 		b.push(Event{Type: "other", RawKind: "unknown"})
 	}

@@ -279,10 +279,12 @@ export const useSessionStore = defineStore('session', () => {
     void refreshAfterTurn(sessionId)
   }
 
-  /** 流式结束后的数据对齐：强制拉 DB 版本（服务端已落库 user + assistant） */
+  /** 流式结束后的数据对齐：强制拉 DB 版本（服务端已落库 user + assistant）+ 刷新配置项 */
   async function refreshAfterTurn(sessionId: number) {
     try {
       await loadMessages(sessionId, true)
+      // agent 可能在 turn 中经 update 通知更新配置项，刷新以同步最新 currentValue
+      await loadConfigOptions(sessionId)
       // 同步会话标题（服务端首条消息生成）与列表排序
       const fresh = await apiFetchSession(sessionId).catch(() => null)
       if (fresh) {
@@ -351,9 +353,21 @@ export const useSessionStore = defineStore('session', () => {
    * socket 发送 prompt（sessionId 为 ACP session id）→ 事件流式追加 → turn.done 收尾。
    */
   async function sendViaWs(sessionId: number, content: string) {
-    const session = sessions.value.find((s) => s.id === sessionId)
+    let session = sessions.value.find((s) => s.id === sessionId)
     if (!session) {
       throw new Error('session not found')
+    }
+    // 发送前刷新会话：服务端重启后 ACP session 可能已被后端重建（acpSessionId 变化），
+    // 用 DB 最新值发送可避免「unknown session」报错（后端恢复逻辑见 ws/bridge.go）
+    try {
+      const fresh = await apiFetchSession(sessionId)
+      const idx = sessions.value.findIndex((s) => s.id === sessionId)
+      if (idx >= 0) {
+        sessions.value[idx] = { ...sessions.value[idx], ...fresh }
+        session = sessions.value[idx]
+      }
+    } catch {
+      // 刷新失败：沿用本地缓存值
     }
     if (!session.acpSessionId) {
       throw new Error('session has no acp session id')
