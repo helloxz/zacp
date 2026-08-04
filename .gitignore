@@ -1,0 +1,43 @@
+# Binaries
+backend/bin/
+backend/server
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Go
+backend/vendor/
+
+# Config with secrets
+backend/configs/config.yaml
+.env
+.env.*
+!.env.example
+
+# Node / frontend (when scaffolded)
+frontend/node_modules/
+frontend/dist/
+frontend/.next/
+frontend/out/
+frontend/coverage/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# IDE / OS
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Build / temp
+tmp/
+temp/
+*.tmp
+coverage.out
+coverage.html

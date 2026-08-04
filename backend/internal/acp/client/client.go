@@ -1,0 +1,245 @@
+// Package client implements an ACP Client suitable for Web/API demos.
+package client
+
+import (
+	"context"
+	"fmt"
+	"log/slog"
+	"os"
+	"path/filepath"
+	"strings"
+	"sync"
+
+	acp "github.com/coder/acp-go-sdk"
+)
+
+// Event is a simplified session update for API/CLI consumers.
+type Event struct {
+	Type    string `json:"type"`
+	Text    string `json:"text,omitempty"`
+	Title   string `json:"title,omitempty"`
+	Status  string `json:"status,omitempty"`
+	ToolID  string `json:"toolId,omitempty"`
+	RawKind string `json:"rawKind,omitempty"`
+}
+
+// Bridge is an ACP Client that buffers session updates and auto-approves permissions (demo).
+type Bridge struct {
+	log         *slog.Logger
+	autoApprove bool
+
+	mu     sync.Mutex
+	events []Event
+	// onEvent is optional live callback (e.g. print to stdout).
+	onEvent func(Event)
+}
+
+// Ensure Bridge implements acp.Client.
+var _ acp.Client = (*Bridge)(nil)
+
+// New creates a demo ACP client bridge.
+func New(log *slog.Logger, autoApprove bool) *Bridge {
+	if log == nil {
+		log = slog.Default()
+	}
+	return &Bridge{log: log, autoApprove: autoApprove}
+}
+
+// SetOnEvent sets a live event sink (optional).
+func (b *Bridge) SetOnEvent(fn func(Event)) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.onEvent = fn
+}
+
+// Reset clears buffered events (call before each Prompt).
+func (b *Bridge) Reset() {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.events = nil
+}
+
+// Events returns a copy of buffered events.
+func (b *Bridge) Events() []Event {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	out := make([]Event, len(b.events))
+	copy(out, b.events)
+	return out
+}
+
+// AgentText joins all agent message text chunks.
+func (b *Bridge) AgentText() string {
+	var sb strings.Builder
+	for _, e := range b.Events() {
+		if e.Type == "agent_message" {
+			sb.WriteString(e.Text)
+		}
+	}
+	return sb.String()
+}
+
+func (b *Bridge) push(e Event) {
+	b.mu.Lock()
+	b.events = append(b.events, e)
+	fn := b.onEvent
+	b.mu.Unlock()
+	if fn != nil {
+		fn(e)
+	}
+}
+
+// RequestPermission implements acp.Client.
+func (b *Bridge) RequestPermission(ctx context.Context, params acp.RequestPermissionRequest) (acp.RequestPermissionResponse, error) {
+	title := ""
+	if params.ToolCall.Title != nil {
+		title = *params.ToolCall.Title
+	}
+	b.log.Info("permission requested", "title", title, "options", len(params.Options))
+
+	if b.autoApprove {
+		for _, o := range params.Options {
+			if o.Kind == acp.PermissionOptionKindAllowOnce || o.Kind == acp.PermissionOptionKindAllowAlways {
+				return acp.RequestPermissionResponse{
+					Outcome: acp.RequestPermissionOutcome{
+						Selected: &acp.RequestPermissionOutcomeSelected{OptionId: o.OptionId},
+					},
+				}, nil
+			}
+		}
+		if len(params.Options) > 0 {
+			return acp.RequestPermissionResponse{
+				Outcome: acp.RequestPermissionOutcome{
+					Selected: &acp.RequestPermissionOutcomeSelected{OptionId: params.Options[0].OptionId},
+				},
+			}, nil
+		}
+		return acp.RequestPermissionResponse{
+			Outcome: acp.RequestPermissionOutcome{Cancelled: &acp.RequestPermissionOutcomeCancelled{}},
+		}, nil
+	}
+
+	// Non-auto: cancel (API demo cannot interactively prompt yet).
+	return acp.RequestPermissionResponse{
+		Outcome: acp.RequestPermissionOutcome{Cancelled: &acp.RequestPermissionOutcomeCancelled{}},
+	}, nil
+}
+
+// SessionUpdate implements acp.Client.
+func (b *Bridge) SessionUpdate(ctx context.Context, params acp.SessionNotification) error {
+	u := params.Update
+	switch {
+	case u.AgentMessageChunk != nil:
+		if u.AgentMessageChunk.Content.Text != nil {
+			b.push(Event{Type: "agent_message", Text: u.AgentMessageChunk.Content.Text.Text})
+		}
+	case u.AgentThoughtChunk != nil:
+		if u.AgentThoughtChunk.Content.Text != nil {
+			b.push(Event{Type: "agent_thought", Text: u.AgentThoughtChunk.Content.Text.Text})
+		}
+	case u.UserMessageChunk != nil:
+		if u.UserMessageChunk.Content.Text != nil {
+			b.push(Event{Type: "user_message", Text: u.UserMessageChunk.Content.Text.Text})
+		}
+	case u.ToolCall != nil:
+		b.push(Event{
+			Type:   "tool_call",
+			Title:  u.ToolCall.Title,
+			Status: string(u.ToolCall.Status),
+			ToolID: string(u.ToolCall.ToolCallId),
+		})
+	case u.ToolCallUpdate != nil:
+		status := ""
+		if u.ToolCallUpdate.Status != nil {
+			status = string(*u.ToolCallUpdate.Status)
+		}
+		title := ""
+		if u.ToolCallUpdate.Title != nil {
+			title = *u.ToolCallUpdate.Title
+		}
+		b.push(Event{
+			Type:   "tool_call_update",
+			Title:  title,
+			Status: status,
+			ToolID: string(u.ToolCallUpdate.ToolCallId),
+		})
+	case u.Plan != nil:
+		b.push(Event{Type: "plan", RawKind: "plan"})
+	default:
+		b.push(Event{Type: "other", RawKind: "unknown"})
+	}
+	return nil
+}
+
+// WriteTextFile implements acp.Client.
+func (b *Bridge) WriteTextFile(ctx context.Context, params acp.WriteTextFileRequest) (acp.WriteTextFileResponse, error) {
+	if !filepath.IsAbs(params.Path) {
+		return acp.WriteTextFileResponse{}, fmt.Errorf("path must be absolute: %s", params.Path)
+	}
+	if dir := filepath.Dir(params.Path); dir != "" {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return acp.WriteTextFileResponse{}, fmt.Errorf("mkdir %s: %w", dir, err)
+		}
+	}
+	if err := os.WriteFile(params.Path, []byte(params.Content), 0o644); err != nil {
+		return acp.WriteTextFileResponse{}, fmt.Errorf("write %s: %w", params.Path, err)
+	}
+	b.log.Info("wrote file", "path", params.Path, "bytes", len(params.Content))
+	return acp.WriteTextFileResponse{}, nil
+}
+
+// ReadTextFile implements acp.Client.
+func (b *Bridge) ReadTextFile(ctx context.Context, params acp.ReadTextFileRequest) (acp.ReadTextFileResponse, error) {
+	if !filepath.IsAbs(params.Path) {
+		return acp.ReadTextFileResponse{}, fmt.Errorf("path must be absolute: %s", params.Path)
+	}
+	raw, err := os.ReadFile(params.Path)
+	if err != nil {
+		return acp.ReadTextFileResponse{}, fmt.Errorf("read %s: %w", params.Path, err)
+	}
+	content := string(raw)
+	if params.Line != nil || params.Limit != nil {
+		lines := strings.Split(content, "\n")
+		start := 0
+		if params.Line != nil && *params.Line > 0 {
+			start = *params.Line - 1
+			if start < 0 {
+				start = 0
+			}
+			if start > len(lines) {
+				start = len(lines)
+			}
+		}
+		end := len(lines)
+		if params.Limit != nil && *params.Limit > 0 && start+*params.Limit < end {
+			end = start + *params.Limit
+		}
+		content = strings.Join(lines[start:end], "\n")
+	}
+	return acp.ReadTextFileResponse{Content: content}, nil
+}
+
+// CreateTerminal implements acp.Client (stub for demo).
+func (b *Bridge) CreateTerminal(ctx context.Context, params acp.CreateTerminalRequest) (acp.CreateTerminalResponse, error) {
+	return acp.CreateTerminalResponse{TerminalId: "term-demo-1"}, nil
+}
+
+// KillTerminal implements acp.Client (stub).
+func (b *Bridge) KillTerminal(ctx context.Context, params acp.KillTerminalRequest) (acp.KillTerminalResponse, error) {
+	return acp.KillTerminalResponse{}, nil
+}
+
+// TerminalOutput implements acp.Client (stub).
+func (b *Bridge) TerminalOutput(ctx context.Context, params acp.TerminalOutputRequest) (acp.TerminalOutputResponse, error) {
+	return acp.TerminalOutputResponse{Output: "", Truncated: false}, nil
+}
+
+// ReleaseTerminal implements acp.Client (stub).
+func (b *Bridge) ReleaseTerminal(ctx context.Context, params acp.ReleaseTerminalRequest) (acp.ReleaseTerminalResponse, error) {
+	return acp.ReleaseTerminalResponse{}, nil
+}
+
+// WaitForTerminalExit implements acp.Client (stub).
+func (b *Bridge) WaitForTerminalExit(ctx context.Context, params acp.WaitForTerminalExitRequest) (acp.WaitForTerminalExitResponse, error) {
+	return acp.WaitForTerminalExitResponse{}, nil
+}

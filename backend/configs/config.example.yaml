@@ -1,0 +1,39 @@
+# Example server configuration for zacp backend.
+# Copy to config.yaml and adjust for your environment.
+
+server:
+  host: "0.0.0.0"
+  port: 8080
+  mode: "debug" # debug | release
+
+# ACP-compatible agent providers (stdio or remote).
+# Each provider is launched / connected via acp-go-sdk client side.
+agents:
+  - id: pi
+    name: "Pi Agent"
+    enabled: false
+    transport: stdio
+    command: "pi"
+    args: ["--acp"]
+    cwd: ""
+
+  - id: reasonix
+    name: "Reasonix"
+    enabled: true
+    transport: stdio
+    command: "reasonix"   # or set REASONIX_BIN=/path/to/reasonix
+    args: ["--acp"]
+    cwd: ""
+
+  - id: grok
+    name: "Grok"
+    enabled: false
+    transport: stdio
+    command: "grok"
+    args: ["--acp"]
+    cwd: ""
+
+# WebSocket / streaming defaults for session updates from agents.
+session:
+  default_cwd: "."
+  stream_buffer_size: 256
