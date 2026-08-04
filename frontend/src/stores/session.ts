@@ -4,6 +4,7 @@ import {
   createSession as apiCreateSession,
   createWorkspace as apiCreateWorkspace,
   deleteSession as apiDeleteSession,
+  deleteDraftSession as apiDeleteDraftSession,
   fetchConfigOptions,
   fetchMessages,
   fetchRecentSessions,
@@ -103,7 +104,15 @@ export const useSessionStore = defineStore('session', () => {
   }
 
   async function loadSessions() {
-    sessions.value = await fetchRecentSessions(50)
+    const list = await fetchRecentSessions(50)
+    // 保护本地草稿：后端列表按约定过滤 is_draft=true，但草稿可能正被
+    // NewSessionPane 使用（loadInitial 与草稿创建/转正存在竞态窗口）。
+    // 仅当后端列表没有该 id 时才补回，避免与转正后的正式记录重复。
+    const drafts = sessions.value.filter((s) => s.isDraft)
+    sessions.value = [
+      ...list,
+      ...drafts.filter((d) => !list.some((s) => s.id === d.id)),
+    ]
   }
 
   /** 首屏初始化：工作区 + 会话并行拉取 */
@@ -137,18 +146,27 @@ export const useSessionStore = defineStore('session', () => {
   /**
    * 创建会话（POST /api/v1/sessions）。
    * workspaceId 缺省时后端回退默认工作区（config session.default_cwd）。
+   *
+   * isDraft=true 时创建隐式草稿会话（预览配置项，不进侧栏列表）；
+   * 返回 { session, configOptions }，调用方用 configOptions 直接展示模型/思维程度下拉。
+   * 草稿会话在发出首条 prompt 后由后端转正，下次 ListRecent 会包含它。
    */
   async function createSession(
     agentId: string,
     workspaceId?: number,
-  ): Promise<ChatSession> {
-    const session = await apiCreateSession({ agentId, workspaceId })
-    sessions.value = [
-      session,
-      ...sessions.value.filter((s) => s.id !== session.id),
-    ]
+    isDraft = false,
+  ): Promise<{ session: ChatSession; configOptions: ConfigOption[] }> {
+    const result = await apiCreateSession({ agentId, workspaceId, isDraft })
+    const { session, configOptions } = result
+    // 草稿不进侧栏列表；非草稿（兼容旧路径）进列表
+    if (!isDraft) {
+      sessions.value = [
+        session,
+        ...sessions.value.filter((s) => s.id !== session.id),
+      ]
+    }
     messagesById.value[session.id] = []
-    return session
+    return { session, configOptions }
   }
 
   /** 删除会话（当前会话被删时清空选中） */
@@ -159,6 +177,27 @@ export const useSessionStore = defineStore('session', () => {
     if (currentId.value === sessionId) {
       currentId.value = null
     }
+  }
+
+  /**
+   * 删除草稿会话（切 tab / 离开空态时释放旧隐式草稿）。
+   * 调后端 DELETE /sessions/:id/draft（关闭 ACP session + 删 DB 记录，不停 agent）。
+   */
+  async function removeDraftSession(sessionId: number) {
+    await apiDeleteDraftSession(sessionId)
+    delete messagesById.value[sessionId]
+  }
+
+  /**
+   * 草稿转正后接入侧栏列表（NewSessionPane 发首条消息成功后调用）。
+   * 草稿创建时未进列表（见 createSession 的 isDraft 分支），转正后补进列表头，
+   * 使跳转 /sessions/:id 后 activeSession 可解析、标题刷新与 touch 排序生效。
+   */
+  function promoteDraftSession(session: ChatSession) {
+    sessions.value = [
+      session,
+      ...sessions.value.filter((s) => s.id !== session.id),
+    ]
   }
 
   /** 本地乐观追加消息（用户消息无后端 id，用负时间戳占位） */
@@ -351,9 +390,17 @@ export const useSessionStore = defineStore('session', () => {
   /**
    * 发送消息（WS prompt）：乐观追加用户消息 + 空 assistant 占位 →
    * socket 发送 prompt（sessionId 为 ACP session id）→ 事件流式追加 → turn.done 收尾。
+   *
+   * sessionOverride：草稿会话（isDraft）创建时未进 sessions 列表，
+   * 发送时由调用方（NewSessionPane）显式传入 session 对象，避免列表查找失败。
    */
-  async function sendViaWs(sessionId: number, content: string) {
-    let session = sessions.value.find((s) => s.id === sessionId)
+  async function sendViaWs(
+    sessionId: number,
+    content: string,
+    sessionOverride?: ChatSession,
+  ) {
+    let session =
+      sessionOverride ?? sessions.value.find((s) => s.id === sessionId)
     if (!session) {
       throw new Error('session not found')
     }
@@ -361,10 +408,15 @@ export const useSessionStore = defineStore('session', () => {
     // 用 DB 最新值发送可避免「unknown session」报错（后端恢复逻辑见 ws/bridge.go）
     try {
       const fresh = await apiFetchSession(sessionId)
-      const idx = sessions.value.findIndex((s) => s.id === sessionId)
-      if (idx >= 0) {
-        sessions.value[idx] = { ...sessions.value[idx], ...fresh }
-        session = sessions.value[idx]
+      if (sessionOverride) {
+        // 草稿：不在 sessions 列表，直接合并最新字段（acpSessionId 等）
+        session = { ...sessionOverride, ...fresh }
+      } else {
+        const idx = sessions.value.findIndex((s) => s.id === sessionId)
+        if (idx >= 0) {
+          sessions.value[idx] = { ...sessions.value[idx], ...fresh }
+          session = sessions.value[idx]
+        }
       }
     } catch {
       // 刷新失败：沿用本地缓存值
@@ -451,6 +503,8 @@ export const useSessionStore = defineStore('session', () => {
     setConfigOption,
     createSession,
     removeSession,
+    removeDraftSession,
+    promoteDraftSession,
     sendViaWs,
     cancelSend,
     clearStreamError,

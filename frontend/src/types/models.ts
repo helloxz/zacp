@@ -35,6 +35,8 @@ export interface ChatSession {
   acpSessionId?: string
   title: string
   status: SessionStatus
+  /** 草稿标记：隐式 session/new 探测创建的会话为 true，不进侧栏；发首条 prompt 转正后置 false */
+  isDraft: boolean
   createdAt: string
   updatedAt: string
   workspace?: Workspace

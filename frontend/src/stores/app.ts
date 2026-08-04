@@ -53,6 +53,9 @@ export const useAppStore = defineStore('app', () => {
     }
   }
 
+  /** 新建项目弹窗开关（WelcomeHero 与 AppSidebar 共享） */
+  const newProjectModalOpen = ref(false)
+
   return {
     locale,
     naiveLocale,
@@ -60,5 +63,6 @@ export const useAppStore = defineStore('app', () => {
     setLocale,
     displayName,
     setDisplayName,
+    newProjectModalOpen,
   }
 })

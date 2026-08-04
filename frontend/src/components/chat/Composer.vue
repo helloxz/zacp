@@ -1,9 +1,8 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { SendOutline, StopOutline, AddOutline } from '@vicons/ionicons5'
+import { SendOutline, StopOutline } from '@vicons/ionicons5'
 import { NIcon } from 'naive-ui'
-import { useAgentStore } from '@/stores/agent'
 import { useSessionStore } from '@/stores/session'
 
 /** Composer 提交载荷（card / bar 共用） */
@@ -19,7 +18,7 @@ const props = withDefaults(
     mode?: 'card' | 'bar'
     /** bar 模式当前会话的 Agent（只读标签）；card 模式为下拉默认值 */
     agentId?: string
-    /** 发送中（P2 流式时由父级置 true，显示停止按钮） */
+    /** 发送中（流式时由父级置 true，显示停止按钮） */
     sending?: boolean
   }>(),
   { mode: 'bar', agentId: undefined, sending: false },
@@ -31,14 +30,13 @@ const emit = defineEmits<{
 }>()
 
 const { t } = useI18n()
-const agentStore = useAgentStore()
 const sessionStore = useSessionStore()
 
-/** 会话配置项：select 型（模型/思考强度/mode 等）→ 下拉 */
+/** 会话配置项：select 型（模型/思考强度/mode 等）→ 下拉（仅 bar 模式展示） */
 const selectConfigOptions = computed(() =>
   sessionStore.configOptions.filter((o) => o.type === 'select'),
 )
-/** boolean 型 → 开关 */
+/** boolean 型 → 开关（仅 bar 模式展示） */
 const booleanConfigOptions = computed(() =>
   sessionStore.configOptions.filter((o) => o.type === 'boolean'),
 )
@@ -54,72 +52,14 @@ async function onConfigChange(optionId: string, valueId: string) {
 
 const text = ref('')
 const selectedAgentId = ref(props.agentId ?? '')
-const selectedWorkspaceId = ref<number | undefined>(undefined)
 
-// ---- 工作区创建（解决「无工作区时下拉为空无法开启」的死循环）----
-const wsPath = ref('')
-const wsCreating = ref(false)
-const showWsInput = ref(false)
-const wsError = ref<string | null>(null)
-
-/** 输入路径创建/开启工作区（后端校验路径存在）；成功后选中新工作区 */
-async function createWs() {
-  const path = wsPath.value.trim()
-  if (!path || wsCreating.value) {
-    return
-  }
-  wsCreating.value = true
-  wsError.value = null
-  try {
-    const ws = await sessionStore.createWorkspace(path)
-    selectedWorkspaceId.value = ws.id
-    wsPath.value = ''
-    showWsInput.value = false
-  } catch (e) {
-    wsError.value = e instanceof Error ? e.message : String(e)
-  } finally {
-    wsCreating.value = false
-  }
-}
-
-/** 会话切换（bar 模式）时同步外部 agentId */
+/** bar 模式会话切换时同步外部 agentId */
 watch(
   () => props.agentId,
   (v) => {
     if (v) selectedAgentId.value = v
   },
 )
-
-/** card 模式首次进入：默认选中第一个可用 Agent，减少空态操作成本 */
-onMounted(() => {
-  if (!selectedAgentId.value) {
-    const first = agentStore.list.find((a) => a.running) ?? agentStore.list[0]
-    if (first) selectedAgentId.value = first.agentId
-  }
-})
-
-const agentOptions = computed(() =>
-  agentStore.list.map((a) => ({
-    label: a.name,
-    value: a.agentId,
-    disabled: !a.running,
-  })),
-)
-
-const workspaceOptions = computed(() =>
-  sessionStore.workspaces.map((w) => ({
-    label: w.name || w.path,
-    value: w.id,
-  })),
-)
-
-/** bar 模式只读 Agent 标签文案 */
-const agentLabel = computed(() => {
-  const a = agentStore.list.find(
-    (it) => it.agentId === (props.agentId ?? selectedAgentId.value),
-  )
-  return a?.name ?? props.agentId ?? t('chat.agent')
-})
 
 /** 可发送：bar 模式不要求 Agent（沿用当前会话）；card 模式必须已选 Agent */
 const canSend = computed(
@@ -133,7 +73,6 @@ function onSend() {
   if (!payload || !canSend.value) return
   emit('submit', {
     agentId: selectedAgentId.value,
-    workspaceId: selectedWorkspaceId.value || undefined,
     text: payload,
   })
   text.value = ''
@@ -150,165 +89,94 @@ function onKeydown(e: KeyboardEvent) {
 
 <template>
   <div
-    class="w-full rounded-2xl border border-slate-200 bg-white p-3 shadow-sm"
+    class="w-full rounded-2xl border border-slate-200 bg-white p-3 shadow-sm transition-shadow focus-within:border-slate-300 focus-within:shadow-md"
   >
-    <!-- card：Agent / Workspace 可交互下拉；bar：只读 Agent 标签 -->
-    <div v-if="mode === 'card'" class="mb-2 flex flex-wrap items-center gap-2">
-      <n-select
-        v-model:value="selectedAgentId"
-        class="w-40"
-        size="small"
-        :options="agentOptions"
-        :placeholder="t('chat.agent')"
-        :consistent-menu-width="false"
-      />
-
-      <!-- 无任何工作区：不能选，必须手动输入路径「开启」（避免死循环） -->
-      <template v-if="!workspaceOptions.length">
-        <n-input
-          v-model:value="wsPath"
-          class="w-52"
-          size="small"
-          :placeholder="t('chat.workspacePathPlaceholder')"
-          @keydown.enter="createWs"
-        />
-        <n-button
-          size="small"
-          type="primary"
-          ghost
-          :loading="wsCreating"
-          @click="createWs"
-        >
-          {{ t('chat.enableWorkspace') }}
-        </n-button>
-      </template>
-
-      <!-- 已有工作区：下拉选择 + 新建按钮（展开路径输入） -->
-      <template v-else>
-        <n-select
-          v-model:value="selectedWorkspaceId"
-          class="w-48"
-          size="small"
-          :options="workspaceOptions"
-          :placeholder="t('chat.selectWorkspace')"
-          clearable
-          :consistent-menu-width="false"
-        />
-        <n-button
-          quaternary
-          circle
-          size="small"
-          :title="t('chat.newWorkspace')"
-          @click="showWsInput = !showWsInput"
-        >
-          <template #icon>
-            <n-icon><AddOutline /></n-icon>
-          </template>
-        </n-button>
-      </template>
-    </div>
-
-    <!-- 新建工作区输入（已有工作区时点「+」展开） -->
-    <div
-      v-if="mode === 'card' && showWsInput && workspaceOptions.length"
-      class="mb-2 flex items-center gap-2"
-    >
-      <n-input
-        v-model:value="wsPath"
-        class="w-52"
-        size="small"
-        :placeholder="t('chat.workspacePathPlaceholder')"
-        @keydown.enter="createWs"
-      />
-      <n-button
-        size="small"
-        type="primary"
-        ghost
-        :loading="wsCreating"
-        @click="createWs"
-      >
-        {{ t('chat.enableWorkspace') }}
-      </n-button>
-      <n-button
-        size="small"
-        quaternary
-        @click="showWsInput = false; wsPath = ''; wsError = null"
-      >
-        {{ t('common.cancel') }}
-      </n-button>
-    </div>
-
-    <!-- 工作区创建失败提示（如路径不存在） -->
-    <p
-      v-if="mode === 'card' && wsError"
-      class="mb-2 text-xs text-red-500"
-    >
-      {{ wsError }}
-    </p>
-    <div v-else class="mb-2 flex flex-wrap items-center gap-2">
-      <span
-        class="shrink-0 rounded bg-slate-100 px-1.5 py-0.5 text-xs text-slate-500"
-      >
-        {{ agentLabel }}
-      </span>
-
-      <!-- 会话配置项（模型/思考强度/mode 等）：agent 下发 configOptions 才显示，否则整段隐藏 -->
-      <template v-if="sessionStore.configOptions.length">
-        <n-select
-          v-for="opt in selectConfigOptions"
-          :key="opt.id"
-          :value="String(opt.currentValue)"
-          size="tiny"
-          class="w-32"
-          :options="(opt.options ?? []).map((v) => ({ label: v.name, value: v.value }))"
-          :consistent-menu-width="false"
-          @update:value="(v: string) => onConfigChange(opt.id, v)"
-        />
-        <n-switch
-          v-for="opt in booleanConfigOptions"
-          :key="opt.id"
-          :value="Boolean(opt.currentValue)"
-          size="small"
-          @update:value="(v: boolean) => onConfigChange(opt.id, v ? 'true' : 'false')"
-        />
-      </template>
-    </div>
-
     <n-input
       v-model:value="text"
       type="textarea"
+      class="composer-input"
+      :bordered="false"
       :autosize="{ minRows: mode === 'card' ? 3 : 2, maxRows: 8 }"
       :placeholder="t('chat.placeholder')"
       @keydown="onKeydown"
     />
 
-    <div class="mt-2 flex items-center justify-between">
-      <span class="text-xs text-slate-400">{{ t('chat.enterHint') }}</span>
-      <div class="flex items-center gap-2">
+    <!-- 底部选项行：左侧配置项（模型/思考强度等），右侧仅图标发送按钮；与输入框同卡片，构成整体 -->
+    <!-- flex-1：选项容器占满除发送按钮外的剩余宽度；flex-nowrap：选项强制一行，极端情况才横向滚动兜底 -->
+    <div class="mt-2 flex items-center justify-between gap-2">
+      <div class="flex min-w-0 flex-1 flex-nowrap items-center gap-2 overflow-x-auto">
+        <!-- bar 模式：agent 下发 configOptions 才显示，否则整段隐藏 -->
+        <template v-if="mode === 'bar' && sessionStore.configOptions.length">
+          <!-- 外层 div 定宽限制下拉宽度（n-select 根样式 width:100% 会撑满父级，直接设 class 不生效） -->
+          <div
+            v-for="opt in selectConfigOptions"
+            :key="opt.id"
+            class="w-28 shrink-0"
+          >
+            <n-select
+              :value="String(opt.currentValue)"
+              size="tiny"
+              class="opt-select"
+              :options="(opt.options ?? []).map((v) => ({ label: v.name, value: v.value }))"
+              :consistent-menu-width="false"
+              @update:value="(v: string) => onConfigChange(opt.id, v)"
+            />
+          </div>
+          <n-switch
+            v-for="opt in booleanConfigOptions"
+            :key="opt.id"
+            :value="Boolean(opt.currentValue)"
+            size="small"
+            class="shrink-0"
+            @update:value="(v: boolean) => onConfigChange(opt.id, v ? 'true' : 'false')"
+          />
+        </template>
+        <span v-else class="text-xs text-slate-400">{{ t('chat.enterHint') }}</span>
+      </div>
+
+      <div class="flex shrink-0 items-center">
         <n-button
           v-if="sending"
           type="error"
-          size="small"
+          size="medium"
+          circle
           @click="emit('cancel')"
         >
           <template #icon>
-            <n-icon><StopOutline /></n-icon>
+            <n-icon :size="18"><StopOutline /></n-icon>
           </template>
-          {{ t('chat.stop') }}
         </n-button>
         <n-button
           v-else
           type="primary"
-          size="small"
+          size="medium"
+          circle
           :disabled="!canSend"
           @click="onSend"
         >
           <template #icon>
-            <n-icon><SendOutline /></n-icon>
+            <n-icon :size="18"><SendOutline /></n-icon>
           </template>
-          {{ t('chat.send') }}
         </n-button>
       </div>
     </div>
   </div>
 </template>
+
+<style scoped>
+/* 输入框与卡片融合成一个整体：去掉内部边框与聚焦描边/阴影，聚焦背景透明 */
+.composer-input :deep(.n-input__border),
+.composer-input :deep(.n-input__state-border) {
+  display: none;
+}
+.composer-input :deep(.n-input--focus),
+.composer-input :deep(.n-input--hover) {
+  background-color: transparent;
+  box-shadow: none;
+}
+/* 下拉选项去边框，与输入卡片融合；hover/聚焦阴影一并隐藏 */
+.opt-select :deep(.n-base-selection__border),
+.opt-select :deep(.n-base-selection__state-border) {
+  display: none;
+}
+</style>

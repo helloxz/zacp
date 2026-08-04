@@ -1,13 +1,10 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
-import Composer, {
-  type ComposerSubmitPayload,
-} from '@/components/chat/Composer.vue'
 
 const { t } = useI18n()
 const emit = defineEmits<{
-  (e: 'submit', payload: ComposerSubmitPayload): void
+  (e: 'new-project'): void
 }>()
 
 /** 按时段问候：6-12 早上 / 12-18 下午 / 其余 晚上（文案不 i18n 细化，仅切换问候语） */
@@ -23,7 +20,7 @@ const greeting = computed(() => {
   <div
     class="relative flex min-h-0 flex-1 flex-col items-center justify-center overflow-hidden px-6"
   >
-    <!-- 极淡品牌水印（背景装饰，不参与交互，见设计文档 §4.4） -->
+    <!-- 极淡品牌水印（背景装饰，不参与交互） -->
     <div
       class="pointer-events-none absolute inset-0 flex items-center justify-center"
     >
@@ -39,9 +36,16 @@ const greeting = computed(() => {
         <h1 class="text-3xl font-semibold tracking-tight text-slate-900">
           {{ greeting }}
         </h1>
-        <p class="text-base text-slate-500">{{ t('chat.welcomeSubtitle') }}</p>
+        <p class="text-base text-slate-500">{{ t('shell.noProjectsHint') }}</p>
       </div>
-      <Composer mode="card" @submit="emit('submit', $event)" />
+      <!-- 无项目首屏：引导新建项目（侧栏左上角入口） -->
+      <n-button
+        size="large"
+        type="primary"
+        @click="emit('new-project')"
+      >
+        {{ t('shell.newProject') }}
+      </n-button>
     </div>
   </div>
 </template>

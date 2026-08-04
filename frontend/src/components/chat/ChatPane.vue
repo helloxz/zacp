@@ -1,10 +1,12 @@
 <script setup lang="ts">
 import { computed, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { useRoute, useRouter } from 'vue-router'
+import { useRoute } from 'vue-router'
 import { useAgentStore } from '@/stores/agent'
 import { useSessionStore } from '@/stores/session'
+import { useAppStore } from '@/stores/app'
 import WelcomeHero from '@/components/chat/WelcomeHero.vue'
+import NewSessionPane from '@/components/chat/NewSessionPane.vue'
 import MessageList from '@/components/chat/MessageList.vue'
 import Composer, {
   type ComposerSubmitPayload,
@@ -12,24 +14,33 @@ import Composer, {
 
 const { t } = useI18n()
 const route = useRoute()
-const router = useRouter()
 const agentStore = useAgentStore()
 const sessionStore = useSessionStore()
+const appStore = useAppStore()
 
-/** 当前路由 sessionId；null 表示空态 */
+/** 路由态：home（无项目引导）/ new（新建会话空态）/ session（已有会话） */
+const routeName = computed(() => route.name as string)
+
+/** 当前路由 sessionId；仅 session 态有效 */
 const sessionId = computed(() => {
   const raw = route.params.sessionId
   return raw ? Number(raw) : null
 })
 
-/** 进入 /sessions/:id 时：同步选中 + 按需加载消息历史（覆盖刷新 / 直达链接） */
+/** /new 路由预选的项目 id（?workspaceId=X；未指定时后端回退默认工作区） */
+const newWorkspaceId = computed(() => {
+  const raw = route.query.workspaceId
+  return raw ? Number(raw) : undefined
+})
+
+/** 进入 /sessions/:id 时：同步选中 + 按需加载消息历史与配置项 */
 watch(
   sessionId,
   (id) => {
     sessionStore.currentId = id
     if (id !== null) {
       void sessionStore.loadMessages(id).catch(() => {
-        // 历史加载失败不阻塞界面；P2 简化静默，后续可加重试
+        // 历史加载失败不阻塞界面；后续可加重试
       })
       // 加载会话配置项（模型/思考强度/mode；agent 不支持时为空，前端隐藏）
       void sessionStore.loadConfigOptions(id)
@@ -38,7 +49,7 @@ watch(
   { immediate: true },
 )
 
-/** 当前会话对象；null → 空态 */
+/** 当前会话对象；null → 非会话态 */
 const current = computed(() => sessionStore.activeSession)
 
 /** 会话头部 Agent 标签文案 */
@@ -47,8 +58,8 @@ function agentNameOf(agentId: string): string {
 }
 
 /**
- * 发送：空态先创建会话（首次发送才创建，POST /api/v1/sessions），
- * 再走 store.sendViaWs（WS prompt + 流式事件；P2）。
+ * 已有会话发送：直接走 store.sendViaWs（WS prompt + 流式事件）。
+ * 空态创建由 NewSessionPane 处理（隐式草稿 → 发首条消息即转正）。
  */
 async function onSubmit(payload: ComposerSubmitPayload) {
   const text = payload.text.trim()
@@ -56,32 +67,28 @@ async function onSubmit(payload: ComposerSubmitPayload) {
     return
   }
 
-  let session = current.value
+  const session = current.value
+  if (!session) {
+    return
+  }
   try {
-    if (!session) {
-      session = await sessionStore.createSession(
-        payload.agentId,
-        payload.workspaceId,
-      )
-      if (sessionId.value !== session.id) {
-        await router.push({
-          name: 'session',
-          params: { sessionId: String(session.id) },
-        })
-      }
-    }
     await sessionStore.sendViaWs(session.id, text)
   } catch (e) {
     sessionStore.streamError = e instanceof Error ? e.message : String(e)
   }
 }
+
+/** 无项目首屏「新建项目」：打开共享弹窗（AppSidebar 监听同一 flag） */
+function onNewProjectFromHero() {
+  appStore.newProjectModalOpen = true
+}
 </script>
 
 <template>
-  <!-- 空态 / 会话中切换 -->
-  <template v-if="current">
+  <!-- 已有会话：对话列表 + bar 输入（agent 已锁定，无切换 tab） -->
+  <template v-if="routeName === 'session' && current">
     <div class="flex min-h-0 flex-1 flex-col">
-      <!-- （可选）SessionHeader：标题 + Agent 标签 -->
+      <!-- 会话头部：标题 + Agent 标签（对话后锁定，不再可切换） -->
       <div class="flex items-center gap-2 border-b border-slate-200 px-4 py-2.5">
         <span class="truncate text-sm font-medium text-slate-800">
           {{ current.title || t('chat.newChatTitle') }}
@@ -123,5 +130,21 @@ async function onSubmit(payload: ComposerSubmitPayload) {
       </div>
     </div>
   </template>
-  <WelcomeHero v-else @submit="onSubmit" />
+
+  <!-- session 态但会话对象尚未解析（转正补列表前的瞬时窗口/会话不存在）：加载占位，避免误入欢迎页 -->
+  <div
+    v-else-if="routeName === 'session'"
+    class="flex min-h-0 flex-1 items-center justify-center text-sm text-slate-400"
+  >
+    {{ t('chat.loadingSession') }}
+  </div>
+
+  <!-- 新建会话空态：agent tab 选择 + 隐式草稿预览配置项 -->
+  <NewSessionPane
+    v-else-if="routeName === 'new'"
+    :workspace-id="newWorkspaceId"
+  />
+
+  <!-- 无项目首屏 / 空态引导 -->
+  <WelcomeHero v-else @new-project="onNewProjectFromHero" />
 </template>

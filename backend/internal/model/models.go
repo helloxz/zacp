@@ -38,6 +38,10 @@ type Session struct {
 	ACPSessionID string         `gorm:"" json:"acpSessionId,omitempty"`    // ACP 协议层 session ID
 	Title        string         `gorm:"" json:"title"`                     // 会话标题（可从首轮对话生成）
 	Status       SessionStatus  `gorm:"index;default:'active'" json:"status"`
+	// IsDraft 草稿标记：隐式 session/new 探测创建的会话为 true，不进侧栏列表；
+	// 用户发出首条 prompt 即转正（置 false），此后作为正常会话展示。
+	// 见设计文档「新建会话流程：隐式草稿 → 转正」。
+	IsDraft bool `gorm:"index;default:false" json:"isDraft"`
 	// ConfigOptions 会话配置项（模型/思考强度/mode 等）原始 JSON（model.ConfigOptionDTO 数组）；
 	// 由 service 转换存储，不直接暴露给前端 JSON（经 /config-options 端点返回）。
 	ConfigOptions string    `gorm:"type:text" json:"-"`

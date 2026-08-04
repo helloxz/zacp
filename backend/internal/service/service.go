@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	acpclient "github.com/zacp/zacp/internal/acp/client"
@@ -50,6 +51,9 @@ func (s *WorkspaceService) CreateWorkspace(path string) (*model.Workspace, error
 
 	workspace := &model.Workspace{
 		Path:     absPath,
+		// 未显式提供 name 时，默认取路径末尾段作为显示名（如 /data/apps/51job → 51job），
+		// 侧栏只展示项目名而非完整路径（见设计文档「项目列表展示」）。
+		Name:     defaultWorkspaceName(absPath),
 		LastUsed: time.Now(),
 	}
 
@@ -144,7 +148,14 @@ func (s *SessionService) resolveWorkspace(workspaceID uint) (*model.Workspace, e
 }
 
 // CreateSession 创建会话（启动 agent + 创建 ACP session + 持久化）
-func (s *SessionService) CreateSession(ctx context.Context, workspaceID uint, agentID string) (*model.Session, error) {
+//
+// isDraft=true 表示「隐式草稿会话」：用于空态预览各 agent 的配置项（模型/思考强度），
+// 不进侧栏列表；用户发出首条 prompt 时由 HandlePrompt 转正（isDraft=false）。
+// 见设计文档「新建会话流程：隐式草稿 → 转正」。
+//
+// 返回 CreateSessionResult，携带 session 与 agent 下发的 configOptions，
+// 供前端空态直接展示配置项下拉（无需再单独请求 /config-options）。
+func (s *SessionService) CreateSession(ctx context.Context, workspaceID uint, agentID string, isDraft bool) (*model.CreateSessionResult, error) {
 	// 解析工作区（0 → 回退默认工作区）
 	workspace, err := s.resolveWorkspace(workspaceID)
 	if err != nil {
@@ -173,8 +184,9 @@ func (s *SessionService) CreateSession(ctx context.Context, workspaceID uint, ag
 
 	// 序列化配置项 JSON（会话级持久化，前端经 /config-options 端点读取）
 	configJSON := ""
-	if len(configOptions) > 0 {
-		data, marshalErr := json.Marshal(acpclient.ToConfigOptionDTOs(configOptions))
+	optionDTOs := acpclient.ToConfigOptionDTOs(configOptions)
+	if len(optionDTOs) > 0 {
+		data, marshalErr := json.Marshal(optionDTOs)
 		if marshalErr == nil {
 			configJSON = string(data)
 		}
@@ -189,6 +201,7 @@ func (s *SessionService) CreateSession(ctx context.Context, workspaceID uint, ag
 		ACPSessionID:  acpSessionID,
 		Title:         "新会话",
 		Status:        model.SessionStatusActive,
+		IsDraft:       isDraft,
 		ConfigOptions: configJSON,
 	}
 
@@ -197,7 +210,10 @@ func (s *SessionService) CreateSession(ctx context.Context, workspaceID uint, ag
 		return nil, fmt.Errorf("failed to save session: %w", err)
 	}
 
-	return session, nil
+	return &model.CreateSessionResult{
+		Session:       session,
+		ConfigOptions: optionDTOs,
+	}, nil
 }
 
 // GetSession 获取会话
@@ -238,6 +254,23 @@ func (s *SessionService) DeleteSession(id uint) error {
 	// 删除消息
 	if err := s.msgRepo.DeleteBySession(id); err != nil {
 		return fmt.Errorf("failed to delete messages: %w", err)
+	}
+
+	return s.sessionRepo.Delete(id)
+}
+
+// DeleteDraftSession 删除草稿会话（切 tab / 离开空态时释放旧隐式草稿）。
+// 与 DeleteSession 区别：草稿无消息，仅关闭 ACP session + 删 DB 记录，不停 agent 进程
+// （agent 进程可能仍在服务其他会话/草稿）。
+func (s *SessionService) DeleteDraftSession(ctx context.Context, id uint) error {
+	session, err := s.sessionRepo.GetByID(id)
+	if err != nil {
+		return fmt.Errorf("session not found: %w", err)
+	}
+
+	// 尽力关闭 ACP session（agent 不支持 close 能力时忽略错误）
+	if session.ACPSessionID != "" {
+		_ = s.mgr.CloseSession(ctx, session.AgentID, session.ACPSessionID)
 	}
 
 	return s.sessionRepo.Delete(id)
@@ -383,4 +416,16 @@ func (s *SessionService) SetConfigOption(ctx context.Context, sessionID uint, op
 	return nil
 }
 
-
+// defaultWorkspaceName 取路径末尾段作为默认项目名（/data/apps/51job → 51job）。
+// 路径以 / 结尾时取最后一段非空目录名；全空则回退整段路径。
+func defaultWorkspaceName(path string) string {
+	// 去掉末尾分隔符后再取末尾段，兼容 /data/apps/51job/
+	trimmed := strings.TrimRight(path, string(filepath.Separator))
+	if trimmed == "" {
+		return path
+	}
+	if idx := strings.LastIndex(trimmed, string(filepath.Separator)); idx >= 0 {
+		return trimmed[idx+1:]
+	}
+	return trimmed
+}

@@ -76,20 +76,40 @@ export async function fetchSession(sessionId: number): Promise<ChatSession> {
 export interface CreateSessionInput {
   agentId: string
   workspaceId?: number
+  /** 草稿标记：true 表示隐式草稿会话（预览配置项，不进侧栏），默认 false */
+  isDraft?: boolean
+}
+
+/** 创建会话响应（携带 session 与 agent 下发的 configOptions） */
+export interface CreateSessionResult {
+  session: ChatSession
+  configOptions: ConfigOption[]
 }
 
 export async function createSession(
   input: CreateSessionInput,
-): Promise<ChatSession> {
-  const data = await http.post<{ session: ChatSession }>('/api/v1/sessions', {
-    body: { agentId: input.agentId, workspaceId: input.workspaceId ?? 0 },
-  })
-  return data.session
+): Promise<CreateSessionResult> {
+  const data = await http.post<{ session: ChatSession; configOptions: ConfigOption[] }>(
+    '/api/v1/sessions',
+    {
+      body: {
+        agentId: input.agentId,
+        workspaceId: input.workspaceId ?? 0,
+        isDraft: input.isDraft ?? false,
+      },
+    },
+  )
+  return { session: data.session, configOptions: data.configOptions ?? [] }
 }
 
 /** DELETE /api/v1/sessions/:id — 删除会话（软删除 + 停 agent） */
 export async function deleteSession(sessionId: number): Promise<void> {
   await http.delete(`/api/v1/sessions/${sessionId}`)
+}
+
+/** DELETE /api/v1/sessions/:id/draft — 删除草稿会话（切 tab/离开空态时释放旧隐式草稿） */
+export async function deleteDraftSession(sessionId: number): Promise<void> {
+  await http.delete(`/api/v1/sessions/${sessionId}/draft`)
 }
 
 /** GET /api/v1/sessions/:id/messages — 消息历史（分页） */

@@ -38,6 +38,8 @@ func New(
 		v1.GET("/sessions", sessionHandler.ListRecentSessions)
 		v1.GET("/sessions/:id", sessionHandler.GetSession)
 		v1.DELETE("/sessions/:id", sessionHandler.DeleteSession)
+		// 草稿会话释放（切 tab / 离开空态时释放旧隐式草稿）
+		v1.DELETE("/sessions/:id/draft", sessionHandler.DeleteDraftSession)
 		v1.GET("/workspaces/:id/sessions", sessionHandler.ListSessions)
 
 		// 消息管理

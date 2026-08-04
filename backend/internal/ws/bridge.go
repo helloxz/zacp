@@ -232,6 +232,16 @@ func (b *EventBridge) HandlePrompt(ctx context.Context, sessionID, agentID, mess
 		return fmt.Errorf("failed to save user message: %w", err)
 	}
 
+	// 草稿转正：隐式草稿会话在发出首条 prompt 时转为正常会话（is_draft=false），
+	// 此后进入侧栏列表展示。设计约定「转正时机=发出首条 prompt 即转正，不等回复」。
+	if dbSession.IsDraft {
+		if err := b.sessionRepo.PromoteFromDraft(dbSession.ID); err != nil {
+			b.log.Warn("promote draft session failed", "sessionID", sessionID, "err", err)
+		} else {
+			b.log.Info("draft session promoted", "sessionID", sessionID, "dbID", dbSession.ID)
+		}
+	}
+
 	// 首条消息生成会话标题（仅当仍是默认标题时）
 	if dbSession.Title == "" || dbSession.Title == "新会话" {
 		_ = b.sessionRepo.UpdateTitle(dbSession.ID, deriveTitle(message))

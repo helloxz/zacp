@@ -103,19 +103,22 @@ func (r *SessionRepository) GetByID(id uint) (*model.Session, error) {
 	return &session, nil
 }
 
-// ListByWorkspace 列出工作目录下的所有会话
+// ListByWorkspace 列出工作目录下的所有会话（排除草稿：草稿不进项目会话列表）
 func (r *SessionRepository) ListByWorkspace(workspaceID uint) ([]model.Session, error) {
 	var sessions []model.Session
-	err := r.db.Where("workspace_id = ?", workspaceID).
+	err := r.db.Where("workspace_id = ? AND is_draft = ?", workspaceID, false).
 		Order("updated_at DESC").
 		Find(&sessions).Error
 	return sessions, err
 }
 
 // ListRecent 列出最近活跃的会话（全局，跨工作区；预加载 Workspace 供前端分组展示）。
+// 草稿会话（is_draft=true）不进侧栏列表：它们是为预览配置项而隐式创建的，
+// 尚无对话内容，只有发首条 prompt 转正后才展示。
 func (r *SessionRepository) ListRecent(limit int) ([]model.Session, error) {
 	var sessions []model.Session
 	err := r.db.Preload("Workspace").
+		Where("is_draft = ?", false).
 		Order("updated_at DESC").
 		Limit(limit).
 		Find(&sessions).Error
@@ -125,6 +128,13 @@ func (r *SessionRepository) ListRecent(limit int) ([]model.Session, error) {
 // Update 更新会话
 func (r *SessionRepository) Update(session *model.Session) error {
 	return r.db.Save(session).Error
+}
+
+// PromoteFromDraft 草稿转正：is_draft 置 false（发首条 prompt 后调用，使会话进入侧栏列表）。
+func (r *SessionRepository) PromoteFromDraft(id uint) error {
+	return r.db.Model(&model.Session{}).
+		Where("id = ?", id).
+		Update("is_draft", false).Error
 }
 
 // UpdateACPSessionID 更新 ACP Session ID

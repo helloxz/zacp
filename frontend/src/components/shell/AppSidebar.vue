@@ -1,12 +1,19 @@
 <script setup lang="ts">
+import { ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
-import { AddOutline, ChevronBackOutline, ChevronForwardOutline } from '@vicons/ionicons5'
-import { NIcon } from 'naive-ui'
+import {
+  AddOutline,
+  ChevronBackOutline,
+  ChevronForwardOutline,
+} from '@vicons/ionicons5'
+import { NIcon, useMessage } from 'naive-ui'
 import SidebarSessionList from '@/components/shell/SidebarSessionList.vue'
 import UserFooter from '@/components/shell/UserFooter.vue'
+import { useSessionStore } from '@/stores/session'
+import { useAppStore } from '@/stores/app'
 
-const props = defineProps<{ collapsed?: boolean }>()
+defineProps<{ collapsed?: boolean }>()
 const emit = defineEmits<{
   (e: 'toggle'): void
   (e: 'open-settings'): void
@@ -14,13 +21,51 @@ const emit = defineEmits<{
 
 const { t } = useI18n()
 const router = useRouter()
+const sessionStore = useSessionStore()
+const appStore = useAppStore()
+const message = useMessage()
+
+/** 新建项目弹窗（与 WelcomeHero 共享 appStore.newProjectModalOpen） */
+const showProjectModal = ref(false)
+const projectPath = ref('')
+const projectCreating = ref(false)
+
+// 同步共享 flag → 本地弹窗（WelcomeHero 按钮 / 侧栏按钮都能打开同一弹窗）
+watch(
+  () => appStore.newProjectModalOpen,
+  (open) => {
+    if (open) {
+      projectPath.value = ''
+      showProjectModal.value = true
+      appStore.newProjectModalOpen = false
+    }
+  },
+)
+
+/** 打开「新建项目」弹窗 */
+function onNewProject() {
+  projectPath.value = ''
+  showProjectModal.value = true
+}
 
 /**
- * 「新建会话」：回到空态（清空选中）。
- * 设计约定：首条消息发送时才真正创建会话，避免空会话垃圾（设计文档 §4.1）。
+ * 提交项目路径：POST /api/v1/workspaces（后端校验路径存在 + 自动取末尾段为 name）。
+ * 创建成功后直接进入该项目的「新建会话」空态（/new?workspaceId=X），少一步点击。
  */
-function onNewSession() {
-  void router.push({ name: 'home' })
+async function onCreateProject() {
+  const path = projectPath.value.trim()
+  if (!path || projectCreating.value) return
+  projectCreating.value = true
+  try {
+    const ws = await sessionStore.createWorkspace(path)
+    showProjectModal.value = false
+    // 创建项目成功 → 直接进入该项目的新建会话空态
+    void router.push({ name: 'new', query: { workspaceId: String(ws.id) } })
+  } catch (e) {
+    message.error(e instanceof Error ? e.message : String(e))
+  } finally {
+    projectCreating.value = false
+  }
 }
 </script>
 
@@ -42,14 +87,14 @@ function onNewSession() {
       </button>
     </template>
 
-    <!-- 展开态：新建会话 + 折叠按钮 + 列表 + 用户区 -->
+    <!-- 展开态：新建项目 + 折叠按钮 + 项目会话列表 + 用户区 -->
     <template v-else>
       <div class="flex items-center gap-1 p-3">
-        <n-button block secondary class="flex-1" @click="onNewSession">
+        <n-button block secondary class="flex-1" @click="onNewProject">
           <template #icon>
             <n-icon><AddOutline /></n-icon>
           </template>
-          {{ t('shell.newSession') }}
+          {{ t('shell.newProject') }}
         </n-button>
         <n-button
           quaternary
@@ -69,4 +114,24 @@ function onNewSession() {
       <UserFooter @open-settings="emit('open-settings')" />
     </template>
   </aside>
+
+  <!-- 新建项目弹窗：输入项目路径 -->
+  <n-modal
+    v-model:show="showProjectModal"
+    preset="dialog"
+    :title="t('shell.newProjectTitle')"
+    :positive-text="t('common.confirm')"
+    :negative-text="t('common.cancel')"
+    :loading="projectCreating"
+    @positive-click="onCreateProject"
+  >
+    <div class="space-y-2 py-2">
+      <n-input
+        v-model:value="projectPath"
+        :placeholder="t('shell.newProjectPlaceholder')"
+        @keydown.enter="onCreateProject"
+      />
+      <p class="text-xs text-slate-400">{{ t('shell.newProjectHint') }}</p>
+    </div>
+  </n-modal>
 </template>

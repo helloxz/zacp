@@ -134,6 +134,11 @@ func runMigrations(db *gorm.DB) error {
 			Name:    "session_config_options",
 			Func:    migrateV3,
 		},
+		{
+			Version: 4,
+			Name:    "session_is_draft",
+			Func:    migrateV4,
+		},
 	}
 
 	// 执行未应用的迁移
@@ -178,5 +183,12 @@ func migrateV2(db *gorm.DB) error {
 
 // migrateV3 为 sessions 表添加 config_options 列（ACP 会话配置项 JSON）。
 func migrateV3(db *gorm.DB) error {
+	return db.AutoMigrate(&model.Session{})
+}
+
+// migrateV4 为 sessions 表添加 is_draft 列（草稿会话标记）。
+// 隐式 session/new 探测创建的会话 is_draft=true，不进侧栏列表；
+// 用户发出首条 prompt 后转正（is_draft=false）。默认 false，兼容历史数据。
+func migrateV4(db *gorm.DB) error {
 	return db.AutoMigrate(&model.Session{})
 }

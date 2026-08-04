@@ -22,10 +22,13 @@ func NewSessionHandler(svc *service.SessionService) *SessionHandler {
 // CreateSession 创建新会话
 // POST /api/v1/sessions
 // workspaceId 可选：为 0 / 缺省时回退默认工作区（见 service.resolveWorkspace）。
+// isDraft 可选：true 表示隐式草稿会话（预览配置项，不进侧栏），默认 false。
+// 响应携带 session 与 agent 下发的 configOptions，供前端空态直接展示。
 func (h *SessionHandler) CreateSession(c *gin.Context) {
 	var req struct {
 		WorkspaceID uint   `json:"workspaceId"`
 		AgentID     string `json:"agentId" binding:"required"`
+		IsDraft     bool   `json:"isDraft"`
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -35,7 +38,7 @@ func (h *SessionHandler) CreateSession(c *gin.Context) {
 		return
 	}
 
-	session, err := h.svc.CreateSession(c.Request.Context(), req.WorkspaceID, req.AgentID)
+	result, err := h.svc.CreateSession(c.Request.Context(), req.WorkspaceID, req.AgentID, req.IsDraft)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error": gin.H{"code": "create_session_failed", "message": err.Error()},
@@ -43,7 +46,10 @@ func (h *SessionHandler) CreateSession(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusCreated, gin.H{"session": session})
+	c.JSON(http.StatusCreated, gin.H{
+		"session":       result.Session,
+		"configOptions": result.ConfigOptions,
+	})
 }
 
 // GetSession 获取会话详情
@@ -179,6 +185,27 @@ func (h *SessionHandler) DeleteSession(c *gin.Context) {
 	if err := h.svc.DeleteSession(uint(id)); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error": gin.H{"code": "delete_session_failed", "message": err.Error()},
+		})
+		return
+	}
+
+	c.JSON(http.StatusNoContent, nil)
+}
+
+// DeleteDraftSession 删除草稿会话（切 tab / 离开空态时释放旧隐式草稿）
+// DELETE /api/v1/sessions/:id/draft
+func (h *SessionHandler) DeleteDraftSession(c *gin.Context) {
+	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": gin.H{"code": "invalid_id", "message": "invalid session id"},
+		})
+		return
+	}
+
+	if err := h.svc.DeleteDraftSession(c.Request.Context(), uint(id)); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": gin.H{"code": "delete_draft_failed", "message": err.Error()},
 		})
 		return
 	}

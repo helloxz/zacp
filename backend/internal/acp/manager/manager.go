@@ -255,6 +255,21 @@ func (m *Manager) Cancel(ctx context.Context, agentID, sessionID string) error {
 	return conn.Cancel(ctx, acp.SessionId(sessionID))
 }
 
+// CloseSession 关闭指定 ACP session（释放 agent 端会话资源）。
+// 用于切 tab 时释放旧隐式草稿会话；agent 不支持 sessionCapabilities.close 时返回 nil（尽力释放，不报错）。
+// 注意：这是 ACP 协议层会话关闭，不影响 agent 进程本身（StopAgent 才停进程）。
+func (m *Manager) CloseSession(ctx context.Context, agentID, sessionID string) error {
+	m.mu.Lock()
+	conn, exists := m.agents[agentID]
+	m.mu.Unlock()
+
+	if !exists {
+		return fmt.Errorf("agent '%s' not started", agentID)
+	}
+
+	return conn.CloseSession(ctx, acp.SessionId(sessionID))
+}
+
 // Close 关闭所有 agent 连接。
 func (m *Manager) Close() error {
 	m.mu.Lock()
@@ -513,6 +528,22 @@ func (c *AgentConnection) Cancel(ctx context.Context, sessionID acp.SessionId) e
 	}
 
 	return c.conn.Cancel(ctx, acp.CancelNotification{SessionId: sessionID})
+}
+
+// CloseSession 关闭单个 ACP session（释放 agent 端会话资源）。
+// 用于切 tab 时释放旧隐式草稿会话。ACP CloseSession 是可选能力
+// （sessionCapabilities.close），agent 不支持时可能报错，调用方按尽力释放处理。
+func (c *AgentConnection) CloseSession(ctx context.Context, sessionID acp.SessionId) error {
+	c.mu.Lock()
+	if !c.started || c.conn == nil {
+		c.mu.Unlock()
+		return fmt.Errorf("agent not started")
+	}
+	conn := c.conn
+	c.mu.Unlock()
+
+	_, err := conn.CloseSession(ctx, acp.CloseSessionRequest{SessionId: sessionID})
+	return err
 }
 
 // SetSessionConfigOption 设置会话配置项（select 型，如模型/思考强度/mode 切换）。
