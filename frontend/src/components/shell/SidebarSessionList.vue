@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import {
   AddOutline,
   FolderOpenOutline,
@@ -14,6 +14,7 @@ import type { ChatSession, Workspace } from '@/types/models'
 import SessionListItem from '@/components/shell/SessionListItem.vue'
 
 const { t } = useI18n()
+const route = useRoute()
 const router = useRouter()
 const sessionStore = useSessionStore()
 const message = useMessage()
@@ -106,6 +107,53 @@ watch(
       expandedInitialized = true
     }
   },
+  { immediate: true },
+)
+
+/**
+ * 当前 URL 会话 id（/sessions/:id）；非会话路由（/、/new）为 null。
+ * 刷新后组件重挂载、store 清空，需在数据到达后据此定位父项目。
+ */
+const currentSessionId = computed(() => {
+  const raw = route.params.sessionId
+  return raw ? Number(raw) : null
+})
+
+/**
+ * 确保当前 URL 会话在侧栏可见：
+ * 1) 展开其父项目（加入 expandedIds，并集语义，不影响其它已展开项目）；
+ * 2) 若会话排在项目可见截断（每项目默认 20 条）之外，提升可见数到包含它，
+ *    保证手动刷新 /sessions/:id 后侧栏能看到并高亮当前会话（选中高亮由
+ *    SessionListItem 按 route.params.sessionId 驱动，展开后即生效）。
+ *
+ * 幂等：会话已可见时无副作用；数据未到时直接返回，等数据到达后由 watch 重试。
+ * 破例可超 MAX_VISIBLE：活跃会话优先于渲染截断，避免「展开但看不到选中项」的困惑。
+ */
+function revealCurrentSession() {
+  const id = currentSessionId.value
+  if (id === null) return
+  const s = sessionStore.sessions.find((x) => x.id === id)
+  if (!s) return
+  // 与 groups 同一套 workspace 解析：软删除 workspace 的会话（id=0 空对象）跳过
+  const ws = s.workspace?.id
+    ? s.workspace
+    : sessionStore.workspaces.find((w) => w.id === s.workspaceId)
+  if (!ws) return
+  expandedIds.value = new Set(expandedIds.value).add(ws.id)
+  // 可见条数：当前会话被截断时提升到包含它（取 max，不回调用户已展开的量）
+  const group = groups.value.find((g) => g.workspace.id === ws.id)
+  const idx = group?.sessions.findIndex((x) => x.id === id) ?? -1
+  if (idx >= 0 && idx >= (visibleCount[ws.id] ?? PAGE_SIZE)) {
+    visibleCount[ws.id] = idx + 1
+  }
+}
+
+// 会话路由下保持当前会话可见：sessionId 变化（immediate 覆盖刷新挂载）
+// 与 sessions 数据到达/刷新（首屏迟到、loadSessions 整体替换）都触发重定位；
+// 幂等实现保证重复触发无副作用。
+watch(
+  [currentSessionId, () => sessionStore.sessions],
+  () => revealCurrentSession(),
   { immediate: true },
 )
 
