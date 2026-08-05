@@ -59,6 +59,14 @@ func main() {
 	sessionRepo := store.NewSessionRepository(st.DB)
 	messageRepo := store.NewMessageRepository(st.DB)
 
+	// 启动清理：物理删除历史软删的空草稿会话（隐式 /new 探测产生的临时会话，
+	// 无恢复入口也无保留价值）。清理失败仅告警，不阻塞启动。
+	if purged, err := sessionRepo.PurgeSoftDeletedDrafts(); err != nil {
+		log.Warn("failed to purge soft-deleted draft sessions", "err", err)
+	} else if purged > 0 {
+		log.Info("purged soft-deleted draft sessions", "count", purged)
+	}
+
 	// 创建 Provider Registry
 	registry, err := providers.NewRegistry(cfg.Agents)
 	if err != nil {

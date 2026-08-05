@@ -64,10 +64,10 @@ const hasAny = computed(
 )
 
 /**
- * 每项目可见会话条数（渲染截断）：默认 30，点「查看更多」+30，最多 60 后按钮消失。
+ * 每项目可见会话条数（渲染截断）：默认 20，点「查看更多」+20，最多 40 后按钮消失。
  * 数据仍全量在 store（后端一次返回 ≤1000），只限制 DOM 渲染量，避免长列表压力。
  */
-const PAGE_SIZE = 30
+const PAGE_SIZE = 20
 const MAX_VISIBLE = PAGE_SIZE * 2
 const visibleCount = reactive<Record<number, number>>({})
 
@@ -77,13 +77,13 @@ function visibleSessions(group: { workspace: Workspace; sessions: ChatSession[] 
   return group.sessions.slice(0, n)
 }
 
-/** 是否显示「查看更多」：会话数超过当前可见数，且未到上限 60 */
+/** 是否显示「查看更多」：会话数超过当前可见数，且未到上限 40 */
 function canLoadMore(group: { workspace: Workspace; sessions: ChatSession[] }) {
   const n = visibleCount[group.workspace.id] ?? PAGE_SIZE
   return group.sessions.length > n && n < MAX_VISIBLE
 }
 
-/** 点击「查看更多」：每项目最多加 1 次（30 → 60），计数不随列表刷新重置，保持用户已展开的量 */
+/** 点击「查看更多」：每项目最多加 1 次（20 → 40），计数不随列表刷新重置，保持用户已展开的量 */
 function loadMore(wsId: number) {
   visibleCount[wsId] = Math.min((visibleCount[wsId] ?? PAGE_SIZE) + PAGE_SIZE, MAX_VISIBLE)
 }
@@ -234,14 +234,14 @@ async function onRemoveWorkspace(ws: Workspace) {
             </n-tooltip>
           </div>
         </div>
-        <!-- 项目下的会话列表（仅展开时渲染；每项目默认 30 条，超出显示「查看更多」） -->
+        <!-- 项目下的会话列表（仅展开时渲染；每项目默认 20 条，超出显示「查看更多」） -->
         <template v-if="expandedIds.has(group.workspace.id)">
           <SessionListItem
             v-for="s in visibleSessions(group)"
             :key="s.id"
             :session="s"
           />
-          <!-- 查看更多：+30 条；达到 60 上限后按钮消失（最多加载 1 次） -->
+          <!-- 查看更多：+20 条；达到 40 上限后按钮消失（最多加载 1 次） -->
           <n-button
             v-if="canLoadMore(group)"
             text

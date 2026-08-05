@@ -218,6 +218,36 @@ func (r *SessionRepository) Delete(id uint) error {
 	return r.db.Unscoped().Delete(&model.Session{}, id).Error
 }
 
+// PurgeSoftDeletedDrafts 物理删除「已软删的草稿会话」及其消息，返回清理条数。
+// 背景：草稿（is_draft=true）是隐式 /new 探测产生的临时会话，用户不可见；
+// 历史软删的草稿既无恢复入口也无保留价值（当前数据 125 条全部无消息），
+// 每次启动时清一次，防止回收站永久堆积。
+// 非草稿的软删会话（用户手动删除）不在清理范围，保持既有语义。
+func (r *SessionRepository) PurgeSoftDeletedDrafts() (int64, error) {
+	var ids []uint
+	if err := r.db.Model(&model.Session{}).
+		Unscoped().
+		Where("deleted_at IS NOT NULL AND is_draft = ?", true).
+		Pluck("id", &ids).Error; err != nil {
+		return 0, err
+	}
+	if len(ids) == 0 {
+		return 0, nil
+	}
+	err := r.db.Transaction(func(tx *gorm.DB) error {
+		// 先物理删消息（Message 无软删列，Delete 即物理删），避免孤儿行
+		if err := tx.Where("session_id IN ?", ids).Delete(&model.Message{}).Error; err != nil {
+			return err
+		}
+		// 物理删会话行（Unscoped 绕过软删过滤器）
+		return tx.Unscoped().Where("id IN ?", ids).Delete(&model.Session{}).Error
+	})
+	if err != nil {
+		return 0, err
+	}
+	return int64(len(ids)), nil
+}
+
 // MessageRepository 消息数据访问
 type MessageRepository struct {
 	db *gorm.DB
