@@ -1,8 +1,13 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
-import { AddOutline, TrashOutline } from '@vicons/ionicons5'
+import {
+  AddOutline,
+  FolderOpenOutline,
+  FolderOutline,
+  TrashOutline,
+} from '@vicons/ionicons5'
 import { NIcon, useMessage } from 'naive-ui'
 import { useSessionStore } from '@/stores/session'
 import type { ChatSession, Workspace } from '@/types/models'
@@ -58,6 +63,38 @@ const hasAny = computed(
   () => sessionStore.sessions.length > 0 || sessionStore.workspaces.length > 0,
 )
 
+/**
+ * 已展开（显示会话列表）的项目 id 集合：独立开关，可同时展开多个项目。
+ */
+const expandedIds = ref<Set<number>>(new Set())
+
+/**
+ * 首次加载完成时默认只展开第一个项目（groups[0]，最近使用的），
+ * 之后用户手动展开/折叠的状态不被数据刷新重置。
+ */
+let expandedInitialized = false
+watch(
+  groups,
+  (gs) => {
+    if (!expandedInitialized && gs.length > 0) {
+      expandedIds.value = new Set([gs[0].workspace.id])
+      expandedInitialized = true
+    }
+  },
+  { immediate: true },
+)
+
+/** 切换项目的展开/折叠（点击项目名整行触发） */
+function toggleWorkspace(id: number) {
+  const next = new Set(expandedIds.value)
+  if (next.has(id)) {
+    next.delete(id)
+  } else {
+    next.add(id)
+  }
+  expandedIds.value = next
+}
+
 /** 项目显示名：优先用 workspace.name（后端取末尾段填充） */
 function projectName(ws: Workspace): string {
   return ws.name || ws.path.split('/').pop() || ws.path
@@ -89,19 +126,34 @@ async function onRemoveWorkspace(ws: Workspace) {
         :key="group.workspace.id"
         class="flex flex-col gap-1"
       >
+        <!-- 项目头：整行可点击，切换该项目会话列表的展开/折叠 -->
         <div
-          class="group/header flex items-center justify-between rounded px-1 pt-2"
+          class="group/header flex cursor-pointer items-center justify-between rounded px-1 py-1.5 transition-colors hover:bg-slate-200/50"
+          role="button"
+          tabindex="0"
+          @click="toggleWorkspace(group.workspace.id)"
+          @keydown.enter.self="toggleWorkspace(group.workspace.id)"
         >
-          <!-- 项目名：加粗、字体加大（设计约定：只取末尾文件夹名） -->
+          <!-- 文件夹图标（展开时切换为打开状态，兼作展开指示）+ 项目名（淡色，hover 加深） -->
           <span
-            class="truncate text-base font-bold text-slate-800"
+            class="flex min-w-0 flex-1 items-center gap-1.5"
             :title="group.workspace.path"
           >
-            {{ projectName(group.workspace) }}
+            <n-icon :size="15" class="shrink-0 text-slate-400">
+              <FolderOpenOutline v-if="expandedIds.has(group.workspace.id)" />
+              <FolderOutline v-else />
+            </n-icon>
+            <span
+              class="min-w-0 truncate text-sm font-semibold text-slate-600 transition-colors group-hover/header:text-slate-800"
+            >
+              {{ projectName(group.workspace) }}
+            </span>
           </span>
-          <!-- hover 显示的操作区：移除（左）+ 新建会话（右）；n-button text 纯图标按钮，不占宽度 -->
+          <!-- hover 显示的操作区：移除（左）+ 新建会话（右）；n-button text 纯图标按钮，不占宽度；
+               @click.stop 防止点击操作按钮误触项目头的展开/折叠 -->
           <div
             class="flex shrink-0 items-center gap-1 opacity-0 transition-opacity focus-within:opacity-100 group-hover/header:opacity-100"
+            @click.stop
           >
             <!-- 移除项目：图标按钮 + tooltip（顶部弹出，白底浅字，避免遮挡右侧的新建会话图标）；
                  点击弹 popconfirm 确认（软删除，可同路径恢复） -->
@@ -157,12 +209,14 @@ async function onRemoveWorkspace(ws: Workspace) {
             </n-tooltip>
           </div>
         </div>
-        <!-- 项目下的会话列表 -->
-        <SessionListItem
-          v-for="s in group.sessions"
-          :key="s.id"
-          :session="s"
-        />
+        <!-- 项目下的会话列表（仅展开时渲染） -->
+        <template v-if="expandedIds.has(group.workspace.id)">
+          <SessionListItem
+            v-for="s in group.sessions"
+            :key="s.id"
+            :session="s"
+          />
+        </template>
       </div>
     </template>
 

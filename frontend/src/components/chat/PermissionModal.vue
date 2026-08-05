@@ -19,7 +19,7 @@ function select(optionId: string) {
     :closable="false"
     preset="card"
     :title="t('permission.title')"
-    class="w-[420px]"
+    :style="{ width: '420px', maxWidth: 'calc(100vw - 32px)' }"
   >
     <div v-if="sessionStore.pendingPermission" class="flex flex-col gap-4">
       <!-- 工具调用信息 -->
