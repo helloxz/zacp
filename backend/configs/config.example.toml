@@ -3,11 +3,15 @@
 # 密钥/Token 不要写在这里，用环境变量注入
 
 [server]
+# 监听地址（IP:PORT；":8680" 表示监听所有网卡）。
+# 优先级：--addr 命令行 > ZACP_ADDR 环境变量 > 本配置 > 默认 :8680
 addr = ":8680"
-mode = "debug"   # debug | release
+# debug | release。
+# 优先级：GIN_MODE 环境变量（显式设置时）> 本配置 > 默认 debug
+mode = "debug"
 
 [session]
-# Agent 默认工作目录（不是 $ZACP_HOME，是代码项目路径）
+# Agent 默认工作目录（不是 $ZACP_DATA，是代码项目路径）
 default_cwd = "."
 # 开发模式可设为 true 自动批准所有权限请求；生产环境必须 false
 auto_approve = false
@@ -16,21 +20,23 @@ auto_approve = false
 idle_timeout = "30m"
 
 [database]
-# 相对路径相对于 $ZACP_HOME（默认 ~/.zacp）
+# 相对路径相对于 $ZACP_DATA（默认 ~/.zacp）
 # 默认 data/zacp.db，即 ~/.zacp/data/zacp.db
 path = "data/zacp.db"
 
 # 多 Agent 配置：每个二进制/ACP 入口一条
 # 前端可查看所有 enabled 的 agent 并切换
 
-[[agents]]
-id = "reasonix"
-name = "Reasonix"
-enabled = true
-transport = "stdio"
-command = "reasonix"   # 或绝对路径，也可设 REASONIX_BIN 环境变量
-args = ["--acp"]
-cwd = ""               # 空则用 session.default_cwd
+# [[agents]]
+# id = "reasonix"
+# name = "Reasonix"
+# enabled = true
+# transport = "stdio"
+# 或绝对路径，也可设 REASONIX_BIN 环境变量
+# command = "reasonix"
+# args = ["--acp"]
+# 空则用 session.default_cwd
+# cwd = ""
 
 # 示例：Pi Agent（默认禁用）
 # [[agents]]

@@ -29,7 +29,7 @@ func main() {
 	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
 
 	// 加载配置
-	homeDir, err := config.EnsureHomeDir()
+	homeDir, err := config.EnsureHomeDir("")
 	if err != nil {
 		log.Error("failed to ensure home dir", "err", err)
 		os.Exit(1)

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"flag"
+	"fmt"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -22,19 +23,56 @@ import (
 )
 
 func main() {
-	addr := flag.String("addr", envOr("ZACP_ADDR", ":8680"), "HTTP listen address")
-	configPath := flag.String("config", envOr("ZACP_CONFIG", ""), "Config file path (default: $ZACP_HOME/config.toml)")
+	// 命令行参数（均可不传，缺省走回退链，命令行优先级最高）：
+	//   --addr     监听地址 IP:PORT；回退 ZACP_ADDR 环境变量 → TOML server.addr → :8680
+	//   --data-dir ZACP_DATA 状态根目录；回退 ZACP_DATA 环境变量 → ~/.zacp
+	//   --config   配置文件路径；回退 ZACP_CONFIG 环境变量 → $ZACP_DATA/config.toml
+	addr := flag.String("addr", "", "HTTP listen address (IP:PORT); fallback: ZACP_ADDR env -> config server.addr -> :8680")
+	dataDir := flag.String("data-dir", "", "ZACP_DATA state directory; fallback: ZACP_DATA env -> ~/.zacp")
+	configPath := flag.String("config", envOr("ZACP_CONFIG", ""), "Config file path (default: $ZACP_DATA/config.toml)")
+
+	// 自定义 --help/-h 输出（Go flag 包内置支持 -h/--help，但缺省输出较简略）：
+	// 用英文写明各参数的回退链、优先级与示例，便于命令行直接查看。
+	flag.CommandLine.Usage = func() {
+		out := flag.CommandLine.Output()
+		fmt.Fprintf(out, `zacp-server - ACP (Agent Client Protocol) multi-agent web gateway
+
+Usage:
+  zacp-server [flags]
+
+Flags:
+  -addr string
+        HTTP listen address in IP:PORT form (":8680" binds all interfaces).
+        Fallback: --addr > ZACP_ADDR env > config server.addr > :8680
+  -config string
+        Path to the TOML config file.
+        Fallback: --config > ZACP_CONFIG env > $ZACP_DATA/config.toml
+  -data-dir string
+        ZACP_DATA state root: config.toml and data (database, logs) live here.
+        Fallback: --data-dir > ZACP_DATA env > ~/.zacp
+  -h, -help
+        Show this help and exit.
+
+Precedence (high -> low): command-line flags > ZACP_* env vars > TOML config > built-in defaults.
+
+Examples:
+  zacp-server                                     # listen :8680, state in ~/.zacp
+  zacp-server --addr 127.0.0.1:9000               # listen on loopback port 9000
+  zacp-server --data-dir /var/lib/zacp --config /etc/zacp/config.toml
+
+`)
+	}
 	flag.Parse()
 
 	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
 
-	// 确保 ZACP_HOME 存在
-	homeDir, err := config.EnsureHomeDir()
+	// 确保 ZACP_DATA 状态根目录存在：--data-dir 显式传入时优先，否则按环境变量/默认解析
+	homeDir, err := config.EnsureHomeDir(*dataDir)
 	if err != nil {
 		log.Error("failed to ensure home dir", "err", err)
 		os.Exit(1)
 	}
-	log.Info("ZACP_HOME", "path", homeDir)
+	log.Info("ZACP_DATA", "path", homeDir)
 
 	// 加载配置
 	cfg, err := config.Load(homeDir, *configPath)
@@ -43,6 +81,18 @@ func main() {
 		os.Exit(1)
 	}
 	log.Info("config loaded", "agents", len(cfg.Agents), "autoApprove", cfg.Session.AutoApprove)
+
+	// 合成最终监听地址：--addr > ZACP_ADDR 环境变量 > TOML server.addr > :8680
+	listenAddr := *addr
+	if listenAddr == "" {
+		listenAddr = os.Getenv("ZACP_ADDR")
+	}
+	if listenAddr == "" {
+		listenAddr = cfg.Server.Addr
+	}
+	if listenAddr == "" {
+		listenAddr = ":8680"
+	}
 
 	// 初始化数据库
 	dbPath := cfg.ResolveDBPath(homeDir)
@@ -124,8 +174,10 @@ func main() {
 	chatHandler := &handlers.ChatHandler{Mgr: mgr}
 	fileHandler := handlers.NewFileHandler(fileSvc)
 
+	// gin mode 优先级：GIN_MODE 环境变量（gin 包 init 已读取）> TOML server.mode > 默认 debug。
+	// GIN_MODE 显式设置时以环境变量为准（不覆盖）；否则以配置为准。
 	if os.Getenv("GIN_MODE") == "" {
-		gin.SetMode(gin.ReleaseMode)
+		gin.SetMode(cfg.Server.Mode)
 	}
 
 	engine := router.New(workspaceHandler, sessionHandler, chatHandler, fileHandler, wsHandler, eventBridge)
@@ -152,10 +204,10 @@ func main() {
 		}
 	}()
 
-	log.Info("HTTP listening", "addr", *addr)
-	log.Info("try: curl -s http://127.0.0.1" + normalizeAddr(*addr) + "/api/v1/agents")
-	log.Info("websocket endpoint: ws://127.0.0.1" + normalizeAddr(*addr) + "/api/v1/ws")
-	if err := engine.Run(*addr); err != nil {
+	log.Info("HTTP listening", "addr", listenAddr)
+	log.Info("try: curl -s http://" + normalizeAddr(listenAddr) + "/api/v1/agents")
+	log.Info("websocket endpoint: ws://" + normalizeAddr(listenAddr) + "/api/v1/ws")
+	if err := engine.Run(listenAddr); err != nil {
 		log.Error("http server failed", "err", err)
 		os.Exit(1)
 	}
@@ -168,9 +220,14 @@ func envOr(k, def string) string {
 	return def
 }
 
+// normalizeAddr 把监听地址转成可拼 URL 的 host:port 形式（仅用于日志提示）：
+// ":8680" → "127.0.0.1:8680"；"127.0.0.1:8680" / "0.0.0.0:8680" → 原样（0.0.0.0 仅提示用）。
 func normalizeAddr(addr string) string {
-	if len(addr) > 0 && addr[0] == ':' {
-		return addr
+	if addr == "" {
+		return "127.0.0.1:8680"
 	}
-	return ":" + addr
+	if addr[0] == ':' {
+		return "127.0.0.1" + addr
+	}
+	return addr
 }

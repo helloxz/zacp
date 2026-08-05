@@ -7,13 +7,18 @@ import (
 	"path/filepath"
 )
 
-// EnsureHomeDir 确保 $ZACP_HOME 目录存在，返回绝对路径。
+// EnsureHomeDir 确保 $ZACP_DATA 目录存在，返回绝对路径。
+// homeDir 非空时使用调用方传入的目录（如命令行 --data-dir，优先级最高）；
+// 为空则按 ZACP_DATA 环境变量 → ~/.zacp 自动解析。
 // 如果目录不存在则创建，权限为 0700。
 // 如果 config.toml 不存在，则从内嵌的示例配置创建。
-func EnsureHomeDir() (string, error) {
-	homeDir, err := HomeDir()
-	if err != nil {
-		return "", fmt.Errorf("get home directory: %w", err)
+func EnsureHomeDir(homeDir string) (string, error) {
+	if homeDir == "" {
+		var err error
+		homeDir, err = HomeDir()
+		if err != nil {
+			return "", fmt.Errorf("get home directory: %w", err)
+		}
 	}
 
 	// 转换为绝对路径
@@ -50,15 +55,18 @@ func createDefaultConfig(configPath string) error {
 # 详细配置说明请参考 backend/configs/config.example.toml
 
 [server]
+# 监听地址（IP:PORT；":8680" 表示所有网卡）。
+# 优先级：--addr 命令行 > ZACP_ADDR 环境变量 > 本配置 > 默认 :8680
 addr = ":8680"
-mode = "debug"   # debug | release
+# debug | release；优先级：GIN_MODE 环境变量 > 本配置 > 默认 debug
+mode = "debug"
 
 [session]
 default_cwd = "."          # Agent 默认工作目录
 auto_approve = false       # 生产环境建议 false，开发调试可设为 true
 
 [database]
-# 数据库路径，相对于 $ZACP_HOME
+# 数据库路径，相对于 $ZACP_DATA
 path = "data/zacp.db"
 
 # Agent 配置示例（请根据实际情况修改）
@@ -73,9 +81,9 @@ path = "data/zacp.db"
 }
 
 // EnsureDataDir 确保数据目录存在，返回绝对路径。
-// 默认路径为 $ZACP_HOME/data，权限为 0700。
+// 默认路径为 $ZACP_DATA/data，权限为 0700。
 func EnsureDataDir() (string, error) {
-	homeDir, err := EnsureHomeDir()
+	homeDir, err := EnsureHomeDir("")
 	if err != nil {
 		return "", err
 	}

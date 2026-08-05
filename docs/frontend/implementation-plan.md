@@ -109,7 +109,7 @@
 ### 3.3 验收
 
 - [x] 前后端 `go build ./...` + `bun run build` 通过
-- [x] 接口级实测（临时 `ZACP_HOME`，因沙箱根文件系统只读）：agents / workspaces / sessions 全局列表 / workspaceId 回退 / 非法 workspaceId 报错均符合预期；浏览器手测待用户环境（reasonix model 配置可用后）
+- [x] 接口级实测（临时 `ZACP_DATA`，因沙箱根文件系统只读）：agents / workspaces / sessions 全局列表 / workspaceId 回退 / 非法 workspaceId 报错均符合预期；浏览器手测待用户环境（reasonix model 配置可用后）
 
 ---
 

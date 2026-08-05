@@ -86,6 +86,16 @@ go run ./cmd/server
 # health: curl http://127.0.0.1:8680/healthz
 ```
 
+启动参数（均可选，**命令行优先级最高**，缺省按回退链取值）：
+
+| 参数 | 说明 | 回退链 |
+|------|------|--------|
+| `--addr IP:PORT` | 监听地址（`:8680` 表示所有网卡） | `ZACP_ADDR` → TOML `server.addr` → `:8680` |
+| `--data-dir DIR` | `$ZACP_DATA` 状态根目录（数据/配置所在） | `ZACP_DATA` → `~/.zacp` |
+| `--config FILE` | 配置文件路径 | `ZACP_CONFIG` → `$ZACP_DATA/config.toml` |
+
+示例：`go run ./cmd/server --addr 127.0.0.1:9000 --data-dir /var/lib/zacp`
+
 Dependencies already pinned in `go.mod`:
 
 | Package | Role |

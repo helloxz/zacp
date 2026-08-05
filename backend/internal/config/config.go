@@ -1,4 +1,4 @@
-// Package config 负责从 $ZACP_HOME/config.toml 加载运行时配置，
+// Package config 负责从 $ZACP_DATA/config.toml 加载运行时配置，
 // 并对外暴露强类型 Config 结构。业务层只依赖 Config，不直接使用 Viper。
 package config
 
@@ -28,7 +28,7 @@ type ServerConfig struct {
 
 // SessionConfig 会话默认参数。
 type SessionConfig struct {
-	// DefaultCwd 是 Agent 默认工作目录（不是 $ZACP_HOME）。
+	// DefaultCwd 是 Agent 默认工作目录（不是 $ZACP_DATA）。
 	DefaultCwd string `mapstructure:"default_cwd"`
 	// AutoApprove 是否自动批准 Agent 权限请求（开发模式用）。
 	AutoApprove bool `mapstructure:"auto_approve"`
@@ -39,7 +39,7 @@ type SessionConfig struct {
 
 // DatabaseConfig 数据库配置。
 type DatabaseConfig struct {
-	// Path 相对于 $ZACP_HOME，默认 data/zacp.db。
+	// Path 相对于 $ZACP_DATA，默认 data/zacp.db。
 	Path string `mapstructure:"path"`
 }
 
@@ -75,9 +75,9 @@ func DefaultConfig() *Config {
 	}
 }
 
-// Load 从 $ZACP_HOME/config.toml 加载配置。
+// Load 从 $ZACP_DATA/config.toml 加载配置。
 // 优先级：默认值 < TOML 文件 < 环境变量（ZACP_ 前缀）< 显式覆盖。
-// homeDir 是 $ZACP_HOME 的绝对路径，configPath 非空时直接使用该文件。
+// homeDir 是 $ZACP_DATA 的绝对路径，configPath 非空时直接使用该文件。
 func Load(homeDir, configPath string) (*Config, error) {
 	v := viper.New()
 	v.SetConfigType("toml")
@@ -93,7 +93,7 @@ func Load(homeDir, configPath string) (*Config, error) {
 			var err error
 			homeDir, err = defaultHomeDir()
 			if err != nil {
-				return nil, fmt.Errorf("resolve ZACP_HOME: %w", err)
+				return nil, fmt.Errorf("resolve ZACP_DATA: %w", err)
 			}
 		}
 		v.AddConfigPath(homeDir)
@@ -171,9 +171,9 @@ func validate(cfg *Config) error {
 	return nil
 }
 
-// defaultHomeDir 返回默认 $ZACP_HOME 路径。
+// defaultHomeDir 返回默认 $ZACP_DATA 路径。
 func defaultHomeDir() (string, error) {
-	if v := os.Getenv("ZACP_HOME"); v != "" {
+	if v := os.Getenv("ZACP_DATA"); v != "" {
 		return v, nil
 	}
 	home, err := os.UserHomeDir()
@@ -183,7 +183,7 @@ func defaultHomeDir() (string, error) {
 	return filepath.Join(home, ".zacp"), nil
 }
 
-// HomeDir 返回当前生效的 $ZACP_HOME 路径。
+// HomeDir 返回当前生效的 $ZACP_DATA 路径。
 func HomeDir() (string, error) {
 	return defaultHomeDir()
 }

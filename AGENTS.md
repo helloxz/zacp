@@ -41,7 +41,7 @@ Go SDK：https://github.com/coder/acp-go-sdk（模块路径 `github.com/coder/ac
 
 - **主配置格式：TOML**。不要改用 YAML/JSON/INI 作为主配置，除非先更新本文档。
 - **配置库：`github.com/spf13/viper`**（读 TOML、默认值、环境变量覆盖、可选写回）。
-- **运行时路径：`$ZACP_HOME/config.toml`，默认 `ZACP_HOME=~/.zacp`**（见 §3.1、§4.1）。
+- **运行时路径：`$ZACP_DATA/config.toml`，默认 `ZACP_DATA=~/.zacp`**（见 §3.1、§4.1）。
 - 实现集中在 `backend/internal/config`：对外强类型 `Config`；业务层 **不要** 散落 `viper.Get*`。
 - 密钥、Token **不进** TOML；用环境变量（或本机 `.env`，gitignore）注入；Agent 子进程继承环境。
 
@@ -50,7 +50,7 @@ Go SDK：https://github.com/coder/acp-go-sdk（模块路径 `github.com/coder/ac
 - **SQLite3** 作为默认（也是当前唯一规划的）嵌入式数据库；不要默认上 Postgres/MySQL，除非规模需要并先更新本文档。
 - **ORM：GORM**（`gorm.io/gorm`）。
 - **驱动：纯 Go**——通过 **`github.com/glebarez/sqlite`** 使用 **`modernc.org/sqlite`**，**禁止**默认依赖需要 CGO 的 `mattn/go-sqlite3`（除非有充分理由并更新本文档）。
-- **数据文件目录：`$ZACP_HOME/data/`**（默认 `~/.zacp/data/`），主库文件建议 `zacp.db`；必须启用 **WAL**，并支持 **版本化 schema 迁移**（见 §4.2）。
+- **数据文件目录：`$ZACP_DATA/data/`**（默认 `~/.zacp/data/`），主库文件建议 `zacp.db`；必须启用 **WAL**，并支持 **版本化 schema 迁移**（见 §4.2）。
 - 实现集中在 `backend/internal/store`（打开 DB、PRAGMA、迁移、仓储）；业务通过 store/repository 访问，不在 handler 里直接拼 SQL。
 
 **本仓库角色定位：**
@@ -73,12 +73,12 @@ Go SDK：https://github.com/coder/acp-go-sdk（模块路径 `github.com/coder/ac
 
 ## 3. 目录结构（必须遵守）
 
-### 3.1 运行时用户目录（`$ZACP_HOME`，默认 `~/.zacp`）
+### 3.1 运行时用户目录（`$ZACP_DATA`，默认 `~/.zacp`）
 
 **状态与配置不放在 git 仓库内，而放在用户主目录下的 `.zacp`：**
 
 ```text
-$ZACP_HOME/                      # 默认: ~/.zacp
+$ZACP_DATA/                      # 默认: ~/.zacp
 ├── config.toml                  # 主配置（Viper 读取；勿提交到 git）
 ├── data/
 │   ├── zacp.db                  # SQLite 主库
@@ -89,16 +89,16 @@ $ZACP_HOME/                      # 默认: ~/.zacp
 
 | 变量 / 路径 | 说明 |
 |-------------|------|
-| `ZACP_HOME` | 根目录，**默认 `~/.zacp`**（即 `$HOME/.zacp`）；可用环境变量或启动 flag 覆盖 |
-| `$ZACP_HOME/config.toml` | 运行时 TOML 配置 |
-| `$ZACP_HOME/data/` | SQLite 等持久化数据；目录权限建议 `0700`，库文件 `0600` |
-| `ZACP_CONFIG` | 可选：直接指定配置文件路径（覆盖默认的 `$ZACP_HOME/config.toml`） |
+| `ZACP_DATA` | 根目录，**默认 `~/.zacp`**（即 `$HOME/.zacp`）；可用环境变量或启动 flag 覆盖 |
+| `$ZACP_DATA/config.toml` | 运行时 TOML 配置 |
+| `$ZACP_DATA/data/` | SQLite 等持久化数据；目录权限建议 `0700`，库文件 `0600` |
+| `ZACP_CONFIG` | 可选：直接指定配置文件路径（覆盖默认的 `$ZACP_DATA/config.toml`） |
 
 约定：
 
 - **不要**用进程 cwd 下的 `.zacp` 作为默认（避免 `cd` 后「数据消失」的错觉）。
-- **Agent 会话工作区 cwd**（代码仓库路径）与 **`$ZACP_HOME`（zacp 自身状态）分离**；前者配在 `[[agents]]` / `session.default_cwd`，后者只服务配置与数据库。
-- 首次启动：若 `$ZACP_HOME` 不存在则创建；若无 `config.toml`，可从仓库内 `backend/configs/config.example.toml`（或 embed 样例）复制生成。
+- **Agent 会话工作区 cwd**（代码仓库路径）与 **`$ZACP_DATA`（zacp 自身状态）分离**；前者配在 `[[agents]]` / `session.default_cwd`，后者只服务配置与数据库。
+- 首次启动：若 `$ZACP_DATA` 不存在则创建；若无 `config.toml`，可从仓库内 `backend/configs/config.example.toml`（或 embed 样例）复制生成。
 - 目录名统一为 **`.zacp`**，不要使用 `.zcap` 等其它拼写。
 
 ### 3.2 仓库源码目录
@@ -120,7 +120,7 @@ zacp/
 │   │   │   ├── handlers/     # HTTP Handler
 │   │   │   ├── middleware/   # 中间件
 │   │   │   └── router/       # 路由注册
-│   │   ├── config/           # Viper 加载 $ZACP_HOME/config.toml → 强类型 Config
+│   │   ├── config/           # Viper 加载 $ZACP_DATA/config.toml → 强类型 Config
 │   │   ├── store/            # GORM + SQLite：打开库、WAL、迁移、仓储
 │   │   ├── model/            # DTO / 领域模型 / GORM model
 │   │   ├── service/          # 业务编排（对接 manager / store 等）
@@ -158,7 +158,7 @@ zacp/
 | 可执行脚本 | `scripts/` 或根目录（根目录仅放极少数全局脚本） |
 | Docker / 部署 | 根目录 `Dockerfile` 或 `deployments/` |
 | 配置样例（入库） | `backend/configs/config.example.toml` |
-| 运行时配置 / 数据库 | **`$ZACP_HOME`**（默认 `~/.zacp`），**不入库** |
+| 运行时配置 / 数据库 | **`$ZACP_DATA`**（默认 `~/.zacp`），**不入库** |
 
 **禁止：**
 
@@ -203,14 +203,14 @@ cmd/server  →  api (router/handlers)  →  service  →  acp/manager|client|pr
 | 文件 | 是否入库 | 说明 |
 |------|----------|------|
 | `backend/configs/config.example.toml` | 是 | 仓库内样例与字段说明（无密钥） |
-| **`$ZACP_HOME/config.toml`**（默认 **`~/.zacp/config.toml`**） | **否** | **运行时主配置**；Viper 默认读取此路径 |
-| `ZACP_HOME` | — | 覆盖状态根目录（默认 `~/.zacp`） |
+| **`$ZACP_DATA/config.toml`**（默认 **`~/.zacp/config.toml`**） | **否** | **运行时主配置**；Viper 默认读取此路径 |
+| `ZACP_DATA` | — | 覆盖状态根目录（默认 `~/.zacp`） |
 | `ZACP_CONFIG` 或 `-config` | — | 可选：直接指定配置文件绝对/相对路径 |
 
 ### 优先级（由低到高，实现时按此约定）
 
 1. 代码内默认值（Viper `SetDefault`）  
-2. TOML 文件（`$ZACP_HOME/config.toml` 或 `ZACP_CONFIG`）  
+2. TOML 文件（`$ZACP_DATA/config.toml` 或 `ZACP_CONFIG`）  
 3. 环境变量（Viper `AutomaticEnv` / 显式 `BindEnv`，建议前缀 `ZACP_`）  
 4. 命令行 flag（若使用）  
 
@@ -222,12 +222,12 @@ addr = ":8680"
 mode = "debug"   # debug | release
 
 [session]
-default_cwd = "."          # Agent 工作区，不是 ZACP_HOME
+default_cwd = "."          # Agent 工作区，不是 ZACP_DATA
 auto_approve = false       # 生产默认 false；开发可 true
 idle_timeout = "30m"       # 空闲回收超时；0 禁用（agent 闲置超时后自动停止释放内存）
 
 [database]
-# 相对路径相对于 $ZACP_HOME；默认 data/zacp.db
+# 相对路径相对于 $ZACP_DATA；默认 data/zacp.db
 path = "data/zacp.db"
 
 # 多 Agent：每个二进制 / ACP 入口一条
@@ -246,7 +246,7 @@ cwd = ""               # 空则用 session.default_cwd
 
 - 依赖：`github.com/spf13/viper`（`SetConfigType("toml")` 或文件扩展名 `.toml`）。
 - **只在 `internal/config` 内使用 Viper**；`Load()` 返回 `Config`（含 `Server`、`Session`、`Database`、`Agents` 等），其余包只依赖该结构体。
-- 写回配置：经 `internal/config` 封装 `Save`，写入 **`$ZACP_HOME/config.toml`**（或 `ZACP_CONFIG`），**不要**写仓库内 example；写前校验。
+- 写回配置：经 `internal/config` 封装 `Save`，写入 **`$ZACP_DATA/config.toml`**（或 `ZACP_CONFIG`），**不要**写仓库内 example；写前校验。
 - 校验：`agents[].id` 唯一、`enabled` 项 `command` 非空等；失败则启动退出。
 - **不要**在 handler 里把 Viper 当全局字典用。
 
@@ -262,11 +262,11 @@ cwd = ""               # 空则用 session.default_cwd
 | ORM | `gorm.io/gorm` |
 | 驱动 | `github.com/glebarez/sqlite`（纯 Go，基于 `modernc.org/sqlite`，**无 CGO**） |
 | 代码位置 | `backend/internal/store`（及 `model` 中的表结构） |
-| 默认路径 | **`$ZACP_HOME/data/zacp.db`**（即默认 `~/.zacp/data/zacp.db`） |
+| 默认路径 | **`$ZACP_DATA/data/zacp.db`**（即默认 `~/.zacp/data/zacp.db`） |
 
 ### 打开库与 PRAGMA（启动时必须）
 
-- 确保 `$ZACP_HOME/data` 存在（权限建议 `0700`）。
+- 确保 `$ZACP_DATA/data` 存在（权限建议 `0700`）。
 - 启用 **WAL**：`PRAGMA journal_mode=WAL;`
 - 建议同时设置：
   - `PRAGMA foreign_keys=ON;`
@@ -293,7 +293,7 @@ cwd = ""               # 空则用 session.default_cwd
 |---------------|----------------------|
 | 会话、消息、事件摘要、审计 | Agent 二进制 command/args 列表 |
 | 用户偏好、UI 状态（若需要） | API Key、Token |
-| 迁移版本元数据 | `$ZACP_HOME` 本身的路径策略 |
+| 迁移版本元数据 | `$ZACP_DATA` 本身的路径策略 |
 
 ---
 
@@ -452,14 +452,14 @@ bun run build
 
 ## 9. 配置、数据与安全
 
-- 用户状态根目录：**`$ZACP_HOME`，默认 `~/.zacp`**。
+- 用户状态根目录：**`$ZACP_DATA`，默认 `~/.zacp`**。
 - 样例配置（入库）：`backend/configs/config.example.toml`。
 - 运行时配置：**`~/.zacp/config.toml`**（或 `ZACP_CONFIG`），**勿提交**。
 - 运行时数据库：**`~/.zacp/data/zacp.db`**（WAL 附属文件同目录），**勿提交**。
 - 配置加载：`internal/config` + **Viper**；持久化：`internal/store` + **GORM** + **glebarez/sqlite**。
 - 密钥仅环境变量 / 本机 `.env`（gitignore）。
 - 不在日志、错误信息、前端接口中泄露 API Key、Cookie、本机绝对路径中的敏感部分。
-- Docker 中可通过 `ZACP_HOME` 挂载卷持久化；生产使用 `GIN_MODE=release` 或 `server.mode = "release"`。
+- Docker 中可通过 `ZACP_DATA` 挂载卷持久化；生产使用 `GIN_MODE=release` 或 `server.mode = "release"`。
 
 ---
 
@@ -491,7 +491,7 @@ bun run build
 在动手改代码前确认：
 
 1. 改动是否落在正确目录（backend / frontend / scripts / deployments）？
-2. 运行时状态是否写在 **`$ZACP_HOME`（默认 `~/.zacp`）**，而不是仓库目录或随意 cwd？
+2. 运行时状态是否写在 **`$ZACP_DATA`（默认 `~/.zacp`）**，而不是仓库目录或随意 cwd？
 3. 是否把 Agent 差异关在 `providers`，而不是污染通用 manager？
 4. 子进程 / 连接 / DB 是否有生命周期与错误处理（含 WAL、迁移失败即退出）？
 5. 是否引入了不必要的依赖或破坏了 `go.mod`（SQLite 是否仍为无 CGO 路径）？前端是否坚持 Vue3 + Naive + Tailwind，未乱加第二套 UI 库？前端命令是否用的 **Bun**（而非 npm/pnpm/yarn）？

@@ -63,7 +63,7 @@ Workspace（工作区 = Agent cwd）
 
 | 概念 | 说明 |
 |------|------|
-| Workspace | 代码项目目录，**不是** `$ZACP_HOME` |
+| Workspace | 代码项目目录，**不是** `$ZACP_DATA` |
 | Session | 侧栏一个「窗口」= DB 一行 + 一个 ACP session |
 | Agent | `config.toml` `[[agents]]` 中 enabled 的 ACP 入口 |
 | configOptions | ACP `session/new` 返回；含 model / mode / thought_level 等 category |
