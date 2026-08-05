@@ -42,6 +42,9 @@ const draftConfigOptions = ref<ConfigOption[]>([])
 /** 草稿创建中（驱动 tab 切换时的加载态） */
 const draftCreating = ref(false)
 
+/** 组件存活标记：卸载后到达的异步回调不得再写 currentId（同 releaseDraft 的竞态） */
+let alive = true
+
 /**
  * 为指定 agent 创建隐式草稿会话，并加载其 configOptions。
  * 切 tab 前先释放旧草稿，避免堆积空 ACP session。
@@ -62,6 +65,12 @@ async function createDraftFor(agentId: string) {
       props.workspaceId,
       true, // isDraft
     )
+    if (!alive) {
+      // 用户在草稿创建期间已切走（组件卸载）：立即释放刚创建的草稿，
+      // 避免泄露 ACP session；且不得再写 currentId 覆盖新会话的选中态
+      void sessionStore.removeDraftSession(session.id).catch(() => {})
+      return
+    }
     draftSession.value = session
     draftConfigOptions.value = configOptions
     // 刷新 agent 列表：StartAgent 后 running 变 true，tab 圆点同步变绿
@@ -81,15 +90,22 @@ async function createDraftFor(agentId: string) {
 /** 释放当前草稿（切 tab / 离开空态时调用） */
 async function releaseDraft() {
   if (!draftSession.value) return
+  const draftId = draftSession.value.id
   try {
-    await sessionStore.removeDraftSession(draftSession.value.id)
+    await sessionStore.removeDraftSession(draftId)
   } catch {
     // 释放失败不阻塞（后端可能已不存在）
   }
   draftSession.value = null
   draftConfigOptions.value = []
   sessionStore.configOptions = []
-  sessionStore.currentId = null
+  // 守卫式清空：本函数在 await DELETE 后才走到这里，若用户已切到其它会话
+  // （ChatPane watch 已把 currentId 设为新会话 id），无条件置 null 会覆盖它，
+  // 导致 activeSession 解析失败、界面卡在「加载会话中…」。仅当 currentId
+  // 仍是本次释放的草稿时才清空。
+  if (sessionStore.currentId === draftId) {
+    sessionStore.currentId = null
+  }
 }
 
 /** 切 tab：切换 agent → 释放旧草稿 → 创建新草稿（未运行的 agent 在此按需启动） */
@@ -157,6 +173,7 @@ watch(draftCreating, (creating) => {
 
 /** 离开空态时释放未转正的草稿（组件卸载） */
 onUnmounted(() => {
+  alive = false
   // 未转正的草稿在离开空态时释放（不 await，避免阻塞导航）
   if (draftSession.value) {
     void releaseDraft()
