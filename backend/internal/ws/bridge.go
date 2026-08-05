@@ -73,6 +73,9 @@ func (b *EventBridge) EnsureSessionUpdateHandlers(agentID string) error {
 	bridge.SetAvailableCommandsHandler(func(sid string, cmds []acp.AvailableCommand) {
 		b.handleAvailableCommands(sid, cmds)
 	})
+	bridge.SetSessionInfoHandler(func(sid string, info acp.SessionSessionInfoUpdate) {
+		b.handleSessionInfo(sid, info)
+	})
 
 	b.log.Info("session update handlers ensured for agent", "agentID", agentID)
 	return nil
@@ -109,6 +112,13 @@ func (b *EventBridge) SetupEventCallback(agentID, sessionID string) error {	brid
 	// 回调自带 SDK 通知的 ACP session id（同上）。
 	bridge.SetAvailableCommandsHandler(func(sid string, cmds []acp.AvailableCommand) {
 		b.handleAvailableCommands(sid, cmds)
+	})
+
+	// 接收 agent 经 session/update 的 session_info_update 通知下发的会话信息
+	// （AI 总结标题等），落库供侧栏/信息面板展示，并实时广播给前端。
+	// 回调自带 SDK 通知的 ACP session id（同上）。
+	bridge.SetSessionInfoHandler(func(sid string, info acp.SessionSessionInfoUpdate) {
+		b.handleSessionInfo(sid, info)
 	})
 
 	b.log.Info("event callback setup for agent", "agentID", agentID, "sessionID", sessionID)
@@ -199,6 +209,41 @@ func (b *EventBridge) applyAvailableCommands(dbSession *model.Session, cmds []ac
 	}
 	b.handler.BroadcastSlashCommands(sessionID, dtos)
 	b.log.Info("slash commands updated", "sessionID", sessionID, "count", len(cmds))
+}
+
+// handleSessionInfo 收到 agent 通告的会话信息（AI 总结标题等）后落库 + 实时广播给前端。
+// 标题优先级约定：agent 经 session_info_update 推送的标题优先于 zacp 本地的
+// deriveTitle 截取逻辑（见 HandlePrompt）——agent 没推过标题时维持截取结果，
+// 推过则以 agent 标题为准（覆盖）。与 handleConfigOptions 同理：通告可能早于
+// DB 落库到达，查不到时延迟重试一次。
+func (b *EventBridge) handleSessionInfo(sessionID string, info acp.SessionSessionInfoUpdate) {
+	if info.Title == nil || strings.TrimSpace(*info.Title) == "" {
+		// agent 未提供标题（或显式清空）：保持现有标题不变，避免误覆盖
+		return
+	}
+	title := strings.TrimSpace(*info.Title)
+
+	dbSession, err := b.sessionRepo.GetByACPSessionID(sessionID)
+	if err != nil {
+		// 同 handleConfigOptions：通告可能在 DB 落库前到达，延迟重试一次。
+		go func() {
+			if s := b.findSessionWithRetry(sessionID); s != nil {
+				b.applySessionInfo(s, title)
+			}
+		}()
+		return
+	}
+	b.applySessionInfo(dbSession, title)
+}
+
+func (b *EventBridge) applySessionInfo(dbSession *model.Session, title string) {
+	sessionID := dbSession.ACPSessionID
+	if err := b.sessionRepo.UpdateTitle(dbSession.ID, title); err != nil {
+		b.log.Warn("save session title failed", "sessionID", sessionID, "err", err)
+		return
+	}
+	b.handler.BroadcastSessionInfo(sessionID, map[string]any{"title": title})
+	b.log.Info("session title updated by agent", "sessionID", sessionID, "title", title)
 }
 
 // isNilOrEmpty 严格判空：interface 为 nil、nil 指针/切片/map/channel/func、空字符串

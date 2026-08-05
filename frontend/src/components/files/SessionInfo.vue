@@ -14,10 +14,8 @@
 import { computed, onMounted } from 'vue'
 import { FolderOutline, TimeOutline } from '@vicons/ionicons5'
 import { useAgentStore } from '@/stores/agent'
-import { useAppStore } from '@/stores/app'
 import { useSessionStore } from '@/stores/session'
 import type { SessionStatus } from '@/types/models'
-import { formatRelativeTime } from '@/utils/relativeTime'
 
 /** 头像底色色板（Tailwind 完整类名，禁止动态拼接） */
 const AVATAR_COLORS = [
@@ -38,7 +36,6 @@ const statusMap: Record<SessionStatus, { text: string; type: 'success' | 'info' 
 
 const sessionStore = useSessionStore()
 const agentStore = useAgentStore()
-const appStore = useAppStore()
 
 /** 当前会话；null 对应无会话空态 */
 const session = computed(() => sessionStore.activeSession)
@@ -75,19 +72,13 @@ const workspaceLabel = computed(() => {
   return ws.name || ws.path
 })
 
-/** 相对时间（与侧栏会话列表口径一致）；空值显示 '-' */
-function relativeTime(iso?: string): string {
-  if (!iso) return '-'
-  return formatRelativeTime(iso, appStore.locale)
-}
-
-/** 绝对时间（本地时区 YYYY-MM-DD HH:mm:ss），悬浮 title 用；后端 time.Time 序列化为 ISO 8601 */
+/** 绝对时间格式化（本地时区 YYYY-MM-DD HH:mm，精确到分钟）；后端 time.Time 序列化为 ISO 8601 */
 function formatDateTime(iso?: string): string {
-  if (!iso) return ''
+  if (!iso) return '-'
   const d = new Date(iso)
-  if (Number.isNaN(d.getTime())) return ''
+  if (Number.isNaN(d.getTime())) return '-'
   const p = (n: number) => String(n).padStart(2, '0')
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`
 }
 
 // Agent 列表可能尚未加载（页面不经过侧栏加载时），按需拉一次以便显示名称
@@ -128,26 +119,20 @@ onMounted(() => {
         </div>
       </div>
 
-      <!-- 时间区：主显示相对时间，悬浮显示绝对时间 -->
+      <!-- 时间区：完整时间（年月日 + 分钟），不再用相对时间 -->
       <div class="divide-y divide-gray-100 rounded-lg border border-gray-100">
         <div class="flex items-center gap-2 px-2.5 py-2">
           <n-icon :component="TimeOutline" class="shrink-0 text-base text-gray-400" />
           <span class="w-10 shrink-0 text-xs text-gray-400">创建</span>
-          <span
-            class="truncate text-xs text-gray-600"
-            :title="formatDateTime(session.createdAt)"
-          >
-            {{ relativeTime(session.createdAt) }}
+          <span class="truncate text-xs text-gray-600">
+            {{ formatDateTime(session.createdAt) }}
           </span>
         </div>
         <div class="flex items-center gap-2 px-2.5 py-2">
           <n-icon :component="TimeOutline" class="shrink-0 text-base text-gray-400" />
           <span class="w-10 shrink-0 text-xs text-gray-400">更新</span>
-          <span
-            class="truncate text-xs text-gray-600"
-            :title="formatDateTime(session.updatedAt)"
-          >
-            {{ relativeTime(session.updatedAt) }}
+          <span class="truncate text-xs text-gray-600">
+            {{ formatDateTime(session.updatedAt) }}
           </span>
         </div>
       </div>

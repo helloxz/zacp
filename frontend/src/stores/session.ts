@@ -453,6 +453,19 @@ export const useSessionStore = defineStore('session', () => {
           }
           break
         }
+        case 'sessionInfo': {
+          // agent 推送的会话信息更新（session_info_update）：AI 总结标题优先于
+          // zacp 本地的首条消息截取标题，实时刷新侧栏与信息面板（activeSession
+          // 由 sessions 派生，更新列表项即可，无需额外状态）
+          const title = msg.sessionInfo?.title
+          if (title && currentId.value !== null) {
+            const s = sessions.value.find((x) => x.id === currentId.value)
+            if (s) {
+              s.title = title
+            }
+          }
+          break
+        }
         case 'turn.done': {
           // 流式结束：实时工具卡片清空（历史由 assistant 消息 events 渲染）
           activeToolCards.value = []

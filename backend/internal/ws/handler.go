@@ -136,6 +136,15 @@ func (h *Handler) BroadcastSlashCommands(sessionID string, commands interface{})
 	})
 }
 
+// BroadcastSessionInfo 向指定会话广播会话信息更新（agent 经 session_info_update 推送，
+// 如 AI 总结的会话标题；前端据此实时刷新侧栏标题，无需重新进入会话）。
+func (h *Handler) BroadcastSessionInfo(sessionID string, sessionInfo interface{}) {
+	h.BroadcastToSession(sessionID, ServerMessage{
+		Type:        MsgTypeSessionInfo,
+		SessionInfo: sessionInfo,
+	})
+}
+
 // BroadcastError 向指定会话广播错误消息
 func (h *Handler) BroadcastError(sessionID, code, message string) {
 	h.BroadcastToSession(sessionID, ServerMessage{

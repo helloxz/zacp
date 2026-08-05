@@ -44,6 +44,10 @@ type Bridge struct {
 	// （ACP available_commands_update），由 bridge 落库并广播给前端。
 	// 第一个参数为 SDK 通知里的 ACP session id（同上）。
 	availableCommandsHandler func(sessionID string, cmds []acp.AvailableCommand)
+	// sessionInfoHandler 接收 agent 经 session/update 通知下发的会话信息
+	// （ACP session_info_update，如 AI 总结的会话标题）：由 bridge 落库并广播给前端。
+	// 第一个参数为 SDK 通知里的 ACP session id（同上）。
+	sessionInfoHandler func(sessionID string, info acp.SessionSessionInfoUpdate)
 	// permissionHandler 将权限请求转发给外部（如 WebSocket 前端交互式选择）；
 	// 非 autoApprove 时优先使用，未设置时维持默认（autoApprove 放行 / 否则取消）。
 	permissionHandler func(acp.RequestPermissionRequest) (acp.RequestPermissionResponse, error)
@@ -92,6 +96,15 @@ func (b *Bridge) SetAvailableCommandsHandler(fn func(sessionID string, cmds []ac
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.availableCommandsHandler = fn
+}
+
+// SetSessionInfoHandler sets a live session-info sink (optional).
+// 接收 agent 经 session/update 的 session_info_update 通知下发的会话信息
+// （AI 总结标题、最近活动时间等）；回调第一个参数为通知自带的 ACP session id。
+func (b *Bridge) SetSessionInfoHandler(fn func(sessionID string, info acp.SessionSessionInfoUpdate)) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.sessionInfoHandler = fn
 }
 
 // Reset clears buffered events (call before each Prompt).
@@ -242,6 +255,15 @@ func (b *Bridge) SessionUpdate(ctx context.Context, params acp.SessionNotificati
 		b.mu.Unlock()
 		if fn != nil {
 			fn(string(params.SessionId), u.AvailableCommandsUpdate.AvailableCommands)
+		}
+	case u.SessionInfoUpdate != nil:
+		// 会话信息通知（ACP session_info_update）：AI 总结标题等，走独立处理器，不混入消息事件流。
+		// 与 configOptions 同理：通知自带 sessionId，按会话分发，保证会话归属正确。
+		b.mu.Lock()
+		fn := b.sessionInfoHandler
+		b.mu.Unlock()
+		if fn != nil {
+			fn(string(params.SessionId), *u.SessionInfoUpdate)
 		}
 	default:
 		b.push(Event{Type: "other", RawKind: "unknown"})

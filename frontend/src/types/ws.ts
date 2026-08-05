@@ -54,5 +54,6 @@ export type WsServerMessage =
     }
   | { type: 'configOptions'; configOptions?: ConfigOption[] }
   | { type: 'slashCommands'; slashCommands?: AvailableCommand[] }
+  | { type: 'sessionInfo'; sessionInfo?: { title?: string } }
   | { type: 'error'; code?: string; message?: string }
   | { type: 'pong' }
