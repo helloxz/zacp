@@ -134,10 +134,17 @@ resolve_latest() {
   local os="$1" arch="$2" api_url api tag url
   api_url="${API_BASE}/repos/${REPO}/releases/latest"
   echo "==> 解析 latest release: ${api_url}" >&2
-  api="$(fetch "$api_url")" || {
-    echo "错误: 获取 latest release 失败（网络或 API 限流？）" >&2
-    exit 1
-  }
+  api="$(fetch "$api_url" 2>/dev/null)" || api=""
+  if [ -z "$api" ] || ! printf '%s' "$api" | grep -q '"tag_name"'; then
+    # /releases/latest 只返回「非 prerelease、非 draft」的正式版；
+    # 若仓库目前只有 prerelease（如 Beta 版），该接口会 404，
+    # 此时回退到 releases 列表接口取最新一条（含 prerelease）。
+    echo "==> 仓库暂无正式 release，回退到最新 release（含 prerelease）..." >&2
+    api="$(fetch "${API_BASE}/repos/${REPO}/releases?per_page=1" 2>/dev/null)" || {
+      echo "错误: 获取 release 列表失败（网络或 API 限流？）" >&2
+      exit 1
+    }
+  fi
   # 纯文本提取，不依赖 jq/python：字段格式为 "key": "value"
   tag="$(printf '%s' "$api" | grep -o '"tag_name"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | sed -E 's/.*"tag_name"[[:space:]]*:[[:space:]]*"([^"]*)"/\1/')" || true
   url="$(printf '%s' "$api" | grep -o '"browser_download_url"[[:space:]]*:[[:space:]]*"[^"]*"' | grep "${os}-${arch}.zip" | head -1 | sed -E 's/.*"browser_download_url"[[:space:]]*:[[:space:]]*"([^"]*)"/\1/')" || true
