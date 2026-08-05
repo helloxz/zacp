@@ -41,6 +41,17 @@ func (h *SessionHandler) CreateSession(c *gin.Context) {
 		return
 	}
 
+	// 提前注册「按通知 sessionId 分发」的 session/update 处理器（configOptions /
+	// availableCommands）：reasonix 等 agent 在 session/new 响应同一时刻同步推送
+	// available_commands_update，若等创建完成再注册会因 SDK read loop 竞态丢通知
+	// （omp 有 ~50ms 延迟所以此前未暴露）。失败不阻断：下方成功后仍会完整注册兜底。
+	if h.bridge != nil {
+		if err := h.bridge.EnsureSessionUpdateHandlers(req.AgentID); err != nil {
+			h.bridge.Log().Warn("pre-register session update handlers failed",
+				"agentID", req.AgentID, "err", err)
+		}
+	}
+
 	result, err := h.svc.CreateSession(c.Request.Context(), req.WorkspaceID, req.AgentID, req.IsDraft)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
@@ -49,7 +60,8 @@ func (h *SessionHandler) CreateSession(c *gin.Context) {
 		return
 	}
 
-	// 立即注册事件回调（含 available_commands_update 处理器）：
+	// 完整注册事件回调（含 available_commands_update 处理器），并把 onEvent / 权限等
+	// 依赖会话的闭包绑定到真实 ACP session id（幂等，覆盖上一步的提前注册）。
 	// 部分 agent（如 omp）在 session/new 响应返回后很快（几十 ms）就推送可用命令通告，
 	// 若等用户首条 prompt 才注册（见 EventBridge.HandlePrompt）就会错过，
 	// 导致 /slash-commands 一直是空。注册动作幂等，后续 prompt 前仍会覆盖注册。

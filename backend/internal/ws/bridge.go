@@ -53,6 +53,31 @@ func (b *EventBridge) Log() *slog.Logger {
 	return b.log
 }
 
+// EnsureSessionUpdateHandlers 提前注册「按通知 sessionId 分发」的 session/update 处理器
+// （configOptions、availableCommands），用于在会话创建（session/new）之前调用。
+// 原因：部分 agent（如 reasonix）在 session/new 响应返回的同一时刻同步推送
+// available_commands_update；若等 CreateSession 返回后才注册，SDK 的 read loop
+// 可能已先读到该通知而丢弃（omp 有 ~50ms 延迟，此前未暴露此竞态）。
+// 这两个处理器不依赖调用方闭包（按 SDK 通知自带 sessionId 分发），可安全提前注册；
+// 而 onEvent / 权限等依赖具体会话的处理器仍由 SetupEventCallback 按需注册，
+// 避免用空 sessionID 覆盖正在 prompt 的会话回调。
+func (b *EventBridge) EnsureSessionUpdateHandlers(agentID string) error {
+	bridge, err := b.manager.GetBridge(agentID)
+	if err != nil {
+		return err
+	}
+
+	bridge.SetConfigOptionsHandler(func(sid string, opts []acp.SessionConfigOption) {
+		b.handleConfigOptions(sid, opts)
+	})
+	bridge.SetAvailableCommandsHandler(func(sid string, cmds []acp.AvailableCommand) {
+		b.handleAvailableCommands(sid, cmds)
+	})
+
+	b.log.Info("session update handlers ensured for agent", "agentID", agentID)
+	return nil
+}
+
 // SetupEventCallback 为 Agent 连接设置事件回调（agent 级；每次 prompt 前覆盖注册）。
 func (b *EventBridge) SetupEventCallback(agentID, sessionID string) error {	bridge, err := b.manager.GetBridge(agentID)
 	if err != nil {
@@ -96,9 +121,21 @@ func (b *EventBridge) SetupEventCallback(agentID, sessionID string) error {	brid
 func (b *EventBridge) handleConfigOptions(sessionID string, opts []acp.SessionConfigOption) {
 	dbSession, err := b.sessionRepo.GetByACPSessionID(sessionID)
 	if err != nil {
-		b.log.Warn("config options for unknown session", "sessionID", sessionID, "err", err)
+		// reasonix 等 agent 在 session/new 响应同一毫秒同步推送通告，
+		// 此时 DB 会话记录可能尚未落库（svc.CreateSession 仍在进行中）；
+		// 延迟重试一次，避免「通告先到、落库后到」的竞态丢数据。
+		go func() {
+			if s := b.findSessionWithRetry(sessionID); s != nil {
+				b.applyConfigOptions(s, opts)
+			}
+		}()
 		return
 	}
+	b.applyConfigOptions(dbSession, opts)
+}
+
+func (b *EventBridge) applyConfigOptions(dbSession *model.Session, opts []acp.SessionConfigOption) {
+	sessionID := dbSession.ACPSessionID
 	dtos := client.ToConfigOptionDTOs(opts)
 	data, err := json.Marshal(dtos)
 	if err != nil {
@@ -113,15 +150,43 @@ func (b *EventBridge) handleConfigOptions(sessionID string, opts []acp.SessionCo
 	b.log.Info("config options updated", "sessionID", sessionID, "count", len(opts))
 }
 
+// findSessionWithRetry 按 ACP session id 查 DB 会话；首次查不到时延迟 300ms 重试一次。
+// 用于 reasonix 等 agent 在 session/new 响应同一毫秒同步推送 session/update 通告、
+// 而 DB 记录尚未落库的竞态窗口。重试后仍无则返回 nil（调用方丢弃）。
+func (b *EventBridge) findSessionWithRetry(acpSessionID string) *model.Session {
+	dbSession, err := b.sessionRepo.GetByACPSessionID(acpSessionID)
+	if err == nil {
+		return dbSession
+	}
+	time.Sleep(300 * time.Millisecond)
+	dbSession, err = b.sessionRepo.GetByACPSessionID(acpSessionID)
+	if err == nil {
+		return dbSession
+	}
+	b.log.Warn("session update for unknown session (after retry)",
+		"sessionID", acpSessionID, "err", err)
+	return nil
+}
+
 // handleAvailableCommands 收到 agent 通告的可用 / 命令后落库 + 实时广播给前端。
 // 与 handleConfigOptions 同理：命令列表可能随会话状态动态变化（agent 随时可重新通告），
 // 前端收到广播立即刷新候选面板；落库保证重进会话时无需等待 agent 重新通告即可恢复。
 func (b *EventBridge) handleAvailableCommands(sessionID string, cmds []acp.AvailableCommand) {
 	dbSession, err := b.sessionRepo.GetByACPSessionID(sessionID)
 	if err != nil {
-		b.log.Warn("slash commands for unknown session", "sessionID", sessionID, "err", err)
+		// 同 handleConfigOptions：通告可能在 DB 落库前到达，延迟重试一次。
+		go func() {
+			if s := b.findSessionWithRetry(sessionID); s != nil {
+				b.applyAvailableCommands(s, cmds)
+			}
+		}()
 		return
 	}
+	b.applyAvailableCommands(dbSession, cmds)
+}
+
+func (b *EventBridge) applyAvailableCommands(dbSession *model.Session, cmds []acp.AvailableCommand) {
+	sessionID := dbSession.ACPSessionID
 	dtos := client.ToAvailableCommandDTOs(cmds)
 	data, err := json.Marshal(dtos)
 	if err != nil {
