@@ -8,16 +8,18 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/zacp/zacp/internal/service"
+	"github.com/zacp/zacp/internal/ws"
 )
 
 // SessionHandler 会话 HTTP 处理器
 type SessionHandler struct {
-	svc *service.SessionService
+	svc    *service.SessionService
+	bridge *ws.EventBridge
 }
 
 // NewSessionHandler 创建会话处理器
-func NewSessionHandler(svc *service.SessionService) *SessionHandler {
-	return &SessionHandler{svc: svc}
+func NewSessionHandler(svc *service.SessionService, bridge *ws.EventBridge) *SessionHandler {
+	return &SessionHandler{svc: svc, bridge: bridge}
 }
 
 // CreateSession 创建新会话
@@ -45,6 +47,18 @@ func (h *SessionHandler) CreateSession(c *gin.Context) {
 			"error": gin.H{"code": "create_session_failed", "message": err.Error()},
 		})
 		return
+	}
+
+	// 立即注册事件回调（含 available_commands_update 处理器）：
+	// 部分 agent（如 omp）在 session/new 响应返回后很快（几十 ms）就推送可用命令通告，
+	// 若等用户首条 prompt 才注册（见 EventBridge.HandlePrompt）就会错过，
+	// 导致 /slash-commands 一直是空。注册动作幂等，后续 prompt 前仍会覆盖注册。
+	if h.bridge != nil {
+		if err := h.bridge.SetupEventCallback(req.AgentID, result.Session.ACPSessionID); err != nil {
+			// 注册失败不阻断创建：回调会在首个 prompt 前重试注册
+			h.bridge.Log().Warn("setup event callback after session create failed",
+				"agentID", req.AgentID, "acpSessionID", result.Session.ACPSessionID, "err", err)
+		}
 	}
 
 	c.JSON(http.StatusCreated, gin.H{
@@ -138,6 +152,28 @@ func (h *SessionHandler) GetConfigOptions(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"configOptions": opts})
+}
+
+// GetSlashCommands 获取会话可用 / 命令（agent 经 available_commands_update 通告）
+// GET /api/v1/sessions/:id/slash-commands
+func (h *SessionHandler) GetSlashCommands(c *gin.Context) {
+	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": gin.H{"code": "invalid_id", "message": "invalid session id"},
+		})
+		return
+	}
+
+	cmds, err := h.svc.GetSlashCommands(uint(id))
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{
+			"error": gin.H{"code": "session_not_found", "message": err.Error()},
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"slashCommands": cmds})
 }
 
 // SetConfigOption 设置会话配置项（如切换模型/思考强度/mode）

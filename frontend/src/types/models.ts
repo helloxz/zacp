@@ -88,3 +88,15 @@ export interface ConfigOption {
   currentValue: string | boolean
   options?: ConfigOptionValue[]
 }
+
+/**
+ * 可用 / 命令（agent 经 ACP available_commands_update 通告，如 init/plan）。
+ * 对齐后端 model.AvailableCommandDTO；输入框以 "/" 开头时展示候选面板。
+ */
+export interface AvailableCommand {
+  /** 命令名（不含斜杠，如 "init"） */
+  name: string
+  description?: string
+  /** 参数提示（如 "<task>"），供前端展示 */
+  inputHint?: string
+}

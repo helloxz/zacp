@@ -38,7 +38,12 @@ type Bridge struct {
 	onEvent func(Event)
 	// configOptionsHandler 接收 agent 经 session/update 通知下发的 configOptions
 	// （模型/思考强度/mode 等，可能不在 session/new 响应里，而在后续通知中）。
-	configOptionsHandler func([]acp.SessionConfigOption)
+	// 第一个参数为 SDK 通知里的 ACP session id（通知自带，不依赖调用方闭包）。
+	configOptionsHandler func(sessionID string, opts []acp.SessionConfigOption)
+	// availableCommandsHandler 接收 agent 经 session/update 通知下发的可用 / 命令
+	// （ACP available_commands_update），由 bridge 落库并广播给前端。
+	// 第一个参数为 SDK 通知里的 ACP session id（同上）。
+	availableCommandsHandler func(sessionID string, cmds []acp.AvailableCommand)
 	// permissionHandler 将权限请求转发给外部（如 WebSocket 前端交互式选择）；
 	// 非 autoApprove 时优先使用，未设置时维持默认（autoApprove 放行 / 否则取消）。
 	permissionHandler func(acp.RequestPermissionRequest) (acp.RequestPermissionResponse, error)
@@ -72,11 +77,21 @@ func (b *Bridge) SetPermissionHandler(fn func(acp.RequestPermissionRequest) (acp
 }
 
 // SetConfigOptionsHandler sets a live config-options sink (optional).
-// 接收 agent 经 session/update 通知下发的配置项（可能不在 session/new 响应中）。
-func (b *Bridge) SetConfigOptionsHandler(fn func([]acp.SessionConfigOption)) {
+// 接收 agent 经 session/update 通知下发的配置项（可能不在 session/new 响应中）；
+// 回调第一个参数为通知自带的 ACP session id。
+func (b *Bridge) SetConfigOptionsHandler(fn func(sessionID string, opts []acp.SessionConfigOption)) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.configOptionsHandler = fn
+}
+
+// SetAvailableCommandsHandler sets a live slash-commands sink (optional).
+// 接收 agent 经 session/update 的 available_commands_update 通知下发的可用 / 命令列表；
+// 回调第一个参数为通知自带的 ACP session id。
+func (b *Bridge) SetAvailableCommandsHandler(fn func(sessionID string, cmds []acp.AvailableCommand)) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.availableCommandsHandler = fn
 }
 
 // Reset clears buffered events (call before each Prompt).
@@ -210,12 +225,23 @@ func (b *Bridge) SessionUpdate(ctx context.Context, params acp.SessionNotificati
 	case u.Plan != nil:
 		b.push(Event{Type: "plan", RawKind: "plan"})
 	case u.ConfigOptionUpdate != nil:
-		// 会话配置项通知（模型/思考强度/mode 等）：走独立处理器（不混入消息事件流）
+		// 会话配置项通知（模型/思考强度/mode 等）：走独立处理器（不混入消息事件流）。
+		// 通知自带 sessionId（v1/v2 均有），按会话分发，避免多会话并发时串到其它会话。
 		b.mu.Lock()
 		fn := b.configOptionsHandler
 		b.mu.Unlock()
 		if fn != nil {
-			fn(u.ConfigOptionUpdate.ConfigOptions)
+			fn(string(params.SessionId), u.ConfigOptionUpdate.ConfigOptions)
+		}
+	case u.AvailableCommandsUpdate != nil:
+		// 可用 / 命令通知（ACP available_commands_update）：走独立处理器，不混入消息事件流。
+		// 与 configOptions 同理：命令列表可能在会话任意时刻（重新）下发，需落库 + 广播；
+		// 同样使用通知自带的 sessionId 分发，保证会话归属正确。
+		b.mu.Lock()
+		fn := b.availableCommandsHandler
+		b.mu.Unlock()
+		if fn != nil {
+			fn(string(params.SessionId), u.AvailableCommandsUpdate.AvailableCommands)
 		}
 	default:
 		b.push(Event{Type: "other", RawKind: "unknown"})

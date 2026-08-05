@@ -44,6 +44,8 @@ watch(
       })
       // 加载会话配置项（模型/思考强度/mode；agent 不支持时为空，前端隐藏）
       void sessionStore.loadConfigOptions(id)
+      // 加载可用 / 命令（agent 未通告时为空，前端不显示候选面板）
+      void sessionStore.loadSlashCommands(id)
     }
   },
   { immediate: true },

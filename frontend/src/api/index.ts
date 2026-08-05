@@ -19,6 +19,7 @@ export { ApiError, type ApiErrorBody, type RequestOptions, type HttpMethod } fro
 import { http } from './http'
 import type {
   Agent,
+  AvailableCommand,
   ChatMessage,
   ChatSession,
   ConfigOption,
@@ -150,6 +151,16 @@ export async function fetchConfigOptions(
     `/api/v1/sessions/${sessionId}/config-options`,
   )
   return data.configOptions
+}
+
+/** GET /api/v1/sessions/:id/slash-commands — 可用 / 命令（agent 未通告时为空数组） */
+export async function fetchSlashCommands(
+  sessionId: number,
+): Promise<AvailableCommand[]> {
+  const data = await http.get<{ slashCommands: AvailableCommand[] }>(
+    `/api/v1/sessions/${sessionId}/slash-commands`,
+  )
+  return data.slashCommands
 }
 
 /** POST /api/v1/sessions/:id/config-options — 设置会话配置项（如切换模型） */

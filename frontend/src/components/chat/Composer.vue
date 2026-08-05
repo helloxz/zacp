@@ -119,6 +119,87 @@ const text = ref('')
 const selectedAgentId = ref(props.agentId ?? '')
 const inputRef = ref<InputInst | null>(null)
 
+// ---------------------------------------------------------------------------
+// / 命令候选面板（数据来自 agent 经 ACP available_commands_update 通告的命令列表）
+// ---------------------------------------------------------------------------
+
+/** 面板是否被关闭（Esc / 选中命令后）；仅当文本不再以 / 开头时自动重置 */
+const slashDismissed = ref(false)
+/** 当前高亮命令索引（面板显示时默认选中第一项） */
+const slashIndex = ref(0)
+/** 候选面板 DOM（高亮项滚动可见用） */
+const slashPanelRef = ref<HTMLElement | null>(null)
+
+/** 输入是否处于 / 命令态（第一个非空字符为 /） */
+const slashActive = computed(() => text.value.trimStart().startsWith('/'))
+/** / 之后的查询串（前缀匹配命令名） */
+const slashQuery = computed(() =>
+  slashActive.value ? text.value.trimStart().slice(1) : '',
+)
+/** 过滤后的候选命令（无查询串时显示全部） */
+const slashCandidates = computed(() => {
+  if (!slashQuery.value) return sessionStore.slashCommands
+  const q = slashQuery.value.toLowerCase()
+  return sessionStore.slashCommands.filter((c) =>
+    c.name.toLowerCase().startsWith(q),
+  )
+})
+/**
+ * 面板可见性：bar 模式 + 以 / 开头 + 未被关闭 + 有候选命令。
+ * card（新建会话空态）不显示；agent 未通告命令时列表为空也不显示（不做本地兜底）。
+ */
+const slashVisible = computed(
+  () =>
+    props.mode === 'bar' &&
+    slashActive.value &&
+    !slashDismissed.value &&
+    slashCandidates.value.length > 0,
+)
+
+// 查询串变化时高亮回到第一项
+watch(slashQuery, () => {
+  slashIndex.value = 0
+})
+// 文本不再以 / 开头时重置 dismissed：删掉 / 或清空后再输入 / 会重新弹出面板
+watch(text, (v) => {
+  if (!v.trimStart().startsWith('/')) {
+    slashDismissed.value = false
+  }
+})
+// 键盘上下移动高亮时，让高亮项滚动到面板可视区内（flush:'post' 确保面板首帧已挂载）
+watch(
+  slashIndex,
+  (i) => {
+    const items = slashPanelRef.value?.querySelectorAll('[data-slash-item]')
+    ;(items?.[i] as HTMLElement | undefined)?.scrollIntoView({ block: 'nearest' })
+  },
+  { flush: 'post' },
+)
+
+/**
+ * 确认选中命令：插入 "/name " 并继续编辑（不发送），光标留在末尾可直接输入参数。
+ * 面板随即关闭；输入参数时仍以 / 开头，不会重新弹出。
+ *
+ * 整体覆盖语义安全性：候选过滤是「查询串前缀匹配命令名」，一旦用户输入了命令名之外的
+ * 内容（如参数），查询串含空格即不再匹配任何命令、面板隐藏、Enter 走普通发送，
+ * 因此到达此处的文本必然只是 "/" + 命令名前缀，覆盖无数据丢失。
+ */
+function pickSlashCommand(index?: number) {
+  const i = index ?? slashIndex.value
+  const cmd = slashCandidates.value[i]
+  if (!cmd) return
+  text.value = `/${cmd.name} `
+  slashDismissed.value = true
+  // 光标移到末尾（textareaEl 为 naive-ui InputInst 公开属性，类型未导出故断言）
+  requestAnimationFrame(() => {
+    inputRef.value?.focus()
+    const el = (
+      inputRef.value as unknown as { textareaEl?: HTMLTextAreaElement }
+    ).textareaEl
+    if (el) el.setSelectionRange(text.value.length, text.value.length)
+  })
+}
+
 /** 新建会话空态（card）自动聚焦输入框：进入 /new 即可直接打字。
  * rAF 延后到布局稳定后再聚焦，避免被遮罩/过渡干扰。 */
 onMounted(() => {
@@ -159,9 +240,44 @@ function onSend() {
   text.value = ''
 }
 
-/** Enter 发送 / Shift+Enter 换行；isComposing 避免中文输入法回车误发送 */
+/**
+ * 键盘处理优先级：
+ * 1. / 命令面板可见时：↑↓ 移动高亮、Enter/Tab 确认选中命令、Esc 关闭面板；
+ * 2. 否则 Enter 发送 / Shift+Enter 换行（isComposing 避免中文输入法回车误发送）。
+ * 面板不可见时按 Enter 直接发送（如无匹配 /xxx 时按普通消息发送）。
+ */
 function onKeydown(e: KeyboardEvent) {
-  if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
+  if (e.isComposing) return
+  if (slashVisible.value) {
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      // 阻止默认光标移动，在候选项间循环移动高亮
+      e.preventDefault()
+      const n = slashCandidates.value.length
+      slashIndex.value =
+        e.key === 'ArrowDown'
+          ? (slashIndex.value + 1) % n
+          : (slashIndex.value - 1 + n) % n
+      return
+    }
+    if (e.key === 'Enter' && !e.shiftKey) {
+      // 确认选中命令（插入 /name 继续编辑，不发送）
+      e.preventDefault()
+      pickSlashCommand()
+      return
+    }
+    if (e.key === 'Tab') {
+      // Tab 同样确认（阻止默认焦点切换）
+      e.preventDefault()
+      pickSlashCommand()
+      return
+    }
+    if (e.key === 'Escape') {
+      e.preventDefault()
+      slashDismissed.value = true
+      return
+    }
+  }
+  if (e.key === 'Enter' && !e.shiftKey) {
     e.preventDefault()
     onSend()
   }
@@ -170,8 +286,32 @@ function onKeydown(e: KeyboardEvent) {
 
 <template>
   <div
-    class="w-full rounded-2xl border border-slate-200 bg-white p-3 shadow-sm transition-shadow focus-within:border-slate-300 focus-within:shadow-md"
+    class="relative w-full rounded-2xl border border-slate-200 bg-white p-3 shadow-sm transition-shadow focus-within:border-slate-300 focus-within:shadow-md"
   >
+    <!-- / 命令候选面板：浮于输入框上方，宽度与输入框一致（容器 relative + 左右对齐） -->
+    <div
+      v-if="slashVisible"
+      ref="slashPanelRef"
+      class="absolute bottom-full left-0 right-0 z-20 mb-1.5 overflow-hidden rounded-lg border border-slate-200 bg-white shadow-lg"
+    >
+      <div class="max-h-64 overflow-y-auto py-1">
+        <button
+          v-for="(cmd, i) in slashCandidates"
+          :key="cmd.name"
+          type="button"
+          data-slash-item
+          class="flex w-full items-baseline gap-2 px-3 py-1.5 text-left"
+          :class="i === slashIndex ? 'bg-slate-100' : ''"
+          @mouseenter="slashIndex = i"
+          @click="pickSlashCommand(i)"
+        >
+          <span class="shrink-0 font-mono text-sm font-medium text-slate-800">/{{ cmd.name }}</span>
+          <span v-if="cmd.description" class="truncate text-xs text-slate-500">{{ cmd.description }}</span>
+          <span v-if="cmd.inputHint" class="ml-auto shrink-0 text-xs text-slate-400">{{ cmd.inputHint }}</span>
+        </button>
+      </div>
+    </div>
+
     <n-input
       ref="inputRef"
       v-model:value="text"

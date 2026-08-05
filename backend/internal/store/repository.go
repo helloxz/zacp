@@ -203,6 +203,13 @@ func (r *SessionRepository) UpdateConfigOptions(id uint, configJSON string) erro
 		Update("config_options", configJSON).Error
 }
 
+// UpdateAvailableCommands 更新会话可用 / 命令 JSON（agent 经 available_commands_update 通告）
+func (r *SessionRepository) UpdateAvailableCommands(id uint, commandsJSON string) error {
+	return r.db.Model(&model.Session{}).
+		Where("id = ?", id).
+		Update("available_commands", commandsJSON).Error
+}
+
 // Delete 删除会话（软删除）
 func (r *SessionRepository) Delete(id uint) error {
 	return r.db.Delete(&model.Session{}, id).Error

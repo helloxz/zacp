@@ -49,6 +49,7 @@ func New(
 		// 会话配置项（模型/思考强度/mode 等，agent 支持才返回非空）
 		v1.GET("/sessions/:id/config-options", sessionHandler.GetConfigOptions)
 		v1.POST("/sessions/:id/config-options", sessionHandler.SetConfigOption)
+		v1.GET("/sessions/:id/slash-commands", sessionHandler.GetSlashCommands)
 
 		// Chat（兼容旧 demo）
 		v1.POST("/chat", chatHandler.Chat)

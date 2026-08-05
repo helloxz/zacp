@@ -390,6 +390,23 @@ func (s *SessionService) GetConfigOptions(sessionID uint) ([]model.ConfigOptionD
 	return opts, nil
 }
 
+// GetSlashCommands 返回会话可用 / 命令（agent 经 available_commands_update 通告的列表）。
+// agent 未通告时返回空数组（前端据此不显示候选面板）。
+func (s *SessionService) GetSlashCommands(sessionID uint) ([]model.AvailableCommandDTO, error) {
+	session, err := s.sessionRepo.GetByID(sessionID)
+	if err != nil {
+		return nil, fmt.Errorf("session not found: %w", err)
+	}
+	if session.AvailableCommands == "" {
+		return []model.AvailableCommandDTO{}, nil
+	}
+	var cmds []model.AvailableCommandDTO
+	if err := json.Unmarshal([]byte(session.AvailableCommands), &cmds); err != nil {
+		return nil, fmt.Errorf("parse slash commands: %w", err)
+	}
+	return cmds, nil
+}
+
 // SetConfigOption 设置会话配置项（如切换模型/思考强度/mode），并回写 DB 中该选项的 currentValue。
 // 按选项类型分流：select 走 ValueId，boolean 走 Boolean 变体。
 func (s *SessionService) SetConfigOption(ctx context.Context, sessionID uint, optionID, valueID string) error {

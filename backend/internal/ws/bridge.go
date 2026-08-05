@@ -48,9 +48,13 @@ func NewEventBridge(handler *Handler, mgr *manager.Manager, sessionRepo *store.S
 	}
 }
 
+// Log 返回 EventBridge 的日志器，供外部（如 handler）记录桥接相关事件。
+func (b *EventBridge) Log() *slog.Logger {
+	return b.log
+}
+
 // SetupEventCallback 为 Agent 连接设置事件回调（agent 级；每次 prompt 前覆盖注册）。
-func (b *EventBridge) SetupEventCallback(agentID, sessionID string) error {
-	bridge, err := b.manager.GetBridge(agentID)
+func (b *EventBridge) SetupEventCallback(agentID, sessionID string) error {	bridge, err := b.manager.GetBridge(agentID)
 	if err != nil {
 		return err
 	}
@@ -69,9 +73,17 @@ func (b *EventBridge) SetupEventCallback(agentID, sessionID string) error {
 	})
 
 	// 接收 agent 经 session/update 通知下发的配置项（模型/思考强度/mode 等），
-	// 覆盖 session/new 响应未带 configOptions 的情况，实时落库供前端读取
-	bridge.SetConfigOptionsHandler(func(opts []acp.SessionConfigOption) {
-		b.handleConfigOptions(sessionID, opts)
+	// 覆盖 session/new 响应未带 configOptions 的情况，实时落库供前端读取。
+	// 回调自带 SDK 通知的 ACP session id，按会话分发（见 client.Bridge.SessionUpdate）。
+	bridge.SetConfigOptionsHandler(func(sid string, opts []acp.SessionConfigOption) {
+		b.handleConfigOptions(sid, opts)
+	})
+
+	// 接收 agent 经 session/update 的 available_commands_update 通知下发的可用 / 命令，
+	// 落库供重进会话恢复，并实时广播给前端刷新候选面板。
+	// 回调自带 SDK 通知的 ACP session id（同上）。
+	bridge.SetAvailableCommandsHandler(func(sid string, cmds []acp.AvailableCommand) {
+		b.handleAvailableCommands(sid, cmds)
 	})
 
 	b.log.Info("event callback setup for agent", "agentID", agentID, "sessionID", sessionID)
@@ -99,6 +111,29 @@ func (b *EventBridge) handleConfigOptions(sessionID string, opts []acp.SessionCo
 	}
 	b.handler.BroadcastConfigOptions(sessionID, dtos)
 	b.log.Info("config options updated", "sessionID", sessionID, "count", len(opts))
+}
+
+// handleAvailableCommands 收到 agent 通告的可用 / 命令后落库 + 实时广播给前端。
+// 与 handleConfigOptions 同理：命令列表可能随会话状态动态变化（agent 随时可重新通告），
+// 前端收到广播立即刷新候选面板；落库保证重进会话时无需等待 agent 重新通告即可恢复。
+func (b *EventBridge) handleAvailableCommands(sessionID string, cmds []acp.AvailableCommand) {
+	dbSession, err := b.sessionRepo.GetByACPSessionID(sessionID)
+	if err != nil {
+		b.log.Warn("slash commands for unknown session", "sessionID", sessionID, "err", err)
+		return
+	}
+	dtos := client.ToAvailableCommandDTOs(cmds)
+	data, err := json.Marshal(dtos)
+	if err != nil {
+		b.log.Warn("marshal slash commands failed", "sessionID", sessionID, "err", err)
+		return
+	}
+	if err := b.sessionRepo.UpdateAvailableCommands(dbSession.ID, string(data)); err != nil {
+		b.log.Warn("save slash commands failed", "sessionID", sessionID, "err", err)
+		return
+	}
+	b.handler.BroadcastSlashCommands(sessionID, dtos)
+	b.log.Info("slash commands updated", "sessionID", sessionID, "count", len(cmds))
 }
 
 // isNilOrEmpty 严格判空：interface 为 nil、nil 指针/切片/map/channel/func、空字符串

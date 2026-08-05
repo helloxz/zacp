@@ -16,6 +16,7 @@ const (
 	MsgTypeTurnDone          MessageType = "turn.done"          // 一轮对话完成
 	MsgTypePermissionRequest MessageType = "permission.request" // 权限请求
 	MsgTypeConfigOptions     MessageType = "configOptions"       // 配置项更新（agent 推送，如切模型后出现思维强度选项）
+	MsgTypeSlashCommands     MessageType = "slashCommands"       // 可用 / 命令更新（agent 经 available_commands_update 推送）
 	MsgTypeError             MessageType = "error"              // 错误通知
 	MsgTypePong              MessageType = "pong"               // 心跳响应
 )
@@ -57,6 +58,9 @@ type ServerMessage struct {
 
 	// configOptions 消息字段（agent 经 session/update 推送的配置项列表）
 	ConfigOptions interface{} `json:"configOptions,omitempty"`
+
+	// slashCommands 消息字段（agent 经 available_commands_update 推送的 / 命令列表）
+	SlashCommands interface{} `json:"slashCommands,omitempty"`
 
 	// error 消息字段
 	Code    string `json:"code,omitempty"`

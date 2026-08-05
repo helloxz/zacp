@@ -45,6 +45,21 @@ func ToConfigOptionDTOs(opts []acp.SessionConfigOption) []model.ConfigOptionDTO 
 	return out
 }
 
+// ToAvailableCommandDTOs 将 SDK 的 AvailableCommand 转为对外 DTO。
+// 供 bridge 处理 available_commands_update 通知时落库 + 广播复用。
+func ToAvailableCommandDTOs(cmds []acp.AvailableCommand) []model.AvailableCommandDTO {
+	out := make([]model.AvailableCommandDTO, 0, len(cmds))
+	for _, c := range cmds {
+		dto := model.AvailableCommandDTO{Name: c.Name, Description: c.Description}
+		// input.hint 在 unstructured 变体中携带，用于前端展示参数占位（如 "<task>"）。
+		if c.Input != nil && c.Input.Unstructured != nil {
+			dto.InputHint = c.Input.Unstructured.Hint
+		}
+		out = append(out, dto)
+	}
+	return out
+}
+
 // flattenSelectOptions 展开 select 选项（分组结构拍平成平铺列表，供前端下拉）。
 func flattenSelectOptions(opts acp.SessionConfigSelectOptions) []model.ConfigOptionValueDTO {
 	var values []model.ConfigOptionValueDTO

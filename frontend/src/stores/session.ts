@@ -9,12 +9,14 @@ import {
   fetchConfigOptions,
   fetchMessages,
   fetchRecentSessions,
+  fetchSlashCommands,
   fetchWorkspaces,
   fetchSession as apiFetchSession,
   setConfigOption as apiSetConfigOption,
 } from '@/api'
 import { acpSocket } from '@/composables/useAcpSocket'
 import type {
+  AvailableCommand,
   ChatMessage,
   ChatSession,
   ConfigOption,
@@ -75,6 +77,12 @@ export const useSessionStore = defineStore('session', () => {
    * agent 不支持时为空数组 → 前端隐藏配置 UI（用户约定「ACP 不支持才隐藏」）。
    */
   const configOptions = ref<ConfigOption[]>([])
+
+  /**
+   * 当前会话的可用 / 命令（来自 GET slash-commands 与 WS slashCommands 广播）。
+   * agent 未通告时为空数组 → 前端不显示候选面板（不做本地兜底）。
+   */
+  const slashCommands = ref<AvailableCommand[]>([])
 
   /** 当前会话对象；null 对应空态 */
   const activeSession = computed<ChatSession | null>(() => {
@@ -341,6 +349,16 @@ export const useSessionStore = defineStore('session', () => {
     }
   }
 
+  /** 加载当前会话可用 / 命令（进入会话时调用；agent 未通告时为空数组） */
+  async function loadSlashCommands(sessionId: number) {
+    try {
+      slashCommands.value = await fetchSlashCommands(sessionId)
+    } catch {
+      // 获取失败不阻塞聊天（视为无 / 命令，不显示候选面板）
+      slashCommands.value = []
+    }
+  }
+
   /** 设置会话配置项（select 型：切换模型/思考强度/mode），成功后更新本地 currentValue */
   async function setConfigOption(optionId: string, valueId: string) {
     const sessionId = currentId.value
@@ -378,6 +396,8 @@ export const useSessionStore = defineStore('session', () => {
       await loadMessages(sessionId, true)
       // agent 可能在 turn 中经 update 通知更新配置项，刷新以同步最新 currentValue
       await loadConfigOptions(sessionId)
+      // 同样刷新 / 命令：agent 可能在 turn 中通告新命令（如 init 后出现新命令）
+      await loadSlashCommands(sessionId)
       // 同步会话标题（服务端首条消息生成）与列表排序
       const fresh = await apiFetchSession(sessionId).catch(() => null)
       if (fresh) {
@@ -422,6 +442,14 @@ export const useSessionStore = defineStore('session', () => {
           // 实时刷新下拉，无需重新进入会话
           if (msg.configOptions) {
             configOptions.value = msg.configOptions
+          }
+          break
+        }
+        case 'slashCommands': {
+          // agent 推送的可用 / 命令更新（available_commands_update）：
+          // 实时刷新候选面板，无需重新进入会话
+          if (msg.slashCommands) {
+            slashCommands.value = msg.slashCommands
           }
           break
         }
@@ -558,6 +586,7 @@ export const useSessionStore = defineStore('session', () => {
     pendingPermission,
     activeToolCards,
     configOptions,
+    slashCommands,
     activeSession,
     activeMessages,
     defaultWorkspace,
@@ -567,6 +596,7 @@ export const useSessionStore = defineStore('session', () => {
     removeWorkspace,
     loadMessages,
     loadConfigOptions,
+    loadSlashCommands,
     setConfigOption,
     createSession,
     removeSession,

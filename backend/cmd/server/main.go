@@ -103,7 +103,7 @@ func main() {
 
 	// 创建 Handler
 	workspaceHandler := handlers.NewWorkspaceHandler(workspaceSvc)
-	sessionHandler := handlers.NewSessionHandler(sessionSvc)
+	sessionHandler := handlers.NewSessionHandler(sessionSvc, eventBridge)
 	chatHandler := &handlers.ChatHandler{Mgr: mgr}
 
 	if os.Getenv("GIN_MODE") == "" {

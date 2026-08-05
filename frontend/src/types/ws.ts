@@ -3,7 +3,7 @@
  * 注意：prompt/cancel 的 sessionId 是 **ACP session id**（session.acpSessionId），
  * 不是 DB 的 uint id；agentId 用于无绑定连接动态绑定。
  */
-import type { ConfigOption } from '@/types/models'
+import type { AvailableCommand, ConfigOption } from '@/types/models'
 
 /** 客户端 → 服务端消息 */
 export type WsClientMessage =
@@ -53,5 +53,6 @@ export type WsServerMessage =
       options?: PermissionOption[]
     }
   | { type: 'configOptions'; configOptions?: ConfigOption[] }
+  | { type: 'slashCommands'; slashCommands?: AvailableCommand[] }
   | { type: 'error'; code?: string; message?: string }
   | { type: 'pong' }

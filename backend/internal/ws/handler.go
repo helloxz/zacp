@@ -127,6 +127,15 @@ func (h *Handler) BroadcastConfigOptions(sessionID string, configOptions interfa
 	})
 }
 
+// BroadcastSlashCommands 向指定会话广播可用 / 命令更新（agent 经 available_commands_update 推送；
+// 前端据此实时刷新 / 命令候选面板，无需重新进入会话）。
+func (h *Handler) BroadcastSlashCommands(sessionID string, commands interface{}) {
+	h.BroadcastToSession(sessionID, ServerMessage{
+		Type:          MsgTypeSlashCommands,
+		SlashCommands: commands,
+	})
+}
+
 // BroadcastError 向指定会话广播错误消息
 func (h *Handler) BroadcastError(sessionID, code, message string) {
 	h.BroadcastToSession(sessionID, ServerMessage{

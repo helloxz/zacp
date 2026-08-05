@@ -139,6 +139,11 @@ func runMigrations(db *gorm.DB) error {
 			Name:    "session_is_draft",
 			Func:    migrateV4,
 		},
+		{
+			Version: 5,
+			Name:    "session_available_commands",
+			Func:    migrateV5,
+		},
 	}
 
 	// 执行未应用的迁移
@@ -190,5 +195,11 @@ func migrateV3(db *gorm.DB) error {
 // 隐式 session/new 探测创建的会话 is_draft=true，不进侧栏列表；
 // 用户发出首条 prompt 后转正（is_draft=false）。默认 false，兼容历史数据。
 func migrateV4(db *gorm.DB) error {
+	return db.AutoMigrate(&model.Session{})
+}
+
+// migrateV5 为 sessions 表添加 available_commands 列（ACP 可用 / 命令 JSON）。
+// agent 经 available_commands_update 通告后由 bridge 写入；为空表示 agent 未通告。
+func migrateV5(db *gorm.DB) error {
 	return db.AutoMigrate(&model.Session{})
 }
