@@ -442,6 +442,13 @@ func (s *SessionService) SetConfigOption(ctx context.Context, sessionID uint, op
 		return ErrNoACPSession
 	}
 
+	// 按需启动兜底：服务端重启后仅预启动第一个 agent，对其它 agent 的
+	// 旧会话下发配置时先确保进程已启动（幂等），否则 mgr.SetSessionConfigOption
+	// 会返回 "agent not started"。
+	if err := s.mgr.EnsureStarted(ctx, session.AgentID); err != nil {
+		return fmt.Errorf("ensure agent started: %w", err)
+	}
+
 	// 从已存配置项判断类型（缺省按 select 处理）
 	optType := "select"
 	var opts []model.ConfigOptionDTO

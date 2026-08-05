@@ -32,6 +32,15 @@ const sessionStore = useSessionStore()
 /** 可用 agent 列表（未运行项可点击，点击时按需启动对应 agent） */
 const agents = computed(() => agentStore.list)
 
+/** 当前工作区路径（空态提示用）：优先 ?workspaceId 指定的工作区，缺省回退默认工作区 */
+const workspacePath = computed(() => {
+  const ws =
+    props.workspaceId != null
+      ? sessionStore.workspaces.find((w) => w.id === props.workspaceId)
+      : undefined
+  return (ws ?? sessionStore.defaultWorkspace())?.path ?? ''
+})
+
 /** 当前选中的 agent id（默认第一个可用 running agent） */
 const selectedAgentId = ref('')
 
@@ -188,10 +197,16 @@ onUnmounted(() => {
       class="relative flex min-h-0 flex-1 flex-col items-center justify-center overflow-hidden px-6"
     >
       <div class="flex w-full max-w-[680px] flex-col items-center gap-6">
-        <div class="space-y-2 text-center">
-          <h1 class="text-3xl font-semibold tracking-tight text-slate-900">
+        <div class="space-y-4 text-center">
+          <h1
+            class="bg-gradient-to-b from-slate-900 to-slate-500 bg-clip-text text-3xl font-semibold tracking-tight text-transparent"
+          >
             {{ t('chat.welcomeSubtitle') }}
           </h1>
+          <!-- 灰色工作区提示：告知用户会话将创建在哪个目录下 -->
+          <p v-if="workspacePath" class="text-sm text-slate-400">
+            {{ t('chat.newSessionPathHint', { path: workspacePath }) }}
+          </p>
         </div>
 
         <!-- Agent 选择 tab：居中显示在欢迎语下方（三个 agent）；

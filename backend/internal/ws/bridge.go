@@ -386,6 +386,13 @@ func marshalEvents(events []client.Event) string {
 //  3. 调用 agent 等待回复
 //  4. 落库助手回复、touch 会话（驱动侧栏排序），广播 turn.done
 func (b *EventBridge) HandlePrompt(ctx context.Context, sessionID, agentID, message string) error {
+	// 按需启动兜底：服务端重启后仅预启动第一个 agent，用户直接对其它
+	// agent 的旧会话发消息时，这里先确保进程已启动——否则下方的
+	// SetupEventCallback → GetBridge 会返回 "agent not started"，
+	// 根本走不到 manager.Prompt 内的 acquireAgent 自动重启。
+	if err := b.manager.EnsureStarted(ctx, agentID); err != nil {
+		return err
+	}
 	if err := b.SetupEventCallback(agentID, sessionID); err != nil {
 		return err
 	}
@@ -458,6 +465,11 @@ func (b *EventBridge) HandlePrompt(ctx context.Context, sessionID, agentID, mess
 
 // HandleCancel 处理 WebSocket 的 cancel 消息
 func (b *EventBridge) HandleCancel(ctx context.Context, sessionID, agentID string) error {
+	// 与 HandlePrompt 一致：先确保 agent 已启动（幂等），避免对未启动
+	// agent 的旧会话发 cancel 时报 "agent not started"。
+	if err := b.manager.EnsureStarted(ctx, agentID); err != nil {
+		return err
+	}
 	return b.manager.Cancel(ctx, agentID, sessionID)
 }
 

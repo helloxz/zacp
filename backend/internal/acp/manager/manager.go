@@ -172,6 +172,24 @@ func (m *Manager) StartAgent(ctx context.Context, agentID string) error {
 	return nil
 }
 
+// EnsureStarted 确保 agent 已启动（幂等）：已运行则 no-op，未启动则按需启动。
+// 与 acquireAgent 的区别：不标记活跃、不重试——用于「事件回调注册 / 配置下发」
+// 等非 prompt 操作的前置保证（这些操作本身不参与空闲活跃度计数）。
+func (m *Manager) EnsureStarted(ctx context.Context, agentID string) error {
+	m.mu.Lock()
+	conn, exists := m.agents[agentID]
+	m.mu.Unlock()
+	if exists {
+		conn.mu.Lock()
+		running := conn.started
+		conn.mu.Unlock()
+		if running {
+			return nil
+		}
+	}
+	return m.StartAgent(ctx, agentID)
+}
+
 // StopAgent 停止指定 agent 进程。
 func (m *Manager) StopAgent(agentID string) error {
 	m.mu.Lock()
@@ -305,10 +323,16 @@ func (m *Manager) LoadSession(ctx context.Context, agentID, sessionID string) er
 
 // IsUnknownSessionErr 判断 ACP 错误是否为「agent 侧会话不存在/已失效」。
 // 后端或 agent 重启后，DB 中记录的 acp_session_id 在 agent 内存中已丢失，
-// agent 会返回形如 `session/xxx: unknown session <uuid>` 的 JSON-RPC 错误。
+// 不同 agent 对「会话失效」返回的错误文本不同，这里统一做大小写不敏感匹配：
+//   - reasonix 等：`session/xxx: unknown session <uuid>`
+//   - qoder 等：`{"code":-32603,...,"details":"Session not found: <uuid>"}`
 // ws bridge（prompt 路径）与 service（config-options 路径）共用此判断触发自动恢复。
 func IsUnknownSessionErr(err error) bool {
-	return err != nil && strings.Contains(err.Error(), "unknown session")
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "unknown session") || strings.Contains(msg, "session not found")
 }
 
 // RecoverSession 恢复 agent 侧已失效的 ACP session（unknown session 时调用）：
