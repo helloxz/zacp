@@ -129,6 +129,15 @@ const toolCards = computed<ToolCard[]>(() => {
     >
       {{ message.content }}
     </div>
+    <!-- 流式占位：assistant 首条内容尚未到达（content 为空且 turn 未结束）时
+         显示三点加载动画，避免空白 AI 卡片；首个文本块到达后由 incremark 替换 -->
+    <div
+      v-else-if="!message.content && !isFinished"
+      class="flex w-full min-w-0 items-center gap-1.5 rounded-xl border border-slate-200/80 bg-white px-4 py-3.5 shadow-sm"
+      aria-label="loading"
+    >
+      <span v-for="i in 3" :key="i" class="loading-dot" />
+    </div>
     <IncremarkContent
       v-else
       class="w-full min-w-0 rounded-xl border border-slate-200/80 bg-white px-4 py-3 text-sm leading-relaxed shadow-sm"
@@ -140,6 +149,32 @@ const toolCards = computed<ToolCard[]>(() => {
 </template>
 
 <style scoped>
+/* 加载动画：三个圆点依次弹跳（assistant 内容未到达时的占位，见模板 loading-dot） */
+.loading-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 9999px;
+  background-color: #94a3b8;
+  animation: loading-dot-bounce 1.2s ease-in-out infinite;
+}
+.loading-dot:nth-child(2) {
+  animation-delay: 0.15s;
+}
+.loading-dot:nth-child(3) {
+  animation-delay: 0.3s;
+}
+@keyframes loading-dot-bounce {
+  0%,
+  60%,
+  100% {
+    transform: translateY(0);
+    opacity: 0.45;
+  }
+  30% {
+    transform: translateY(-4px);
+    opacity: 1;
+  }
+}
 /*
  * Tailwind v4 preflight 全局移除了 ul/ol 的 list-style（list-style: none），
  * 这里只在 AI markdown 内容区域局部恢复列表符号，不动全局。

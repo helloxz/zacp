@@ -190,12 +190,13 @@ function pickSlashCommand(index?: number) {
   if (!cmd) return
   text.value = `/${cmd.name} `
   slashDismissed.value = true
-  // 光标移到末尾（textareaEl 为 naive-ui InputInst 公开属性，类型未导出故断言）
+  // 光标移到末尾（inputRef 为 naive-ui InputInst：暴露 textareaElRef，
+  // 类型未导出故断言；rAF 保证 DOM 已按新 value 更新后再设置光标）
   requestAnimationFrame(() => {
     inputRef.value?.focus()
     const el = (
-      inputRef.value as unknown as { textareaEl?: HTMLTextAreaElement }
-    ).textareaEl
+      inputRef.value as unknown as { textareaElRef?: HTMLTextAreaElement }
+    ).textareaElRef
     if (el) el.setSelectionRange(text.value.length, text.value.length)
   })
 }
