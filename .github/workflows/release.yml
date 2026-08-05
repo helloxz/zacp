@@ -1,0 +1,87 @@
+name: release
+
+# zacp 发布工作流：编译 6 平台二进制（Linux/macOS/Windows × amd64/arm64）→
+# linux 平台 UPX 最高压缩 → 组装标准 zip 发布包 → 上传到 GitHub Release 附件。
+#
+# 触发方式（二选一）：
+#   1) release: published —— 在 GitHub 界面 / gh CLI 创建 Release 后自动构建并上传附件（推荐）
+#   2) workflow_dispatch —— 手动运行，填已创建 Release 的 tag（兜底通道）
+#
+# 版本约定：tag 必须为 v<版本>，且与 frontend/package.json 的 version 完全一致，否则失败。
+# UPX 策略（与 scripts/pack.sh 一致）：仅 linux/amd64、linux/arm64 压缩；
+#   macOS 因 UPX 官方 4.2.0 起禁用 macOS 支持而不压；Windows 按约定不压。
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: '已创建 GitHub Release 的 tag（如 v0.1.0）'
+        required: true
+        type: string
+
+permissions:
+  contents: write # 上传 Release 附件需要
+
+jobs:
+  pack:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出代码（release 事件自动检出 tag；手动触发时显式检出输入 tag，避免构建非 tag 代码）
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.release.tag_name || inputs.tag }}
+
+      - name: 安装 bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: 安装 Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: backend/go.mod
+
+      - name: 安装 UPX（固定 5.1.1 官方 release 二进制）
+        run: |
+          curl -fsSL https://github.com/upx/upx/releases/download/v5.1.1/upx-5.1.1-amd64_linux.tar.xz | tar -xJ -C /tmp
+          sudo mv /tmp/upx-5.1.1-amd64_linux/upx /usr/local/bin/
+          upx --version | head -1
+
+      - name: 解析发布 tag
+        id: tag
+        run: |
+          TAG="${{ github.event.release.tag_name }}"
+          if [ -z "$TAG" ]; then
+            TAG="${{ inputs.tag }}"
+          fi
+          if [ -z "$TAG" ]; then
+            echo "错误: 无法确定发布 tag（release 事件或 workflow_dispatch 输入均无）" >&2
+            exit 1
+          fi
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+
+      - name: 校验 tag 版本与 frontend/package.json 一致
+        run: |
+          TAG="${{ steps.tag.outputs.tag }}"
+          case "$TAG" in
+            v*) VERSION="${TAG#v}" ;;
+            *) echo "错误: tag 必须以 v 开头（如 v0.1.0），实际为 ${TAG}" >&2; exit 1 ;;
+          esac
+          PKG_VERSION="$(bun -e "console.log(JSON.parse(await Bun.file('frontend/package.json').text()).version)")"
+          if [ "$VERSION" != "$PKG_VERSION" ]; then
+            echo "错误: tag 版本 ${VERSION} 与 frontend/package.json 版本 ${PKG_VERSION} 不一致，请先同步版本再发布" >&2
+            exit 1
+          fi
+          echo "版本校验通过: v${VERSION}"
+
+      - name: 运行后端测试（发布前 sanity）
+        run: cd backend && go test ./...
+
+      - name: 全量打包（6 平台 + UPX + zip）
+        run: ./scripts/pack.sh --all
+
+      - name: 上传 Release 附件
+        # --clobber：工作流失败重跑时同名 zip 已存在，允许覆盖
+        run: gh release upload "${{ steps.tag.outputs.tag }}" backend/bin/zacp-v*.zip --clobber
+        env:
+          GH_TOKEN: ${{ github.token }}

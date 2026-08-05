@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { AddOutline } from '@vicons/ionicons5'
 
 const { t } = useI18n()
 const emit = defineEmits<{
@@ -38,14 +39,15 @@ const greeting = computed(() => {
         </h1>
         <p class="text-base text-slate-500">{{ t('shell.noProjectsHint') }}</p>
       </div>
-      <!-- 无项目首屏：引导新建项目（侧栏左上角入口） -->
-      <n-button
-        size="large"
-        type="primary"
+      <!-- 无项目首屏：引导新建项目（Tailwind 主按钮，点击与侧栏共享同一弹窗） -->
+      <button
+        type="button"
+        class="inline-flex cursor-pointer items-center justify-center gap-2 rounded-xl bg-slate-900 px-8 py-3 text-sm font-medium text-white shadow-sm transition-colors hover:bg-slate-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-400 focus-visible:ring-offset-2"
         @click="emit('new-project')"
       >
+        <AddOutline class="h-5 w-5 shrink-0" />
         {{ t('shell.newProject') }}
-      </n-button>
+      </button>
     </div>
   </div>
 </template>

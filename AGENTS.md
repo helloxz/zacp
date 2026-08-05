@@ -309,6 +309,9 @@ cd backend && go run ./cmd/server
 # 一键构建单二进制（bun 编译前端 → embed 进后端；包名带版本号）
 ./scripts/build.sh
 
+# 发布打包：6 平台 zip（linux 平台 UPX 最高压缩；macOS 被 UPX 官方禁用不压，Windows 按约定不压）
+./scripts/pack.sh --all        # 或本机单平台 ./scripts/pack.sh
+
 # 查看版本（构建注入；版本号来源 frontend/package.json）
 cd backend && ./bin/zacp-v* --version 2>/dev/null || go run ./cmd/server -version
 
@@ -490,6 +493,7 @@ bun run build
 - 编码约束：可维护性 / 复用拆分 / 适度性能
 - **Agent 生命周期**：启动时仅预加载配置中第一个（最顶部）enabled 的 agent；其余按需启动（前端切 agent 建会话时经 `service` 自动拉起）；`session.idle_timeout` 空闲回收（默认 30m，0 禁用），回收后经 unknown-session 自动恢复
 - **构建 / 版本**：`scripts/build.sh` 一键产出单二进制（前端产物 + 配置示例经 `backend/internal/web` embed 打包，`dist/` 以 `.gitkeep` 占位保证裸 `go build` 可编译）；版本号单一来源 `frontend/package.json` 的 `version`，构建时 `-ldflags` 注入 `internal/version`，驱动 `--version`、`GET /api/v1/version` 与前端设置页显示；`--version` 不初始化任何资源；未 embed 前端时 NoRoute 跳过，`/api/*` 404 保持 JSON、静态资源正常提供、其余路径 SPA fallback 到首页
+- **发布打包 / CI**：`scripts/pack.sh` 负责发布打包（`build.sh` 不动）——多平台矩阵编译 + linux 平台 `upx --best` + 标准 zip（顶层目录，含 README 与配置示例）；UPX 仅 linux（macOS 被 UPX 官方 4.2.0+ 禁用、Windows 按约定不压）；`.github/workflows/release.yml` 在 Release 创建（或手动 workflow_dispatch）时校验 tag 版本与 `package.json` 一致（不一致即失败）→ `go test ./...` → `pack.sh --all` → 上传 zip 到 Release 附件
 
 ---
 

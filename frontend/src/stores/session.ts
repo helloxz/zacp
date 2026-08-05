@@ -113,6 +113,30 @@ export const useSessionStore = defineStore('session', () => {
     return workspaces.value.find((w) => w.isDefault) ?? workspaces.value[0]
   }
 
+  /**
+   * 侧栏展示的「第一个项目」：与 SidebarSessionList 分组顺序保持一致。
+   * 分组顺序 = sessions 按 updatedAt 倒序遍历，首个能解析出有效 workspace
+   * 的会话所属项目（最新会话所在项目排最前）；全部项目都无会话时回退
+   * workspaces 列表首个（最近使用）。
+   *
+   * 首页守卫跳转必须用它而不是 workspaces[0]：workspace.last_used 只在
+   * 创建/恢复项目时更新（聊天不 touch），workspaces[0] 是「最近添加的项目」，
+   * 与侧栏第一个分组（最新活跃项目）可能不一致，会导致守卫跳到侧栏后面的项目。
+   */
+  function firstWorkspace(): Workspace | undefined {
+    for (const s of sessions.value) {
+      // 与侧栏分组同一套 workspace 解析：软删除 workspace 的会话
+      // （workspace 为空对象/id=0）跳过，不参与「第一个项目」判定
+      const ws = s.workspace?.id
+        ? s.workspace
+        : workspaces.value.find((w) => w.id === s.workspaceId)
+      if (ws) {
+        return ws
+      }
+    }
+    return workspaces.value[0]
+  }
+
   async function loadWorkspaces() {
     workspaces.value = await fetchWorkspaces()
   }
@@ -150,20 +174,28 @@ export const useSessionStore = defineStore('session', () => {
     ]
   }
 
-  /** 首屏初始化：工作区 + 会话并行拉取 */
-  async function loadInitial() {
-    if (loading.value) {
-      return
+  /**
+   * 首屏初始化：工作区 + 会话并行拉取。
+   * 幂等：进行中的加载复用同一 promise（路由守卫与 AppShell 可能并发触发），
+   * 完成后保留 resolved promise，后续调用直接使用内存中最新数据。
+   */
+  let initialPromise: Promise<void> | null = null
+  function loadInitial(): Promise<void> {
+    if (!initialPromise) {
+      loading.value = true
+      loadingError.value = null
+      const pending = Promise.all([loadWorkspaces(), loadSessions()])
+        .then(() => {})
+        .catch((e) => {
+          loadingError.value = e instanceof Error ? e.message : String(e)
+        })
+        .finally(() => {
+          loading.value = false
+        })
+      initialPromise = pending
     }
-    loading.value = true
-    loadingError.value = null
-    try {
-      await Promise.all([loadWorkspaces(), loadSessions()])
-    } catch (e) {
-      loadingError.value = e instanceof Error ? e.message : String(e)
-    } finally {
-      loading.value = false
-    }
+    // 首次调用必经过上面的赋值分支；TS 不对跨闭包引用的 let 收窄，此处显式断言非空
+    return initialPromise as Promise<void>
   }
 
   /**
@@ -653,6 +685,7 @@ export const useSessionStore = defineStore('session', () => {
     activeSession,
     activeMessages,
     defaultWorkspace,
+    firstWorkspace,
     loadInitial,
     loadWorkspaces,
     createWorkspace,

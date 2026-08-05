@@ -133,6 +133,29 @@ Vue 3 + Naive UI + Tailwind CSS，代码在 `frontend/`，包管理与构建一�
 
 后端启动后访问 `http://<host>:8680/` 即可使用内置 Web UI；未匹配的 API 路径返回 JSON 404，其余路径（history 路由深链）回首页。
 
+### 发布打包（多平台 zip，`scripts/pack.sh`）
+
+与 `build.sh` 分工：`build.sh` 是本地快速构建单个二进制；**`pack.sh` 用于发布打包**——多平台矩阵编译 + linux 平台 UPX 最高压缩 + 组装标准 zip 发布包（`build.sh` 保持不变）：
+
+```bash
+./scripts/pack.sh            # 本机平台单包
+./scripts/pack.sh --all      # 6 平台全量：linux/macOS/windows × amd64/arm64
+GOOS=darwin GOARCH=arm64 ./scripts/pack.sh   # 指定平台
+```
+
+- **产物**：`backend/bin/zacp-v<版本>-<GOOS>-<GOARCH>.zip`；包内为同名顶层目录（`zacp`/`zacp.exe` + `README.md` + `config.example.toml`），解压不污染客户目录
+- **UPX 策略**：仅 linux 平台 `upx --best`（约 -73%~-75%）；macOS 因 UPX 官方 4.2.0 起禁用 macOS 支持而不压；Windows 按约定不压（规避杀软误报）
+- **版本**：与 build.sh 同一来源 `frontend/package.json`，可用 `ZACP_VERSION` 环境变量覆盖；`--skip-frontend` 可跳过前端构建（dist 已就位时）
+
+### 发布流程（GitHub Actions，`.github/workflows/release.yml`）
+
+创建 GitHub Release 后自动编译 6 平台并上传 zip 附件到该 Release：
+
+1. 修改 `frontend/package.json` 的 `version`（如 `0.1.0`），提交并推送
+2. 打 tag 并推送：`git tag v0.1.0 && git push origin v0.1.0`
+3. 在 GitHub **Releases → Create a new release** 选 tag `v0.1.0` 并发布（推荐，创建即自动构建）；或在 Actions 页手动 **Run workflow** 填 tag（兜底通道）
+4. 工作流自动执行：校验 tag 版本与 `package.json` 一致（不一致直接失败）→ `go test ./...` → `./scripts/pack.sh --all` → `gh release upload` 上传 `zacp-v*.zip`
+
 ## Scripts & deploy
 
 Put shell helpers in `scripts/`, container / compose files in `deployments/` or repo root as preferred.

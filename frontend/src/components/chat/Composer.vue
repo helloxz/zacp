@@ -115,6 +115,21 @@ function renderConfigOptionLabel(option: SelectOption & { modelName?: string }):
   return h('span', option.modelName ?? String(option.label))
 }
 
+/**
+ * 下拉选项的模糊匹配过滤（n-select :filter）。
+ * 同时匹配完整「渠道/模型」名（label）与剥离渠道后的模型名（modelName），
+ * 例：输入 "deepseek" 命中渠道、输入 "gpt-4o" 命中模型名均能过滤出对应项。
+ * 分组（type=group）由 Naive 按 children 过滤结果自动取舍，无需在此处理。
+ */
+function filterSelectOption(pattern: string, option: SelectOption | SelectGroupOption): boolean {
+  const q = pattern.toLowerCase()
+  if (String(option.label ?? '').toLowerCase().includes(q)) {
+    return true
+  }
+  const modelName = (option as SelectOption & { modelName?: string }).modelName
+  return !!modelName && modelName.toLowerCase().includes(q)
+}
+
 const text = ref('')
 const selectedAgentId = ref(props.agentId ?? '')
 const inputRef = ref<InputInst | null>(null)
@@ -353,6 +368,8 @@ function onKeydown(e: KeyboardEvent) {
               :options="buildSelectOptions(opt.options)"
               :render-label="renderConfigOptionLabel"
               :consistent-menu-width="false"
+              filterable
+              :filter="filterSelectOption"
               @update:value="(v: string) => onConfigChange(opt.id, v)"
             />
           </div>

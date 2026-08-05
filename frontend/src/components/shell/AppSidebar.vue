@@ -3,7 +3,7 @@ import { ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 import { AddOutline } from '@vicons/ionicons5'
-import { NIcon, useMessage } from 'naive-ui'
+import { useMessage } from 'naive-ui'
 import SidebarSessionList from '@/components/shell/SidebarSessionList.vue'
 import UserFooter from '@/components/shell/UserFooter.vue'
 import DirectoryPicker from '@/components/shell/DirectoryPicker.vue'
@@ -68,12 +68,15 @@ async function onCreateProject() {
   <!-- 固定宽度侧栏（300px，列表常驻展示，不再支持折叠） -->
   <aside class="flex w-[300px] flex-col border-r border-slate-200 bg-slate-50">
     <div class="flex items-center gap-1 p-3">
-      <n-button block secondary class="flex-1" @click="onNewProject">
-        <template #icon>
-          <n-icon><AddOutline /></n-icon>
-        </template>
+      <!-- 新建项目：Tailwind 实现的次级按钮（点击打开与 WelcomeHero 共享的项目弹窗） -->
+      <button
+        type="button"
+        class="flex cursor-pointer flex-1 items-center justify-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 shadow-sm transition-colors hover:border-slate-300 hover:bg-slate-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-300"
+        @click="onNewProject"
+      >
+        <AddOutline class="h-4 w-4 shrink-0" />
         {{ t('shell.newProject') }}
-      </n-button>
+      </button>
     </div>
 
     <SidebarSessionList class="min-h-0 flex-1 overflow-y-auto px-3 pb-4" />
