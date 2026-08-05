@@ -3,7 +3,7 @@ import { computed, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute } from 'vue-router'
 import { NIcon } from 'naive-ui'
-import { FolderOpenOutline } from '@vicons/ionicons5'
+import { CaretBackOutline, CaretForwardOutline } from '@vicons/ionicons5'
 import { useAgentStore } from '@/stores/agent'
 import { useSessionStore } from '@/stores/session'
 import { useAppStore } from '@/stores/app'
@@ -19,6 +19,14 @@ const route = useRoute()
 const agentStore = useAgentStore()
 const sessionStore = useSessionStore()
 const appStore = useAppStore()
+
+/** 右侧面板折叠按钮主题：纯灰图标、无 hover 背景（不用 quaternary/primary） */
+const toggleBtnTheme = computed(() => ({
+  textColor: '#94a3b8', // slate-400：收起态
+  textColorHover: '#475569', // slate-600：hover 仅加深灰色，不出现背景
+  textColorPressed: '#475569',
+  textColorFocus: '#475569',
+}))
 
 /** 右侧文件面板折叠状态（状态在 AppShell，这里只展示按钮并转发切换事件） */
 defineProps<{ rightOpen: boolean }>()
@@ -96,27 +104,30 @@ function onNewProjectFromHero() {
   <!-- 已有会话：对话列表 + bar 输入（agent 已锁定，无切换 tab） -->
   <template v-if="routeName === 'session' && current">
     <div class="flex min-h-0 flex-1 flex-col">
-      <!-- 会话头部：标题 + Agent 标签（对话后锁定，不再可切换）+ 右侧面板开关 -->
+      <!-- 会话头部：Agent 标签（左）+ 标题 + 右侧面板开关（最右） -->
       <div class="flex items-center gap-2 border-b border-slate-200 px-4 py-2.5">
-        <span class="min-w-0 flex-1 truncate text-sm font-medium text-slate-800">
-          {{ current.title || t('chat.newChatTitle') }}
-        </span>
         <span
           class="shrink-0 rounded bg-slate-100 px-1.5 py-0.5 text-xs text-slate-500"
         >
           {{ agentNameOf(current.agentId) }}
         </span>
-        <!-- 右侧文件面板展开/收起：展开时高亮 -->
+        <span class="min-w-0 flex-1 truncate text-sm font-medium text-slate-800">
+          {{ current.title || t('chat.newChatTitle') }}
+        </span>
+        <!-- 右侧面板（信息|文件|Git）展开/收起：箭头随状态指向收起方向，灰色系无 hover 背景 -->
         <n-button
-          quaternary
+          text
           circle
           size="small"
-          :type="rightOpen ? 'primary' : 'default'"
-          title="文件面板"
+          :theme-overrides="toggleBtnTheme"
+          title="侧边面板"
           @click="emit('toggle-right-panel')"
         >
           <template #icon>
-            <n-icon><FolderOpenOutline /></n-icon>
+            <n-icon>
+              <CaretForwardOutline v-if="rightOpen" />
+              <CaretBackOutline v-else />
+            </n-icon>
           </template>
         </n-button>
       </div>
