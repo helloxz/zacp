@@ -43,6 +43,7 @@ func New(
 		v1.POST("/sessions", sessionHandler.CreateSession)
 		v1.GET("/sessions", sessionHandler.ListRecentSessions)
 		v1.GET("/sessions/:id", sessionHandler.GetSession)
+		v1.PATCH("/sessions/:id", sessionHandler.RenameSession)
 		v1.DELETE("/sessions/:id", sessionHandler.DeleteSession)
 		// 草稿会话释放（切 tab / 离开空态时释放旧隐式草稿）
 		v1.DELETE("/sessions/:id/draft", sessionHandler.DeleteDraftSession)

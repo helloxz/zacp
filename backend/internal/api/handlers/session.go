@@ -233,6 +233,50 @@ func (h *SessionHandler) SetConfigOption(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"ok": true})
 }
 
+// RenameSession 重命名会话标题（用户手动重命名，仅更新本地 DB）
+// PATCH /api/v1/sessions/:id   body: { "title": "..." }
+func (h *SessionHandler) RenameSession(c *gin.Context) {
+	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": gin.H{"code": "invalid_id", "message": "invalid session id"},
+		})
+		return
+	}
+
+	var req struct {
+		Title string `json:"title" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": gin.H{"code": "invalid_request", "message": err.Error()},
+		})
+		return
+	}
+
+	if err := h.svc.RenameSession(uint(id), req.Title); err != nil {
+		switch {
+		case errors.Is(err, service.ErrSessionNotFound):
+			c.JSON(http.StatusNotFound, gin.H{
+				"error": gin.H{"code": "session_not_found", "message": err.Error()},
+			})
+		case errors.Is(err, service.ErrInvalidArgument):
+			// 标题非法（空/超长等）属客户端参数问题，400
+			c.JSON(http.StatusBadRequest, gin.H{
+				"error": gin.H{"code": "invalid_title", "message": err.Error()},
+			})
+		default:
+			// DB 故障等服务器错误，500（避免前端误判为参数问题）
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"error": gin.H{"code": "rename_session_failed", "message": err.Error()},
+			})
+		}
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"ok": true})
+}
+
 // DeleteSession 删除会话
 // DELETE /api/v1/sessions/:id
 func (h *SessionHandler) DeleteSession(c *gin.Context) {

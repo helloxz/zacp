@@ -189,9 +189,14 @@ export async function createSession(
   return { session: data.session, configOptions: data.configOptions ?? [] }
 }
 
-/** DELETE /api/v1/sessions/:id — 删除会话（软删除 + 停 agent） */
+/** DELETE /api/v1/sessions/:id — 删除会话（物理删除 + 停 agent） */
 export async function deleteSession(sessionId: number): Promise<void> {
   await http.delete(`/api/v1/sessions/${sessionId}`)
+}
+
+/** PATCH /api/v1/sessions/:id — 重命名会话标题（用户手动重命名） */
+export async function renameSession(sessionId: number, title: string): Promise<void> {
+  await http.patch(`/api/v1/sessions/${sessionId}`, { body: { title } })
 }
 
 /** DELETE /api/v1/sessions/:id/draft — 删除草稿会话（切 tab/离开空态时释放旧隐式草稿） */

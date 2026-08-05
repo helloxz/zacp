@@ -5,6 +5,7 @@ import {
   createWorkspace as apiCreateWorkspace,
   deleteSession as apiDeleteSession,
   deleteDraftSession as apiDeleteDraftSession,
+  renameSession as apiRenameSession,
   removeWorkspace as apiRemoveWorkspace,
   fetchConfigOptions,
   fetchMessages,
@@ -28,6 +29,9 @@ import type {
   WsEvent,
   WsServerMessage,
 } from '@/types/ws'
+
+/** localStorage 键：用户手动重命名的会话 id 集合 */
+const MANUALLY_RENAMED_KEY = 'zacp.manuallyRenamedSessions'
 
 /** 实时工具调用卡片（流式 turn 中显示，turn.done 后随历史 events 持久化渲染） */
 export interface ToolCard {
@@ -61,6 +65,13 @@ export const useSessionStore = defineStore('session', () => {
 
   /** 当前选中会话 id（进入 /sessions/:id 时由 ChatPane 同步） */
   const currentId = ref<number | null>(null)
+
+  /**
+   * 用户手动重命名过的会话 id 集合（localStorage 持久化，刷新后仍生效）。
+   * 这些会话不再接受 agent 推送的 AI 总结标题覆盖（见 sessionInfo 分支），
+   * 保证用户改的名字不会被后续 session_info_update 冲掉。
+   */
+  const manuallyRenamedIds = ref<Set<number>>(new Set(loadManuallyRenamedIds()))
 
   const loading = ref(false)
   const loadingError = ref<string | null>(null)
@@ -191,14 +202,49 @@ export const useSessionStore = defineStore('session', () => {
     return { session, configOptions }
   }
 
+  /** 从 localStorage 读取手动改名会话 id（数据损坏/不可用时返回空集） */
+  function loadManuallyRenamedIds(): number[] {
+    try {
+      const raw = localStorage.getItem(MANUALLY_RENAMED_KEY)
+      return raw ? (JSON.parse(raw) as number[]) : []
+    } catch {
+      return []
+    }
+  }
+
+  /** 持久化手动改名会话 id 集合（localStorage 不可用时仅内存生效） */
+  function persistManuallyRenamed() {
+    try {
+      localStorage.setItem(MANUALLY_RENAMED_KEY, JSON.stringify([...manuallyRenamedIds.value]))
+    } catch {
+      // 忽略：降级为仅内存记录
+    }
+  }
+
   /** 删除会话（当前会话被删时清空选中） */
   async function removeSession(sessionId: number) {
     await apiDeleteSession(sessionId)
     sessions.value = sessions.value.filter((s) => s.id !== sessionId)
     delete messagesById.value[sessionId]
+    // 顺手清理手动改名标记，避免 localStorage 无限累积死 id（会话已物理删除）
+    manuallyRenamedIds.value.delete(sessionId)
+    persistManuallyRenamed()
     if (currentId.value === sessionId) {
       currentId.value = null
     }
+  }
+
+  /**
+   * 重命名会话标题（PATCH /sessions/:id）。
+   * 成功后更新本地列表 title，并把该会话记入手动改名集合——
+   * 此后 agent 推送的 AI 总结标题不再覆盖（见 sessionInfo 分支）。
+   */
+  async function renameSession(sessionId: number, title: string) {
+    await apiRenameSession(sessionId, title)
+    const s = sessions.value.find((x) => x.id === sessionId)
+    if (s) s.title = title
+    manuallyRenamedIds.value.add(sessionId)
+    persistManuallyRenamed()
   }
 
   /**
@@ -456,9 +502,11 @@ export const useSessionStore = defineStore('session', () => {
         case 'sessionInfo': {
           // agent 推送的会话信息更新（session_info_update）：AI 总结标题优先于
           // zacp 本地的首条消息截取标题，实时刷新侧栏与信息面板（activeSession
-          // 由 sessions 派生，更新列表项即可，无需额外状态）
+          // 由 sessions 派生，更新列表项即可，无需额外状态）。
+          // 例外：用户手动重命名过的会话（manuallyRenamedIds 含该 id）不被 AI
+          // 标题覆盖，尊重用户命名。
           const title = msg.sessionInfo?.title
-          if (title && currentId.value !== null) {
+          if (title && currentId.value !== null && !manuallyRenamedIds.value.has(currentId.value)) {
             const s = sessions.value.find((x) => x.id === currentId.value)
             if (s) {
               s.title = title
@@ -613,6 +661,7 @@ export const useSessionStore = defineStore('session', () => {
     setConfigOption,
     createSession,
     removeSession,
+    renameSession,
     removeDraftSession,
     promoteDraftSession,
     sendViaWs,

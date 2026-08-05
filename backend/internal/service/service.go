@@ -22,6 +22,8 @@ import (
 var (
 	// ErrSessionNotFound 会话不存在或已删除（映射 404）
 	ErrSessionNotFound = errors.New("session not found")
+	// ErrInvalidArgument 客户端参数非法（空标题/超长等，映射 400）
+	ErrInvalidArgument = errors.New("invalid argument")
 	// ErrNoACPSession 会话尚未建立 ACP 连接（草稿/连接中断，映射 409）
 	ErrNoACPSession = errors.New("session has no acp session")
 )
@@ -251,6 +253,23 @@ func (s *SessionService) GetSession(id uint) (*model.Session, error) {
 		return nil, fmt.Errorf("session not found: %w", err)
 	}
 	return session, nil
+}
+
+// RenameSession 重命名会话标题（用户手动重命名，仅更新本地 DB 的 title 字段）。
+// 不触发 ACP session_info_update；若 agent 后续再推送 AI 总结标题，
+// 前端会依据「用户已手动改名」标记跳过覆盖（见 stores/session.ts）。
+func (s *SessionService) RenameSession(id uint, title string) error {
+	title = strings.TrimSpace(title)
+	if title == "" {
+		return fmt.Errorf("%w: title must not be empty", ErrInvalidArgument)
+	}
+	if len([]rune(title)) > 200 {
+		return fmt.Errorf("%w: title too long (max 200 chars)", ErrInvalidArgument)
+	}
+	if _, err := s.sessionRepo.GetByID(id); err != nil {
+		return fmt.Errorf("%w: %v", ErrSessionNotFound, err)
+	}
+	return s.sessionRepo.UpdateTitle(id, title)
 }
 
 // ListSessions 列出工作目录下的所有会话

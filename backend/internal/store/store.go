@@ -4,6 +4,7 @@ package store
 
 import (
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"time"
@@ -46,7 +47,18 @@ func New(cfg Config) (*Store, error) {
 	}
 
 	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{
-		Logger: logger.Default.LogMode(logLevel),
+		// 忽略 record not found 错误日志：新会话创建时 agent 通告（configOptions /
+		// availableCommands）先于 DB 落库到达，GetByACPSessionID 查不到会走 300ms
+		// 重试（正常分支），不必每条都刷一条日志；First 仍照常返回 ErrRecordNotFound。
+		Logger: logger.New(
+			log.New(os.Stdout, "\r\n", log.LstdFlags),
+			logger.Config{
+				SlowThreshold:             200 * time.Millisecond,
+				LogLevel:                  logLevel,
+				IgnoreRecordNotFoundError: true,
+				Colorful:                  false,
+			},
+		),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("open database %s: %w", cfg.DBPath, err)

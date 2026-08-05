@@ -65,11 +65,11 @@ const avatarClass = computed(() => {
   return AVATAR_COLORS[h % AVATAR_COLORS.length]
 })
 
-/** 工作区显示：优先 name，其次 path */
+/** 工作区显示：完整路径优先（name 兜底），过长时单行省略，title 悬浮看全文 */
 const workspaceLabel = computed(() => {
   const ws = session.value?.workspace
   if (!ws) return ''
-  return ws.name || ws.path
+  return ws.path || ws.name
 })
 
 /** 绝对时间格式化（本地时区 YYYY-MM-DD HH:mm，精确到分钟）；后端 time.Time 序列化为 ISO 8601 */
@@ -110,12 +110,17 @@ onMounted(() => {
         </n-tag>
       </div>
 
-      <!-- 工作区卡片：路径可能很长，允许换行 -->
+      <!-- 工作区卡片：展示完整路径，超出单行宽度时省略号，悬浮可看全文 -->
       <div class="flex items-start gap-2 rounded-lg bg-gray-50 px-2.5 py-2">
         <n-icon :component="FolderOutline" class="mt-0.5 shrink-0 text-base text-gray-400" />
-        <div class="min-w-0">
+        <div class="min-w-0 flex-1">
           <div class="text-xs text-gray-400">工作区</div>
-          <div class="break-all text-xs leading-5 text-gray-700">{{ workspaceLabel || '-' }}</div>
+          <div
+            class="truncate text-xs leading-5 text-gray-700"
+            :title="workspaceLabel"
+          >
+            {{ workspaceLabel || '-' }}
+          </div>
         </div>
       </div>
 

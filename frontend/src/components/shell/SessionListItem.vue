@@ -1,9 +1,9 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
-import { TrashOutline } from '@vicons/ionicons5'
-import { NIcon } from 'naive-ui'
+import { EllipsisHorizontalOutline } from '@vicons/ionicons5'
+import { useMessage, type DropdownOption } from 'naive-ui'
 import { useAgentStore } from '@/stores/agent'
 import { useAppStore } from '@/stores/app'
 import { useSessionStore } from '@/stores/session'
@@ -18,6 +18,7 @@ const router = useRouter()
 const agentStore = useAgentStore()
 const appStore = useAppStore()
 const sessionStore = useSessionStore()
+const message = useMessage()
 
 /** 当前路由是否正展示该会话（驱动高亮） */
 const isActive = computed(
@@ -45,7 +46,57 @@ function onSelect() {
   })
 }
 
-/** 删除会话；若正展示该会话则回空态 */
+// ---------- 操作菜单（hover 显示 ... 按钮，点击展开：重命名 / 删除） ----------
+
+/** 操作菜单选项：label 用函数保持 i18n 响应式 */
+const menuOptions: DropdownOption[] = [
+  { label: () => t('shell.rename'), key: 'rename' },
+  { label: () => t('shell.delete'), key: 'delete' },
+]
+
+const renameModalVisible = ref(false)
+const deleteModalVisible = ref(false)
+const renameValue = ref('')
+const renaming = ref(false)
+
+/** 操作菜单展开状态：展开期间保持 ... 按钮可见（避免移开鼠标后按钮消失） */
+const actionsVisible = ref(false)
+
+/** 操作菜单选择分发：重命名开输入弹窗，删除开确认弹窗 */
+function onMenuSelect(key: string | number) {
+  if (key === 'rename') {
+    renameValue.value = props.session.title || ''
+    renameModalVisible.value = true
+  } else if (key === 'delete') {
+    deleteModalVisible.value = true
+  }
+}
+
+/** 确认重命名：调后端 PATCH /sessions/:id，成功后 store 更新本地列表 */
+async function onRenameConfirm() {
+  const nextTitle = renameValue.value.trim()
+  if (!nextTitle) {
+    message.warning(t('shell.renameEmptyHint'))
+    return
+  }
+  if ([...nextTitle].length > 200) {
+    // 按码点计数，与后端 len([]rune) 一致（emoji 等代理对字符不会误报）
+    message.warning(t('shell.renameTooLongHint'))
+    return
+  }
+  renaming.value = true
+  try {
+    await sessionStore.renameSession(props.session.id, nextTitle)
+    renameModalVisible.value = false
+    message.success(t('shell.renameSuccess'))
+  } catch {
+    message.error(t('shell.renameFailed'))
+  } finally {
+    renaming.value = false
+  }
+}
+
+/** 删除会话（复用 store.removeSession）；若正展示该会话则回空态 */
 async function onDelete() {
   try {
     await sessionStore.removeSession(props.session.id)
@@ -53,7 +104,7 @@ async function onDelete() {
       void router.push({ name: 'home' })
     }
   } catch {
-    // 删除失败由 n-popconfirm 内部吞掉？不——上抛给全局处理（P1 简化：静默 + 控制台）
+    // 删除失败静默 + 控制台（与原有行为一致，P1 简化）
   }
 }
 </script>
@@ -80,23 +131,65 @@ async function onDelete() {
         <span class="shrink-0">{{ relativeTime }}</span>
       </span>
     </div>
-
-    <!-- hover 出现删除（确认后删除） -->
-    <n-popconfirm :positive-text="t('common.confirm')" :negative-text="t('common.cancel')" @positive-click="onDelete">
-      <template #trigger>
-        <n-button
-          quaternary
-          circle
-          size="tiny"
-          class="shrink-0 opacity-0 transition-opacity group-hover:opacity-100 focus:opacity-100"
-          @click.stop
-        >
-          <template #icon>
-            <n-icon><TrashOutline /></n-icon>
-          </template>
-        </n-button>
-      </template>
-      {{ t('shell.confirmDelete') }}
-    </n-popconfirm>
+    <!-- hover 显示 ... 按钮：点击展开操作菜单（重命名/删除）；stop 阻止冒泡切换会话 -->
+    <n-dropdown
+      trigger="click"
+      :options="menuOptions"
+      placement="bottom-end"
+      @select="onMenuSelect"
+      @update:show="(v) => (actionsVisible = v)"
+    >
+      <n-button
+        quaternary
+        size="tiny"
+        circle
+        class="shrink-0 transition-opacity"
+        :class="actionsVisible ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'"
+        aria-label="session actions"
+        @click.stop
+      >
+        <template #icon>
+          <n-icon :size="16"><EllipsisHorizontalOutline /></n-icon>
+        </template>
+      </n-button>
+    </n-dropdown>
   </div>
+
+  <!-- 重命名弹窗：预填当前标题，回车或确认按钮提交 -->
+  <n-modal
+    v-model:show="renameModalVisible"
+    preset="card"
+    :title="t('shell.renameTitle')"
+    style="width: 420px"
+  >
+    <n-input
+      v-model:value="renameValue"
+      :placeholder="t('shell.renamePlaceholder')"
+      maxlength="200"
+      clearable
+      @keydown.enter.prevent="onRenameConfirm"
+    />
+    <template #footer>
+      <n-space justify="end">
+        <n-button quaternary @click="renameModalVisible = false">
+          {{ t('common.cancel') }}
+        </n-button>
+        <n-button type="primary" :loading="renaming" @click="onRenameConfirm">
+          {{ t('common.confirm') }}
+        </n-button>
+      </n-space>
+    </template>
+  </n-modal>
+
+  <!-- 删除确认弹窗（positive-click 返回 promise 时自动 loading 并等待） -->
+  <n-modal
+    v-model:show="deleteModalVisible"
+    preset="dialog"
+    type="warning"
+    :title="t('shell.deleteTitle')"
+    :content="t('shell.confirmDelete')"
+    :positive-text="t('common.confirm')"
+    :negative-text="t('common.cancel')"
+    @positive-click="onDelete"
+  />
 </template>

@@ -210,9 +210,12 @@ func (r *SessionRepository) UpdateAvailableCommands(id uint, commandsJSON string
 		Update("available_commands", commandsJSON).Error
 }
 
-// Delete 删除会话（软删除）
+// Delete 物理删除会话。
+// 说明：消息已在 service.DeleteSession 先行物理删除，会话本身也没有任何恢复入口
+// （前端无恢复 UI），软删除只会留下无关联消息的空行，故这里直接 Unscoped 物理删除。
+// Workspace 的归档（Archived）软删除语义不受影响。
 func (r *SessionRepository) Delete(id uint) error {
-	return r.db.Delete(&model.Session{}, id).Error
+	return r.db.Unscoped().Delete(&model.Session{}, id).Error
 }
 
 // MessageRepository 消息数据访问
