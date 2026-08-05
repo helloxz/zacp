@@ -133,8 +133,8 @@ export async function uploadFiles(
   })
 }
 
-/** GET /api/v1/sessions — 最近活跃会话（侧栏数据源） */
-export async function fetchRecentSessions(limit = 50): Promise<ChatSession[]> {
+/** GET /api/v1/sessions — 最近活跃会话（侧栏数据源；后端上限 1000，渲染截断在侧栏组件层） */
+export async function fetchRecentSessions(limit = 1000): Promise<ChatSession[]> {
   const data = await http.get<{ sessions: ChatSession[] }>('/api/v1/sessions', {
     query: { limit },
   })

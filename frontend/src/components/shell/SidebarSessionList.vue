@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 import {
@@ -62,6 +62,31 @@ const groups = computed(() => {
 const hasAny = computed(
   () => sessionStore.sessions.length > 0 || sessionStore.workspaces.length > 0,
 )
+
+/**
+ * 每项目可见会话条数（渲染截断）：默认 30，点「查看更多」+30，最多 60 后按钮消失。
+ * 数据仍全量在 store（后端一次返回 ≤1000），只限制 DOM 渲染量，避免长列表压力。
+ */
+const PAGE_SIZE = 30
+const MAX_VISIBLE = PAGE_SIZE * 2
+const visibleCount = reactive<Record<number, number>>({})
+
+/** 当前项目实际渲染的会话（后端已按 updatedAt 倒序，取前 N 条即最近使用） */
+function visibleSessions(group: { workspace: Workspace; sessions: ChatSession[] }) {
+  const n = visibleCount[group.workspace.id] ?? PAGE_SIZE
+  return group.sessions.slice(0, n)
+}
+
+/** 是否显示「查看更多」：会话数超过当前可见数，且未到上限 60 */
+function canLoadMore(group: { workspace: Workspace; sessions: ChatSession[] }) {
+  const n = visibleCount[group.workspace.id] ?? PAGE_SIZE
+  return group.sessions.length > n && n < MAX_VISIBLE
+}
+
+/** 点击「查看更多」：每项目最多加 1 次（30 → 60），计数不随列表刷新重置，保持用户已展开的量 */
+function loadMore(wsId: number) {
+  visibleCount[wsId] = Math.min((visibleCount[wsId] ?? PAGE_SIZE) + PAGE_SIZE, MAX_VISIBLE)
+}
 
 /**
  * 已展开（显示会话列表）的项目 id 集合：独立开关，可同时展开多个项目。
@@ -209,13 +234,23 @@ async function onRemoveWorkspace(ws: Workspace) {
             </n-tooltip>
           </div>
         </div>
-        <!-- 项目下的会话列表（仅展开时渲染） -->
+        <!-- 项目下的会话列表（仅展开时渲染；每项目默认 30 条，超出显示「查看更多」） -->
         <template v-if="expandedIds.has(group.workspace.id)">
           <SessionListItem
-            v-for="s in group.sessions"
+            v-for="s in visibleSessions(group)"
             :key="s.id"
             :session="s"
           />
+          <!-- 查看更多：+30 条；达到 60 上限后按钮消失（最多加载 1 次） -->
+          <n-button
+            v-if="canLoadMore(group)"
+            text
+            size="small"
+            class="w-full justify-center text-xs text-slate-400 hover:text-slate-600"
+            @click="loadMore(group.workspace.id)"
+          >
+            {{ t('shell.loadMoreSessions') }}
+          </n-button>
         </template>
       </div>
     </template>

@@ -28,6 +28,7 @@ export default {
     renameFailed: 'Failed to rename session',
     deleteTitle: 'Delete session',
     confirmDelete: 'Delete this session? This cannot be undone.',
+    loadMoreSessions: 'Load more',
   },
   chat: {
     welcomeMorning: 'Good morning',

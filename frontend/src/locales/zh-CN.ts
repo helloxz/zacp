@@ -37,6 +37,7 @@ export default {
     renameFailed: '重命名失败，请重试',
     deleteTitle: '删除会话',
     confirmDelete: '确定删除该会话？删除后不可恢复。',
+    loadMoreSessions: '查看更多',
   },
   chat: {
     welcomeMorning: '早上好',

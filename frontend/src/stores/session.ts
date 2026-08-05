@@ -137,7 +137,9 @@ export const useSessionStore = defineStore('session', () => {
   }
 
   async function loadSessions() {
-    const list = await fetchRecentSessions(50)
+    // 不传 limit：用 API 默认值 1000（后端上限 1000），避免会话多时被截断；
+    // 渲染截断在侧栏组件层（每项目 30/60 条）。
+    const list = await fetchRecentSessions()
     // 保护本地草稿：后端列表按约定过滤 is_draft=true，但草稿可能正被
     // NewSessionPane 使用（loadInitial 与草稿创建/转正存在竞态窗口）。
     // 仅当后端列表没有该 id 时才补回，避免与转正后的正式记录重复。

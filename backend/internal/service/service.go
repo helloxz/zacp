@@ -278,12 +278,14 @@ func (s *SessionService) ListSessions(workspaceID uint) ([]model.Session, error)
 }
 
 // ListRecentSessions 列出最近活跃的会话（全局，侧栏数据源）。
+// 上限放宽到 1000：前端侧栏按项目只渲染 30/60 条（截断在展示层），
+// 后端一次性返回全量避免会话多时被截断丢失。
 func (s *SessionService) ListRecentSessions(limit int) ([]model.Session, error) {
 	if limit <= 0 {
 		limit = 50
 	}
-	if limit > 200 {
-		limit = 200
+	if limit > 1000 {
+		limit = 1000
 	}
 	return s.sessionRepo.ListRecent(limit)
 }
