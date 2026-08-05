@@ -4,7 +4,6 @@ import { useI18n } from 'vue-i18n'
 import { useSessionStore } from '@/stores/session'
 import { useChatScroll } from '@/composables/useChatScroll'
 import MessageItem from '@/components/chat/MessageItem.vue'
-import ToolCallCard from '@/components/chat/ToolCallCard.vue'
 import PermissionModal from '@/components/chat/PermissionModal.vue'
 
 const { t } = useI18n()
@@ -46,17 +45,8 @@ watch(
         :message="m"
       />
 
-      <!-- 实时工具调用卡片（流式 turn 中；turn.done 后由历史消息 events 渲染） -->
-      <div
-        v-if="sessionStore.activeToolCards.length"
-        class="flex flex-col gap-2"
-      >
-        <ToolCallCard
-          v-for="c in sessionStore.activeToolCards"
-          :key="c.toolId"
-          :card="c"
-        />
-      </div>
+      <!-- 实时工具调用卡片已移入 MessageItem 流式占位消息内部（AI 内容上方），
+           与历史工具卡片位置统一，避免 turn 结束后工具条跳动 -->
 
       <n-text
         v-if="!sessionStore.activeMessages.length"

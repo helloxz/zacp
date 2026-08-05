@@ -55,6 +55,18 @@ const isFinished = computed(
 )
 
 /**
+ * 是否为流式占位消息（当前 turn 正在流式且本条是列表最后一条）。
+ * 流式期间该消息 events 为空，工具卡片由 store.activeToolCards 实时渲染，
+ * 与历史 toolCards 区块互斥、位置一致（都在 AI 内容框上方），避免 tool.done
+ * 后工具条从消息下方“跳”到上方。
+ */
+const isStreamingPlaceholder = computed(
+  () =>
+    sessionStore.streaming &&
+    sessionStore.activeMessages.at(-1)?.id === props.message.id,
+)
+
+/**
  * 历史工具调用卡片：解析 assistant 消息的 events JSON（client.Event 数组），
  * 按 toolId 去重保留最后一次状态。流式期间的实时卡片由 store.activeToolCards 负责。
  */
@@ -120,6 +132,18 @@ const toolCards = computed<ToolCard[]>(() => {
     <!-- 历史工具调用卡片（assistant 消息上方，与正文同宽） -->
     <div v-if="toolCards.length" class="flex w-full flex-col gap-2">
       <ToolCallCard v-for="c in toolCards" :key="c.toolId" :card="c" />
+    </div>
+
+    <!-- 实时工具调用卡片（仅流式占位消息渲染；turn.done 后由上方历史卡片接替） -->
+    <div
+      v-if="isStreamingPlaceholder && sessionStore.activeToolCards.length"
+      class="flex w-full flex-col gap-2"
+    >
+      <ToolCallCard
+        v-for="c in sessionStore.activeToolCards"
+        :key="c.toolId"
+        :card="c"
+      />
     </div>
 
     <!-- user：右对齐气泡；assistant：markdown 全宽渲染（边框+阴影与气泡区分，样式由 incremark 主题提供） -->
