@@ -162,7 +162,7 @@ Vue 3 + Naive UI + Tailwind CSS，代码在 `frontend/`，包管理与构建一�
 GOOS=darwin GOARCH=arm64 ./scripts/pack.sh   # 指定平台
 ```
 
-- **产物**：`backend/bin/zacp-v<版本>-<GOOS>-<GOARCH>.zip`；包内为同名顶层目录（`zacp`/`zacp.exe` + `README.md` + `config.example.toml`），解压不污染客户目录
+- **产物**：`backend/bin/zacp-v<版本>-<GOOS>-<GOARCH>.zip`；包内为同名顶层目录（仅 `zacp`/`zacp.exe`），解压不污染客户目录；`config.example.toml` 已 embed 进二进制（首次启动自动生成 `~/.zacp/config.toml`），README 请在仓库 / Release 页面查看
 - **UPX 策略**：仅 linux 平台 `upx --best`（约 -73%~-75%）；macOS 因 UPX 官方 4.2.0 起禁用 macOS 支持而不压；Windows 按约定不压（规避杀软误报）
 - **版本**：与 build.sh 同一来源 `frontend/package.json`，可用 `ZACP_VERSION` 环境变量覆盖；`--skip-frontend` 可跳过前端构建（dist 已就位时）
 

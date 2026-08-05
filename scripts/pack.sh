@@ -9,9 +9,11 @@
 #   zacp-v<版本>-<GOOS>-<GOARCH>.zip
 #   包内结构（顶层目录，解压后不污染客户目录）：
 #     zacp-v<版本>-<GOOS>-<GOARCH>/
-#     ├── zacp                      （Windows 平台为 zacp.exe）
-#     ├── README.md
-#     └── config.example.toml
+#     └── zacp                      （Windows 平台为 zacp.exe）
+#
+# 说明：发布包仅含二进制。README 与 config.example.toml 不随 zip 分发——
+#   config.example.toml 已由 go:embed 打进二进制（首次启动自动生成 ~/.zacp/config.toml）；
+#   README 可在仓库 / Release 页面查看。
 #
 # 版本号单一来源：frontend/package.json 的 version 字段；
 #   可用环境变量 ZACP_VERSION 覆盖（供 CI 手动触发等场景）。
@@ -128,9 +130,7 @@ for p in $PLATFORMS; do
     fi
   fi
 
-  # 组装发布包内容：二进制 + README + 配置示例
-  cp README.md "$PKGDIR/"
-  cp backend/configs/config.example.toml "$PKGDIR/config.example.toml"
+  # 组装发布包内容：仅二进制（config.example.toml 已 embed 进二进制，见 backend/internal/web）
 
   OUT="${ROOT}/backend/bin/${DIR}.zip"
   if command -v zip >/dev/null 2>&1; then
