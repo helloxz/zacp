@@ -3,6 +3,7 @@ package handlers
 import (
 	"errors"
 	"net/http"
+	"os"
 	"strconv"
 
 	"github.com/gin-gonic/gin"
@@ -35,6 +36,20 @@ func (h *FileHandler) ListFiles(c *gin.Context) {
 	}
 
 	result, err := h.svc.ListDir(id, c.Query("path"))
+	if err != nil {
+		writeFileError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, result)
+}
+
+// ListDirectories GET /api/v1/fs/directories?path=<绝对路径>
+//
+// 新建项目弹窗的目录浏览：列出 path 下的子文件夹（仅文件夹，隐藏目录/大目录
+// 由后端过滤）。path 省略时返回 session.default_cwd 解析后的绝对路径作为初始目录。
+// 返回 { path, parent, entries }，前端据此展示面包屑与返回上级。
+func (h *FileHandler) ListDirectories(c *gin.Context) {
+	result, err := h.svc.ListDirectories(c.Query("path"))
 	if err != nil {
 		writeFileError(c, err)
 		return
@@ -149,6 +164,8 @@ func writeFileError(c *gin.Context, err error) {
 		writeError(c, http.StatusRequestEntityTooLarge, "file_too_large", "文件超过大小上限（图片 5MB / 其他 20MB）")
 	case errors.Is(err, service.ErrPathNotFound):
 		writeError(c, http.StatusNotFound, "path_not_found", "路径不存在")
+	case errors.Is(err, os.ErrPermission):
+		writeError(c, http.StatusForbidden, "permission_denied", "没有权限访问该目录")
 	default:
 		writeError(c, http.StatusInternalServerError, "file_error", "文件操作失败: "+err.Error())
 	}

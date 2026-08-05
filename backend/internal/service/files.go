@@ -64,14 +64,23 @@ var ignoredDirNames = map[string]bool{
 	"coverage":     true,
 }
 
-// FileService 提供工作区文件浏览与上传。
+// isSkippedDirName 目录名是否应过滤（隐藏目录 / 忽略的大目录）。
+// 工作区文件浏览与新建项目目录浏览共用同一过滤规则，保持一致行为。
+func isSkippedDirName(name string) bool {
+	return strings.HasPrefix(name, ".") || ignoredDirNames[name]
+}
+
+// FileService 提供工作区文件浏览与上传，以及新建项目弹窗的目录浏览。
 type FileService struct {
 	workspaceRepo *store.WorkspaceRepository
+	// defaultCwd 是 session.default_cwd（配置的 Agent 默认工作目录），
+	// 目录浏览接口 path 参数省略时的初始目录。
+	defaultCwd string
 }
 
 // NewFileService 创建文件服务。
-func NewFileService(workspaceRepo *store.WorkspaceRepository) *FileService {
-	return &FileService{workspaceRepo: workspaceRepo}
+func NewFileService(workspaceRepo *store.WorkspaceRepository, defaultCwd string) *FileService {
+	return &FileService{workspaceRepo: workspaceRepo, defaultCwd: defaultCwd}
 }
 
 // resolveInWorkspace 把相对路径 rel 安全解析为工作区内的绝对路径。
@@ -140,11 +149,12 @@ func (s *FileService) ListDir(workspaceID uint, rel string) (*model.FileListDTO,
 
 	// 相对路径统一用 `/` 分隔输出给前端（Windows 下 filepath.Join 是 `\`）
 	relSlash := filepath.ToSlash(cleanRel(rel))
-	dto := &model.FileListDTO{Path: relSlash}
+	// 空切片而非 nil：JSON 序列化为 [] 而不是 null，前端可直接 .length
+	dto := &model.FileListDTO{Path: relSlash, Entries: []model.FileEntryDTO{}}
 	for _, item := range items {
 		name := item.Name()
 		// 隐藏文件（dotfile）与忽略大目录一律不展示，避免敏感文件（.env 等）泄露到 UI
-		if strings.HasPrefix(name, ".") || ignoredDirNames[name] {
+		if isSkippedDirName(name) {
 			continue
 		}
 		entry := model.FileEntryDTO{
@@ -166,6 +176,70 @@ func (s *FileService) ListDir(workspaceID uint, rel string) (*model.FileListDTO,
 			return a.IsDir // 目录在前
 		}
 		return a.Name < b.Name
+	})
+	return dto, nil
+}
+
+// ListDirectories 列出绝对路径 dir 下的子文件夹（新建项目弹窗目录浏览用）。
+//
+// 与 ListDir 的区别：ListDir 是「workspace 安全边界内」的相对路径浏览；
+// 本方法是新建项目弹窗的「服务器任意目录」浏览入口，path 为绝对路径，
+// 不绑定 workspace。path 为空时返回 defaultCwd 解析后的绝对路径作为初始目录。
+// 只返回文件夹（IsDir），隐藏目录与 ignoredDirNames 大目录不展示（见 isSkippedDirName）。
+//
+// 安全注意：本端点可枚举服务器任意绝对路径下的子文件夹（当前无鉴权，仅本地/内网部署），
+// 若未来引入认证或收紧 CORS，应与此端点一并处理。
+func (s *FileService) ListDirectories(dir string) (*model.DirectoryListDTO, error) {
+	if dir == "" {
+		dir = s.defaultCwd
+	}
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		return nil, fmt.Errorf("resolve directory path: %w", err)
+	}
+
+	info, err := os.Stat(abs)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, ErrPathNotFound
+		}
+		return nil, fmt.Errorf("stat directory: %w", err)
+	}
+	if !info.IsDir() {
+		return nil, ErrNotDirectory
+	}
+	items, err := os.ReadDir(abs)
+	if err != nil {
+		// 无权限（EACCES）等系统错误在此包装，handler 层映射为 permission_denied
+		return nil, fmt.Errorf("read directory: %w", err)
+	}
+
+	// 根目录（/ 或 Windows 盘符根）无上级；用 parent == abs 判断（filepath.Dir("/") == "/"）
+	parent := filepath.Dir(abs)
+	if parent == abs {
+		parent = ""
+	}
+
+	// 输出路径统一用 `/` 分隔（Windows 下 filepath 是 `\`），与 ListDir 一致；
+	// 前端面包屑按 `/` 分段、创建项目时后端会再次 Abs，分隔符差异无影响。
+	// Entries 用空切片而非 nil：JSON 序列化为 [] 而不是 null，前端可直接 .length。
+	dto := &model.DirectoryListDTO{
+		Path:    filepath.ToSlash(abs),
+		Parent:  filepath.ToSlash(parent),
+		Entries: []model.DirectoryEntryDTO{},
+	}
+	for _, item := range items {
+		// 只列文件夹；隐藏目录与忽略大目录过滤
+		if !item.IsDir() || isSkippedDirName(item.Name()) {
+			continue
+		}
+		dto.Entries = append(dto.Entries, model.DirectoryEntryDTO{
+			Name: item.Name(),
+			Path: filepath.ToSlash(filepath.Join(abs, item.Name())),
+		})
+	}
+	sort.Slice(dto.Entries, func(i, j int) bool {
+		return dto.Entries[i].Name < dto.Entries[j].Name
 	})
 	return dto, nil
 }

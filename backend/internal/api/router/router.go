@@ -39,6 +39,9 @@ func New(
 		v1.POST("/workspaces/:id/files/upload", fileHandler.Upload)
 		v1.GET("/workspaces/:id/files/raw", fileHandler.RawFile)
 
+		// 目录浏览（新建项目弹窗用）：列出任意绝对路径下的子文件夹，与 workspace 无关
+		v1.GET("/fs/directories", fileHandler.ListDirectories)
+
 		// 会话管理
 		v1.POST("/sessions", sessionHandler.CreateSession)
 		v1.GET("/sessions", sessionHandler.ListRecentSessions)

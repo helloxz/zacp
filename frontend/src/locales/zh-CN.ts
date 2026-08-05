@@ -39,6 +39,11 @@ export default {
     confirmDelete: '确定删除该会话？删除后不可恢复。',
     loadMoreSessions: '查看更多',
   },
+  dirPicker: {
+    up: '返回上级目录',
+    retry: '重试',
+    empty: '该目录下没有子文件夹',
+  },
   chat: {
     welcomeMorning: '早上好',
     welcomeAfternoon: '下午好',

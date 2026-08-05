@@ -25,6 +25,7 @@ import type {
   ChatMessage,
   ChatSession,
   ConfigOption,
+  DirectoryList,
   FileEntry,
   MessagePage,
   Workspace,
@@ -72,6 +73,18 @@ export function fileRawUrl(workspaceId: number, path: string): string {
   return apiUrl(
     `/api/v1/workspaces/${workspaceId}/files/raw?path=${encodeURIComponent(path)}`,
   )
+}
+
+/**
+ * GET /api/v1/fs/directories?path=<绝对路径> — 目录浏览（新建项目弹窗用）。
+ *
+ * 列出 path 下的子文件夹（仅文件夹，隐藏目录 / node_modules 等由后端过滤）；
+ * path 省略时后端返回 session.default_cwd 解析后的绝对路径作为初始目录。
+ */
+export async function fetchDirectories(path?: string): Promise<DirectoryList> {
+  return http.get<DirectoryList>('/api/v1/fs/directories', {
+    query: { path: path || undefined },
+  })
 }
 
 /**

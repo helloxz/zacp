@@ -30,6 +30,11 @@ export default {
     confirmDelete: 'Delete this session? This cannot be undone.',
     loadMoreSessions: 'Load more',
   },
+  dirPicker: {
+    up: 'Go to parent directory',
+    retry: 'Retry',
+    empty: 'No subfolders here',
+  },
   chat: {
     welcomeMorning: 'Good morning',
     welcomeAfternoon: 'Good afternoon',

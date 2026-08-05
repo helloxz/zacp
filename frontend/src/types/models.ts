@@ -36,6 +36,24 @@ export interface FileEntry {
   mimeType?: string
 }
 
+/**
+ * 目录浏览条目（GET /api/v1/fs/directories → `{ path, parent, entries }`，仅文件夹）。
+ * path 为绝对路径，可直接作为「创建项目」路径或继续浏览的入参。
+ */
+export interface DirectoryEntry {
+  name: string
+  path: string
+}
+
+/** 目录浏览结果（新建项目弹窗数据源） */
+export interface DirectoryList {
+  /** 当前目录绝对路径 */
+  path: string
+  /** 上级目录绝对路径；根目录时为 ""（据此禁用「返回上级」） */
+  parent: string
+  entries: DirectoryEntry[]
+}
+
 /** 会话状态（后端 model.SessionStatus） */
 export type SessionStatus = 'active' | 'closed' | 'error'
 

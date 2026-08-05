@@ -66,3 +66,20 @@ type FileListDTO struct {
 	Path    string         `json:"path"` // 当前目录的相对路径（空 = 工作区根）
 	Entries []FileEntryDTO `json:"entries"`
 }
+
+// DirectoryEntryDTO 目录浏览条目（新建项目弹窗用，仅文件夹）。
+// Path 为子文件夹的绝对路径，前端可直接作为下一步浏览 / 创建项目路径。
+type DirectoryEntryDTO struct {
+	Name string `json:"name"`
+	Path string `json:"path"`
+}
+
+// DirectoryListDTO 目录浏览结果（GET /api/v1/fs/directories）。
+type DirectoryListDTO struct {
+	// Path 当前目录的绝对路径（请求 path 为空时 = session.default_cwd 解析结果）。
+	Path string `json:"path"`
+	// Parent 上级目录绝对路径；已在根目录时为 ""（前端据此禁用「返回上级」）。
+	Parent string `json:"parent"`
+	// Entries 仅子文件夹（隐藏目录与 ignoredDirNames 大目录由后端过滤）。
+	Entries []DirectoryEntryDTO `json:"entries"`
+}

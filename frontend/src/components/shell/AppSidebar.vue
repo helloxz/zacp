@@ -6,6 +6,7 @@ import { AddOutline } from '@vicons/ionicons5'
 import { NIcon, useMessage } from 'naive-ui'
 import SidebarSessionList from '@/components/shell/SidebarSessionList.vue'
 import UserFooter from '@/components/shell/UserFooter.vue'
+import DirectoryPicker from '@/components/shell/DirectoryPicker.vue'
 import { useSessionStore } from '@/stores/session'
 import { useAppStore } from '@/stores/app'
 
@@ -79,7 +80,7 @@ async function onCreateProject() {
     <UserFooter @open-settings="emit('open-settings')" />
   </aside>
 
-  <!-- 新建项目弹窗：输入项目路径 -->
+  <!-- 新建项目弹窗：目录选择器（浏览 + 手动输入双通道，路径双向同步） -->
   <n-modal
     v-model:show="showProjectModal"
     preset="dialog"
@@ -90,11 +91,7 @@ async function onCreateProject() {
     @positive-click="onCreateProject"
   >
     <div class="space-y-2 py-2">
-      <n-input
-        v-model:value="projectPath"
-        :placeholder="t('shell.newProjectPlaceholder')"
-        @keydown.enter="onCreateProject"
-      />
+      <DirectoryPicker v-model="projectPath" @submit="onCreateProject" />
       <p class="text-xs text-slate-400">{{ t('shell.newProjectHint') }}</p>
     </div>
   </n-modal>

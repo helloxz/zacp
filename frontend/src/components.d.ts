@@ -14,6 +14,7 @@ declare module 'vue' {
     AppSidebar: typeof import('./components/shell/AppSidebar.vue')['default']
     ChatPane: typeof import('./components/chat/ChatPane.vue')['default']
     Composer: typeof import('./components/chat/Composer.vue')['default']
+    DirectoryPicker: typeof import('./components/shell/DirectoryPicker.vue')['default']
     FileExplorer: typeof import('./components/files/FileExplorer.vue')['default']
     FilePanel: typeof import('./components/files/FilePanel.vue')['default']
     LocaleSwitch: typeof import('./components/LocaleSwitch.vue')['default']

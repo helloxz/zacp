@@ -116,7 +116,7 @@ func main() {
 	// 创建 Service
 	workspaceSvc := service.NewWorkspaceService(workspaceRepo)
 	sessionSvc := service.NewSessionService(workspaceRepo, sessionRepo, messageRepo, mgr, cfg.Session.DefaultCwd)
-	fileSvc := service.NewFileService(workspaceRepo)
+	fileSvc := service.NewFileService(workspaceRepo, cfg.Session.DefaultCwd)
 
 	// 创建 Handler
 	workspaceHandler := handlers.NewWorkspaceHandler(workspaceSvc)
