@@ -73,7 +73,7 @@ src/
 ├── api/           # REST 封装（P1 接线）
 ├── components/
 │   ├── chat/      # 对话区组件（ChatPane / Composer / MessageList…）
-│   └── shell/     # 壳层组件（AppSidebar / SessionList / SettingsDrawer…）
+│   └── shell/     # 壳层组件（AppSidebar / SessionList / SettingsModal…）
 ├── composables/   # 组合式函数（语言切换；WS 封装为 P2）
 ├── layouts/       # 布局（AppShell：侧栏 + 主区）
 ├── locales/       # vue-i18n 文案（zh-CN / en-US）

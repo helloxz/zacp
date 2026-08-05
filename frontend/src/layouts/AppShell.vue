@@ -3,12 +3,12 @@ import { onMounted, ref } from 'vue'
 import AppSidebar from '@/components/shell/AppSidebar.vue'
 import ChatPane from '@/components/chat/ChatPane.vue'
 import FilePanel from '@/components/files/FilePanel.vue'
-import SettingsDrawer from '@/components/shell/SettingsDrawer.vue'
+import SettingsModal from '@/components/shell/SettingsModal.vue'
 import { useAgentStore } from '@/stores/agent'
 import { useSessionStore } from '@/stores/session'
 import { acpSocket } from '@/composables/useAcpSocket'
 
-/** 设置抽屉开关（由 UserFooter 齿轮触发；壳层级状态，覆盖全屏） */
+/** 设置弹窗开关（由 UserFooter 齿轮触发；壳层级状态，覆盖全屏） */
 const settingsOpen = ref(false)
 
 /**
@@ -48,6 +48,6 @@ onMounted(() => {
     >
       <FilePanel class="h-full w-80" />
     </div>
-    <SettingsDrawer :show="settingsOpen" @update:show="settingsOpen = $event" />
+    <SettingsModal :show="settingsOpen" @update:show="settingsOpen = $event" />
   </div>
 </template>

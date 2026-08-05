@@ -15,9 +15,6 @@ export default {
     noSessions: 'No sessions yet',
     noSessionsHint: 'Click “New session” to start chatting',
     settings: 'Settings',
-    displayName: 'Display name',
-    about: 'About',
-    version: 'Version',
     rename: 'Rename',
     delete: 'Delete',
     renameTitle: 'Rename session',
@@ -76,13 +73,30 @@ export default {
   },
   settings: {
     title: 'Settings',
-    languageHint:
-      'Follows your browser language; a manual choice is remembered.',
-    displayNameLabel: 'Display name',
-    displayNamePlaceholder: 'Enter a display name',
-    displayNameHint:
-      'Stored locally in your browser (localStorage), never uploaded.',
-    aboutHint: 'ACP multi-agent web gateway',
+    close: 'Close',
+    agent: {
+      title: 'Agents',
+      desc: 'Manage the connected ACP agents',
+      comingSoon: 'Agent management is coming soon',
+      placeholder:
+        'Here you will be able to view connected agents, start/stop them, and tweak launch arguments.',
+    },
+    system: {
+      title: 'System',
+      subtitle: 'Language & personalization',
+      languageHint:
+        'Follows your browser language; a manual choice is remembered.',
+      displayNameLabel: 'Display name',
+      displayNamePlaceholder: 'Enter a display name',
+      displayNameHint:
+        'Stored locally in your browser (localStorage), never uploaded.',
+    },
+    about: {
+      title: 'About',
+      intro:
+        'An ACP-based multi-agent web gateway that connects and drives various agents through one unified interface.',
+      version: 'Version',
+    },
   },
   locale: {
     zhCN: '简体中文',

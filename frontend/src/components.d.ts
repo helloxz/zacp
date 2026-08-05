@@ -11,6 +11,8 @@ export {}
 /* prettier-ignore */
 declare module 'vue' {
   export interface GlobalComponents {
+    AboutSettings: typeof import('./components/shell/AboutSettings.vue')['default']
+    AgentSettings: typeof import('./components/shell/AgentSettings.vue')['default']
     AppSidebar: typeof import('./components/shell/AppSidebar.vue')['default']
     ChatPane: typeof import('./components/chat/ChatPane.vue')['default']
     Composer: typeof import('./components/chat/Composer.vue')['default']
@@ -23,8 +25,6 @@ declare module 'vue' {
     NButton: typeof import('naive-ui')['NButton']
     NConfigProvider: typeof import('naive-ui')['NConfigProvider']
     NDialogProvider: typeof import('naive-ui')['NDialogProvider']
-    NDrawer: typeof import('naive-ui')['NDrawer']
-    NDrawerContent: typeof import('naive-ui')['NDrawerContent']
     NDropdown: typeof import('naive-ui')['NDropdown']
     NEmpty: typeof import('naive-ui')['NEmpty']
     NewSessionPane: typeof import('./components/chat/NewSessionPane.vue')['default']
@@ -51,8 +51,9 @@ declare module 'vue' {
     RouterView: typeof import('vue-router')['RouterView']
     SessionInfo: typeof import('./components/files/SessionInfo.vue')['default']
     SessionListItem: typeof import('./components/shell/SessionListItem.vue')['default']
-    SettingsDrawer: typeof import('./components/shell/SettingsDrawer.vue')['default']
+    SettingsModal: typeof import('./components/shell/SettingsModal.vue')['default']
     SidebarSessionList: typeof import('./components/shell/SidebarSessionList.vue')['default']
+    SystemSettings: typeof import('./components/shell/SystemSettings.vue')['default']
     ToolCallCard: typeof import('./components/chat/ToolCallCard.vue')['default']
     UserFooter: typeof import('./components/shell/UserFooter.vue')['default']
     WelcomeHero: typeof import('./components/chat/WelcomeHero.vue')['default']
