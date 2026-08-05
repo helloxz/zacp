@@ -6,12 +6,19 @@
  * - 懒加载文件树（受控展开，展开时才拉取子目录）
  * - 拖拽上传：拖到目录节点 = 上传到该目录；拖到空白区 = 上传到工作区根
  * - 图片自动压缩转 webp（等比不裁剪，>5MB 降采样兜底），非图片原样直传
- * - 点击图片文件 → Naive UI 图片组件弹窗预览（走后端 raw 接口，天然受 workspace 边界保护）
+ * - 点击图片文件 → 直接调用 Naive UI n-image 原生预览（全屏遮罩+缩放工具条，
+ *   走后端 raw 接口，天然受 workspace 边界保护）
+ * - 右键节点 → 「复制名称」右键菜单（无 https 环境下用 execCommand 回退复制）
  *
  * 数据根 = 当前会话所属 workspace；无会话时用默认 workspace。
  */
-import { computed, onMounted, ref, watch, h } from 'vue'
-import { NIcon, useMessage, type TreeOption } from 'naive-ui'
+import { computed, h, nextTick, onMounted, ref, watch } from 'vue'
+import {
+  NIcon,
+  useMessage,
+  type DropdownOption,
+  type TreeOption,
+} from 'naive-ui'
 import {
   FolderOutline,
   DocumentOutline,
@@ -21,6 +28,7 @@ import {
 import { fetchFiles, fileRawUrl, uploadFiles } from '@/api'
 import type { FileEntry } from '@/types/models'
 import { useSessionStore } from '@/stores/session'
+import { copyText } from '@/utils/clipboard'
 
 /** 文件树节点：key 用相对路径（后端约定 `/` 分隔），raw 存原始条目 */
 interface FileTreeNode extends TreeOption {
@@ -55,13 +63,49 @@ const uploading = ref(false)
 const uploadProgress = ref(0)
 const uploadingName = ref('')
 
-const previewShow = ref(false)
 const previewEntry = ref<FileEntry | null>(null)
 const previewSrc = computed(() =>
   previewEntry.value && workspaceId.value
     ? fileRawUrl(workspaceId.value, previewEntry.value.path)
     : '',
 )
+/** 隐藏的 n-image anchor：负责承载预览源，程序化触发原生预览（naive-ui expose showPreview） */
+const previewImgRef = ref<{ showPreview: () => void } | null>(null)
+
+// ---------------------------------------------------------------------------
+// 右键菜单（复制名称）
+// ---------------------------------------------------------------------------
+
+const ctxMenuShow = ref(false)
+const ctxMenuX = ref(0)
+const ctxMenuY = ref(0)
+const ctxMenuEntry = ref<FileEntry | null>(null)
+const ctxOptions: DropdownOption[] = [{ key: 'copy-name', label: '复制名称' }]
+
+/** 右键节点：定位目标条目并弹出菜单（路径从节点 DOM 的 data-dir 取，与拖拽同套路） */
+function onContextMenu(e: MouseEvent) {
+  const el = (e.target as HTMLElement).closest('.n-tree-node') as HTMLElement | null
+  const dir = el?.dataset.dir
+  if (dir == null) return
+  const node = findNode(treeData.value, dir)
+  if (!node) return
+  ctxMenuEntry.value = node.raw
+  ctxMenuX.value = e.clientX
+  ctxMenuY.value = e.clientY
+  ctxMenuShow.value = true
+}
+
+async function onCtxSelect(key: string | number) {
+  ctxMenuShow.value = false
+  if (key !== 'copy-name' || !ctxMenuEntry.value) return
+  const name = ctxMenuEntry.value.name
+  const ok = await copyText(name)
+  if (ok) {
+    message.success(`已复制「${name}」`)
+  } else {
+    message.error('复制失败，请手动复制名称')
+  }
+}
 
 // ---------------------------------------------------------------------------
 // 树数据：懒加载
@@ -341,14 +385,16 @@ function renderLabel({ option }: { option: TreeOption }) {
   ])
 }
 
-/** 点击节点：图片文件 → 弹窗预览（naive n-image，可再放大） */
-function onSelect(keys: Array<string | number>) {
+/** 点击节点：图片文件 → 直接弹出 n-image 原生预览（不经过中间弹窗） */
+async function onSelect(keys: Array<string | number>) {
   if (!keys.length) return
   const node = findNode(treeData.value, String(keys[0]))
   const e = node?.raw
   if (e && !e.isDir && isImageEntry(e)) {
     previewEntry.value = e
-    previewShow.value = true
+    // 等 src 生效后再触发预览，保证预览层能取到图
+    await nextTick()
+    previewImgRef.value?.showPreview()
   }
 }
 </script>
@@ -367,7 +413,7 @@ function onSelect(keys: Array<string | number>) {
       <div class="flex items-center gap-2 px-3 pb-1">
         <n-tooltip
           class="min-w-0 flex-1"
-          placement="bottom-start"
+          placement="left"
           :theme-overrides="{
             color: '#fff',
             textColor: '#333',
@@ -395,13 +441,14 @@ function onSelect(keys: Array<string | number>) {
         </n-button>
       </div>
 
-      <!-- 文件树（拖拽目标容器） -->
+      <!-- 文件树（拖拽目标容器；右键节点弹菜单） -->
       <div
         class="min-h-0 flex-1 overflow-auto px-1"
         @dragenter.prevent
         @dragover.prevent="onDragOver"
         @dragleave="onDragLeave"
         @drop.prevent="onDrop"
+        @contextmenu.prevent="onContextMenu"
       >
         <n-tree
           block-line
@@ -444,24 +491,28 @@ function onSelect(keys: Array<string | number>) {
       </div>
     </template>
 
-    <!-- 图片预览：naive n-image 弹窗（点击图片可再放大） -->
-    <n-modal
-      v-model:show="previewShow"
-      preset="card"
-      style="width: min(86vw, 860px)"
-      :title="previewEntry?.name"
-      :bordered="false"
-      closable
-    >
-      <div class="flex max-h-[70vh] items-center justify-center overflow-auto">
-        <n-image
-          v-if="previewSrc"
-          :src="previewSrc"
-          object-fit="contain"
-          class="max-h-[68vh]"
-        />
-        <n-empty v-else description="无法预览该文件" />
-      </div>
-    </n-modal>
+    <!-- 右键菜单（manual 定位到鼠标位置） -->
+    <n-dropdown
+      trigger="manual"
+      placement="bottom-start"
+      :show="ctxMenuShow"
+      :x="ctxMenuX"
+      :y="ctxMenuY"
+      :options="ctxOptions"
+      @select="onCtxSelect"
+      @clickoutside="ctxMenuShow = false"
+    />
+
+    <!--
+      图片预览 anchor：隐藏的 n-image 承载预览源，点击图片文件时程序化调用
+      showPreview() 直接进入原生预览（全屏遮罩 + 缩放工具条）。
+      移出视口放置：预览弹层 teleport 到 body，不受 anchor 位置影响。
+    -->
+    <n-image
+      ref="previewImgRef"
+      :src="previewSrc"
+      class="pointer-events-none fixed -left-[9999px] top-0"
+      style="width: 1px; height: 1px"
+    />
   </div>
 </template>

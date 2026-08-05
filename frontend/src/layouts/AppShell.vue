@@ -11,6 +11,12 @@ import { acpSocket } from '@/composables/useAcpSocket'
 /** 设置抽屉开关（由 UserFooter 齿轮触发；壳层级状态，覆盖全屏） */
 const settingsOpen = ref(false)
 
+/**
+ * 右侧面板（信息|文件|Git）折叠状态：默认收起（不持久化）。
+ * 展开/收起按钮在会话标题栏最右侧（ChatPane 转发切换事件）。
+ */
+const rightPanelOpen = ref(false)
+
 function openSettings() {
   settingsOpen.value = true
 }
@@ -30,9 +36,18 @@ onMounted(() => {
   <div class="flex h-screen overflow-hidden bg-white">
     <AppSidebar class="shrink-0" @open-settings="openSettings" />
     <main class="flex min-w-0 flex-1 flex-col">
-      <ChatPane />
+      <ChatPane
+        :right-open="rightPanelOpen"
+        @toggle-right-panel="rightPanelOpen = !rightPanelOpen"
+      />
     </main>
-    <FilePanel class="shrink-0" />
+    <!-- 右侧面板：默认折叠；展开/收起用宽度动画（收起时不占空间） -->
+    <div
+      class="shrink-0 overflow-hidden transition-[width] duration-200"
+      :class="rightPanelOpen ? 'w-80' : 'w-0'"
+    >
+      <FilePanel class="h-full w-80" />
+    </div>
     <SettingsDrawer :show="settingsOpen" @update:show="settingsOpen = $event" />
   </div>
 </template>

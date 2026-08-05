@@ -2,6 +2,8 @@
 import { computed, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute } from 'vue-router'
+import { NIcon } from 'naive-ui'
+import { FolderOpenOutline } from '@vicons/ionicons5'
 import { useAgentStore } from '@/stores/agent'
 import { useSessionStore } from '@/stores/session'
 import { useAppStore } from '@/stores/app'
@@ -17,6 +19,10 @@ const route = useRoute()
 const agentStore = useAgentStore()
 const sessionStore = useSessionStore()
 const appStore = useAppStore()
+
+/** 右侧文件面板折叠状态（状态在 AppShell，这里只展示按钮并转发切换事件） */
+defineProps<{ rightOpen: boolean }>()
+const emit = defineEmits<{ 'toggle-right-panel': [] }>()
 
 /** 路由态：home（无项目引导）/ new（新建会话空态）/ session（已有会话） */
 const routeName = computed(() => route.name as string)
@@ -90,9 +96,9 @@ function onNewProjectFromHero() {
   <!-- 已有会话：对话列表 + bar 输入（agent 已锁定，无切换 tab） -->
   <template v-if="routeName === 'session' && current">
     <div class="flex min-h-0 flex-1 flex-col">
-      <!-- 会话头部：标题 + Agent 标签（对话后锁定，不再可切换） -->
+      <!-- 会话头部：标题 + Agent 标签（对话后锁定，不再可切换）+ 右侧面板开关 -->
       <div class="flex items-center gap-2 border-b border-slate-200 px-4 py-2.5">
-        <span class="truncate text-sm font-medium text-slate-800">
+        <span class="min-w-0 flex-1 truncate text-sm font-medium text-slate-800">
           {{ current.title || t('chat.newChatTitle') }}
         </span>
         <span
@@ -100,6 +106,19 @@ function onNewProjectFromHero() {
         >
           {{ agentNameOf(current.agentId) }}
         </span>
+        <!-- 右侧文件面板展开/收起：展开时高亮 -->
+        <n-button
+          quaternary
+          circle
+          size="small"
+          :type="rightOpen ? 'primary' : 'default'"
+          title="文件面板"
+          @click="emit('toggle-right-panel')"
+        >
+          <template #icon>
+            <n-icon><FolderOpenOutline /></n-icon>
+          </template>
+        </n-button>
       </div>
 
       <MessageList class="min-h-0 flex-1" />
