@@ -5,6 +5,25 @@ Web UI gateway for multiple **Agent Client Protocol (ACP)** agents (e.g. Pi, Rea
 - **Backend**: Go + [Gin](https://github.com/gin-gonic/gin) + [acp-go-sdk](https://github.com/coder/acp-go-sdk)
 - **Frontend**: Web UI (to be scaffolded under `frontend/`)
 
+## Install
+
+One-line install (auto-detect macOS / Linux + architecture, latest release):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/helloxz/zacp/main/install.sh | bash
+```
+
+Or download [install.sh](./install.sh) and run it locally:
+
+```bash
+bash install.sh                 # latest release, installs to ~/.local/bin
+bash install.sh -v 0.1.0        # pin a version (v prefix optional)
+bash install.sh --dir /usr/local/bin   # custom dir (usually needs sudo)
+bash install.sh --arch amd64    # override arch detection (e.g. Rosetta)
+```
+
+First run auto-creates `~/.zacp/config.toml` (see `backend/configs/config.example.toml`).
+
 ## Repository layout
 
 ```
