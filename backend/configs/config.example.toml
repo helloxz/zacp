@@ -3,7 +3,7 @@
 # 密钥/Token 不要写在这里，用环境变量注入
 
 [server]
-addr = ":8080"
+addr = ":8680"
 mode = "debug"   # debug | release
 
 [session]
@@ -11,6 +11,9 @@ mode = "debug"   # debug | release
 default_cwd = "."
 # 开发模式可设为 true 自动批准所有权限请求；生产环境必须 false
 auto_approve = false
+# 空闲回收：agent 超过该时长无活跃操作即被停止释放内存（下次使用时自动重启）
+# 0 表示禁用空闲回收；格式为 Go duration（如 "30m"、"1h"）
+idle_timeout = "30m"
 
 [database]
 # 相对路径相对于 $ZACP_HOME（默认 ~/.zacp）

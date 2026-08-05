@@ -14,6 +14,6 @@ if [[ -z "${REASONIX_BIN:-}" ]]; then
   fi
 fi
 
-export ZACP_ADDR="${ZACP_ADDR:-:8080}"
+export ZACP_ADDR="${ZACP_ADDR:-:8680}"
 echo "REASONIX_BIN=${REASONIX_BIN:-reasonix}  ZACP_ADDR=$ZACP_ADDR"
 exec go run ./cmd/server "$@"

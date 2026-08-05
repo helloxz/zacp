@@ -55,7 +55,7 @@ Vite **只把以 `VITE_` 开头的变量**暴露给客户端代码。
 本机临时覆盖（不改仓库文件）：
 
 ```bash
-echo 'VITE_API_BASE_URL=http://127.0.0.1:8080' > .env.development.local
+echo 'VITE_API_BASE_URL=http://127.0.0.1:8680' > .env.development.local
 ```
 
 ### 2.3 地址拼接工具（`src/config/env.ts`）

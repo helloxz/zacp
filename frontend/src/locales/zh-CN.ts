@@ -35,6 +35,7 @@ export default {
     welcomeEvening: '晚上好',
     welcomeSubtitle: '选择 Agent，开始新的对话',
     loadingAgent: '正在启动智能体…',
+    agentNotRunning: '未运行，点击启动',
     loadingSession: '加载会话中…',
     configUpdateFailed: '配置更新失败',
     reasoning: '思考过程',

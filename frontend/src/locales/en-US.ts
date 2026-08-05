@@ -25,6 +25,7 @@ export default {
     welcomeAfternoon: 'Good afternoon',
     welcomeEvening: 'Good evening',
     welcomeSubtitle: 'Pick an agent and workspace to start a new conversation',
+    agentNotRunning: 'Not running, click to start',
     placeholder: 'Message the agent…',
     enterHint: 'Enter to send · Shift+Enter for a new line',
     send: 'Send',

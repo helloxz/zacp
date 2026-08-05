@@ -113,6 +113,10 @@ func resolveCommand(agentID, command string) string {
 // ProviderRegistry 管理多个 Provider。
 type ProviderRegistry struct {
 	providers map[string]*Provider
+	// order 保留 config.toml 中 [[agents]] 的书写顺序（已过滤 enabled=false）。
+	// List() 按此顺序返回，保证「第一个 agent」= 配置中最顶部那个，
+	// 前端 agent 列表展示顺序也与配置一致。
+	order []string
 }
 
 // NewRegistry 从配置创建 ProviderRegistry。
@@ -130,6 +134,7 @@ func NewRegistry(agents []config.AgentConfig) (*ProviderRegistry, error) {
 			return nil, fmt.Errorf("create provider '%s': %w", cfg.ID, err)
 		}
 		registry.providers[cfg.ID] = p
+		registry.order = append(registry.order, cfg.ID)
 	}
 
 	return registry, nil
@@ -141,11 +146,7 @@ func (r *ProviderRegistry) Get(id string) (*Provider, bool) {
 	return p, ok
 }
 
-// List 返回所有已注册的 Provider ID 列表。
+// List 返回所有已注册的 Provider ID 列表（按 config.toml 书写顺序）。
 func (r *ProviderRegistry) List() []string {
-	ids := make([]string, 0, len(r.providers))
-	for id := range r.providers {
-		ids = append(ids, id)
-	}
-	return ids
+	return append([]string(nil), r.order...)
 }

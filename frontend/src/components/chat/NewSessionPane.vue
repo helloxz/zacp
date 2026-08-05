@@ -29,7 +29,7 @@ const router = useRouter()
 const agentStore = useAgentStore()
 const sessionStore = useSessionStore()
 
-/** 可用 agent 列表（含未运行项，供展示但禁用） */
+/** 可用 agent 列表（未运行项可点击，点击时按需启动对应 agent） */
 const agents = computed(() => agentStore.list)
 
 /** 当前选中的 agent id（默认第一个可用 running agent） */
@@ -64,6 +64,9 @@ async function createDraftFor(agentId: string) {
     )
     draftSession.value = session
     draftConfigOptions.value = configOptions
+    // 刷新 agent 列表：StartAgent 后 running 变 true，tab 圆点同步变绿
+    // （load 幂等；失败仅置 error，不影响草稿流程）
+    void agentStore.load()
     // 同步到 sessionStore.configOptions，使 Composer 融合输入框的下拉可复用
     sessionStore.configOptions = configOptions
     // 草稿视为当前会话：Composer 内置的 setConfigOption 用 currentId 定位后端目标会话
@@ -89,9 +92,11 @@ async function releaseDraft() {
   sessionStore.currentId = null
 }
 
-/** 切 tab：切换 agent → 释放旧草稿 → 创建新草稿 */
+/** 切 tab：切换 agent → 释放旧草稿 → 创建新草稿（未运行的 agent 在此按需启动） */
 async function onSwitchAgent(agentId: string) {
-  if (agentId === selectedAgentId.value) return
+  // 已选中且草稿存在则跳过；草稿为空（首次进入/启动失败/空闲回收后）时
+  // 点击重试，重新触发 createDraftFor → 后端幂等 StartAgent
+  if (agentId === selectedAgentId.value && draftSession.value) return
   selectedAgentId.value = agentId
   await createDraftFor(agentId)
 }
@@ -173,23 +178,30 @@ onUnmounted(() => {
         </div>
 
         <!-- Agent 选择 tab：居中显示在欢迎语下方（三个 agent）；
-             对话后路由切到 session 态，本组件卸载、tab 自然隐藏 -->
+             未运行 agent 也可点击，点击时按需启动（创建草稿会触发后端 StartAgent），
+             绿色圆点=运行中，灰色圆点=未运行；对话后路由切到 session 态，本组件卸载、tab 自然隐藏 -->
         <div class="flex items-center justify-center gap-1">
           <button
             v-for="a in agents"
             :key="a.agentId"
             type="button"
-            :disabled="!a.running"
+            :title="a.running ? a.name : t('chat.agentNotRunning')"
             :class="[
-              'shrink-0 rounded-t-md border-b-2 px-4 py-1.5 text-sm transition-colors',
+              'shrink-0 cursor-pointer rounded-t-md border-b-2 px-4 py-1.5 text-sm transition-colors',
               a.agentId === selectedAgentId
                 ? 'border-slate-800 font-medium text-slate-900'
                 : 'border-transparent text-slate-500 hover:text-slate-700',
-              !a.running ? 'cursor-not-allowed opacity-40' : 'cursor-pointer',
             ]"
             @click="onSwitchAgent(a.agentId)"
           >
-            {{ a.name }}
+            <span class="flex items-center gap-1.5">
+              <!-- 运行状态圆点：绿=运行中，灰=未运行（点击后自动启动） -->
+              <span
+                class="inline-block h-1.5 w-1.5 rounded-full"
+                :class="a.running ? 'bg-emerald-500' : 'bg-slate-300'"
+              ></span>
+              {{ a.name }}
+            </span>
           </button>
         </div>
 

@@ -72,17 +72,25 @@ func main() {
 		Registry:    registry,
 		AutoApprove: cfg.Session.AutoApprove,
 		DefaultCwd:  cfg.Session.DefaultCwd,
+		IdleTimeout: cfg.Session.IdleTimeout,
 	})
 	defer mgr.Close()
 
-	// 启动所有 enabled 的 agent
+	// 仅预启动配置中第一个（最顶部）enabled 的 agent，保证空态有可用 agent；
+	// 其余 agent 按需启动：前端切换 agent 建会话时经 service 自动拉起。
 	ctx := context.Background()
-	for _, agentID := range registry.List() {
-		if err := mgr.StartAgent(ctx, agentID); err != nil {
-			log.Warn("failed to start agent", "agent", agentID, "err", err)
+	if ids := registry.List(); len(ids) > 0 {
+		preloadID := ids[0]
+		if err := mgr.StartAgent(ctx, preloadID); err != nil {
+			log.Warn("failed to preload agent", "agent", preloadID, "err", err)
 		} else {
-			log.Info("agent started", "agent", agentID)
+			log.Info("agent preloaded", "agent", preloadID)
 		}
+	}
+	if cfg.Session.IdleTimeout > 0 {
+		log.Info("other agents start on demand", "idleTimeout", cfg.Session.IdleTimeout.String())
+	} else {
+		log.Info("other agents start on demand", "idleRecycle", "disabled")
 	}
 
 	// 创建 WebSocket Hub

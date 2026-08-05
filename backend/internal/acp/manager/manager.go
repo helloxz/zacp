@@ -28,9 +28,14 @@ type Manager struct {
 	registry    *providers.ProviderRegistry
 	autoApprove bool
 	defaultCwd  string
+	idleTimeout time.Duration
 
 	mu     sync.Mutex
 	agents map[string]*AgentConnection // agentID -> connection
+
+	// 空闲回收器控制通道；idleTimeout <= 0 时不启动
+	stopReaper chan struct{}
+	reaperDone chan struct{}
 }
 
 // Config 管理器配置。
@@ -41,6 +46,9 @@ type Config struct {
 	AutoApprove bool
 	// DefaultCwd 是默认工作目录。
 	DefaultCwd string
+	// IdleTimeout 空闲回收超时：agent 超过该时长无活跃操作（且无进行中 prompt）
+	// 即被停止以释放内存；<=0 表示禁用空闲回收。
+	IdleTimeout time.Duration
 }
 
 // New 创建 Manager（不启动任何 agent）。
@@ -51,13 +59,24 @@ func New(log *slog.Logger, cfg Config) *Manager {
 	if cfg.DefaultCwd == "" {
 		cfg.DefaultCwd = "."
 	}
-	return &Manager{
+	m := &Manager{
 		log:         log,
 		registry:    cfg.Registry,
 		autoApprove: cfg.AutoApprove,
 		defaultCwd:  cfg.DefaultCwd,
+		idleTimeout: cfg.IdleTimeout,
 		agents:      make(map[string]*AgentConnection),
 	}
+
+	// 启用空闲回收：后台定时扫描（固定 5 分钟间隔；扫描只依赖 lastUsed
+	// 时间戳，频率只影响回收延迟，最坏多等 5 分钟）。
+	if m.idleTimeout > 0 {
+		m.stopReaper = make(chan struct{})
+		m.reaperDone = make(chan struct{})
+		go m.reapLoop(m.stopReaper, m.reaperDone)
+	}
+
+	return m
 }
 
 // AgentStatus agent 运行状态。
@@ -171,6 +190,61 @@ func (m *Manager) StopAgent(agentID string) error {
 	return nil
 }
 
+// reapLoop 空闲回收主循环：固定 5 分钟扫描一次，直到 stop 关闭。
+func (m *Manager) reapLoop(stop <-chan struct{}, done chan<- struct{}) {
+	defer close(done)
+	ticker := time.NewTicker(5 * time.Minute)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-stop:
+			return
+		case <-ticker.C:
+			m.recycleIdle()
+		}
+	}
+}
+
+// recycleIdle 回收超过 idleTimeout 未活跃且当前无进行中 prompt 的 agent。
+// 回收 = 杀掉 agent 进程并移除连接；DB 中该 agent 的 session 会在下次
+// 使用时经 unknown-session 自动恢复逻辑（RecoverSession）重建。
+func (m *Manager) recycleIdle() {
+	type victim struct {
+		id   string
+		conn *AgentConnection
+	}
+
+	// 第一步：在 m.mu 持锁下「原子摘除」候选（从 map 移除并标记未启动）。
+	// 与 acquireAgent 互斥：摘除后新的 Prompt 只能按需重启新进程，
+	// 绝不会拿到即将被杀的连接（消除“prompt 进行中被回收”的竞态窗口）。
+	var victims []victim
+	m.mu.Lock()
+	now := time.Now()
+	for id, conn := range m.agents {
+		conn.mu.Lock()
+		if conn.started && conn.activePrompts == 0 && now.Sub(conn.lastUsed) > m.idleTimeout {
+			conn.started = false
+			victims = append(victims, victim{id: id, conn: conn})
+		}
+		conn.mu.Unlock()
+	}
+	for _, v := range victims {
+		delete(m.agents, v.id)
+	}
+	m.mu.Unlock()
+
+	// 第二步：摘除后再真正杀进程（不持锁，避免长时间阻塞其它操作）。
+	// 注：摘除与杀进程之间，acquireAgent 可能已按需启动新进程，
+	// 新旧进程会短暂并存（stdio 连接无端口冲突，旧进程关闭后即消失）。
+	for _, v := range victims {
+		if err := v.conn.Close(); err != nil {
+			m.log.Warn("failed to recycle idle agent", "agent", v.id, "err", err)
+			continue
+		}
+		m.log.Info("recycled idle agent", "agent", v.id, "idleTimeout", m.idleTimeout.String())
+	}
+}
+
 // CreateSession 在指定 agent 上创建新 session，返回 session ID 与 agent 下发的配置项
 // （模型/思考强度/mode 等，来自 session/new 响应的 configOptions）。
 func (m *Manager) CreateSession(ctx context.Context, agentID, cwd string) (string, []acp.SessionConfigOption, error) {
@@ -269,15 +343,58 @@ func (m *Manager) RecoverSession(ctx context.Context, agentID, oldAcpID, cwd str
 	return string(newID), true, nil
 }
 
+// acquireAgent 获取 agent 连接并将本次调用计入活跃（activePrompts+1）。
+// 与空闲回收器互斥的关键：取连接与活跃标记在同一把 m.mu 持锁下完成，
+// 回收器也在持锁下原子摘除，二者不会交错——要么本调用先标记活跃使
+// 回收器跳过，要么回收器先摘除使本调用走按需重启，不存在拿到半死连接。
+func (m *Manager) acquireAgent(ctx context.Context, agentID string) (*AgentConnection, error) {
+	for attempt := 0; attempt < 2; attempt++ {
+		m.mu.Lock()
+		if conn, ok := m.agents[agentID]; ok {
+			// started 必须持 conn.mu 读：cmd.Wait goroutine 只持 conn.mu 写它
+			conn.mu.Lock()
+			running := conn.started
+			if running {
+				conn.activePrompts++
+				conn.lastUsed = time.Now()
+			}
+			conn.mu.Unlock()
+			if running {
+				m.mu.Unlock()
+				return conn, nil
+			}
+		}
+		m.mu.Unlock()
+
+		if attempt == 0 {
+			// 未启动（含刚被回收）：按需启动后重试一次。
+			if err := m.StartAgent(ctx, agentID); err != nil {
+				return nil, err
+			}
+			continue
+		}
+		return nil, fmt.Errorf("agent '%s' unavailable after start", agentID)
+	}
+	return nil, fmt.Errorf("agent '%s' unavailable", agentID)
+}
+
+// releaseAgent 释放 acquireAgent 取得的活跃标记。
+func (m *Manager) releaseAgent(conn *AgentConnection) {
+	conn.mu.Lock()
+	conn.activePrompts--
+	conn.lastUsed = time.Now()
+	conn.mu.Unlock()
+}
+
 // Prompt 向指定 session 发送消息。
 func (m *Manager) Prompt(ctx context.Context, agentID, sessionID, message string) (*PromptResult, error) {
-	m.mu.Lock()
-	conn, exists := m.agents[agentID]
-	m.mu.Unlock()
-
-	if !exists {
-		return nil, fmt.Errorf("agent '%s' not started", agentID)
+	// 兜底按需启动：空闲回收后用户可能持有旧引用直接发消息，
+	// 此时 agent 进程已停，acquireAgent 会自动重启（已启动时为幂等 no-op）。
+	conn, err := m.acquireAgent(ctx, agentID)
+	if err != nil {
+		return nil, err
 	}
+	defer m.releaseAgent(conn)
 
 	return conn.Prompt(ctx, acp.SessionId(sessionID), message)
 }
@@ -310,10 +427,17 @@ func (m *Manager) CloseSession(ctx context.Context, agentID, sessionID string) e
 	return conn.CloseSession(ctx, acp.SessionId(sessionID))
 }
 
-// Close 关闭所有 agent 连接。
+// Close 停止空闲回收器并关闭所有 agent 连接。
 func (m *Manager) Close() error {
 	m.mu.Lock()
-	defer m.mu.Unlock()
+	// 先发停止信号：回收器可能正阻塞在 m.mu 上，若持锁等待 reaperDone
+	// 会死锁，因此 stop 信号必须在持锁期间发出，等锁释放后回收器才能退出。
+	if m.stopReaper != nil {
+		close(m.stopReaper)
+		m.stopReaper = nil
+	}
+	reaperDone := m.reaperDone
+	m.reaperDone = nil
 
 	var errs []error
 	for id, conn := range m.agents {
@@ -322,6 +446,12 @@ func (m *Manager) Close() error {
 		}
 	}
 	m.agents = make(map[string]*AgentConnection)
+	m.mu.Unlock()
+
+	// 锁已释放，此时等待回收器退出不会死锁
+	if reaperDone != nil {
+		<-reaperDone
+	}
 
 	if len(errs) > 0 {
 		return fmt.Errorf("close errors: %v", errs)
@@ -348,14 +478,18 @@ type AgentConnection struct {
 	provider *providers.Provider
 	bridge   *acpclient.Bridge
 
-	mu            sync.Mutex
-	cmd           *exec.Cmd
-	conn          *acp.ClientSideConnection
-	stdin         io.WriteCloser
+	mu             sync.Mutex
+	cmd            *exec.Cmd
+	conn           *acp.ClientSideConnection
+	stdin          io.WriteCloser
 	currentSession *SessionState
-	started       bool
-	procCancel    context.CancelFunc
-	promptMu      sync.Mutex // 序列化 prompt 调用
+	started        bool
+	procCancel     context.CancelFunc
+	promptMu       sync.Mutex // 序列化 prompt 调用
+
+	// 空闲回收用：lastUsed 为最后一次活跃操作时间，activePrompts 为进行中的 prompt 数
+	lastUsed      time.Time
+	activePrompts int
 }
 
 // SessionState 单个 session 的状态。
@@ -374,6 +508,8 @@ func NewAgentConnection(log *slog.Logger, provider *providers.Provider, autoAppr
 		log:      log,
 		provider: provider,
 		bridge:   acpclient.New(log, autoApprove),
+		// 初始视为活跃：刚启动的连接不应被立即回收
+		lastUsed: time.Now(),
 	}
 }
 
@@ -468,6 +604,10 @@ func (c *AgentConnection) CreateSession(ctx context.Context, cwd string) (acp.Se
 		return "", nil, fmt.Errorf("agent not started")
 	}
 
+	// 会话创建属于活跃操作：先刷新空闲计时再开始耗时操作，
+	// 避免长耗时创建过程中被空闲回收器摘除
+	c.lastUsed = time.Now()
+
 	sess, err := c.conn.NewSession(ctx, acp.NewSessionRequest{
 		Cwd:        cwd,
 		McpServers: []acp.McpServer{},
@@ -494,6 +634,9 @@ func (c *AgentConnection) LoadSession(ctx context.Context, sessionID acp.Session
 	if !c.started || c.conn == nil {
 		return fmt.Errorf("agent not started")
 	}
+
+	// 会话恢复属于活跃操作：先刷新空闲计时再开始耗时操作
+	c.lastUsed = time.Now()
 
 	_, err := c.conn.LoadSession(ctx, acp.LoadSessionRequest{
 		SessionId: sessionID,
@@ -595,6 +738,9 @@ func (c *AgentConnection) SetSessionConfigOption(ctx context.Context, sessionID,
 		return fmt.Errorf("agent not started")
 	}
 
+	// 配置切换属于活跃操作，刷新空闲计时
+	c.lastUsed = time.Now()
+
 	_, err := c.conn.SetSessionConfigOption(ctx, acp.SetSessionConfigOptionRequest{
 		ValueId: &acp.SetSessionConfigOptionValueId{
 			SessionId: acp.SessionId(sessionID),
@@ -616,6 +762,9 @@ func (c *AgentConnection) SetSessionConfigOptionBoolean(ctx context.Context, ses
 	if !c.started || c.conn == nil {
 		return fmt.Errorf("agent not started")
 	}
+
+	// 配置切换属于活跃操作，刷新空闲计时
+	c.lastUsed = time.Now()
 
 	_, err := c.conn.SetSessionConfigOption(ctx, acp.SetSessionConfigOptionRequest{
 		Boolean: &acp.SetSessionConfigOptionBoolean{

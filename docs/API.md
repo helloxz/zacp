@@ -531,7 +531,7 @@ ws://localhost:8680/api/v1/ws
 
 ```toml
 [server]
-addr = ":8080"
+addr = ":8680"
 
 [session]
 default_cwd = "."

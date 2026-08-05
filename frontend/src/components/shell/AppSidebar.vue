@@ -64,8 +64,8 @@ async function onCreateProject() {
 </script>
 
 <template>
-  <!-- 固定宽度侧栏（260px，列表常驻展示，不再支持折叠） -->
-  <aside class="flex w-[260px] flex-col border-r border-slate-200 bg-slate-50">
+  <!-- 固定宽度侧栏（300px，列表常驻展示，不再支持折叠） -->
+  <aside class="flex w-[300px] flex-col border-r border-slate-200 bg-slate-50">
     <div class="flex items-center gap-1 p-3">
       <n-button block secondary class="flex-1" @click="onNewProject">
         <template #icon>

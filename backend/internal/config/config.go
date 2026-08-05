@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/spf13/viper"
 )
@@ -31,6 +32,9 @@ type SessionConfig struct {
 	DefaultCwd string `mapstructure:"default_cwd"`
 	// AutoApprove 是否自动批准 Agent 权限请求（开发模式用）。
 	AutoApprove bool `mapstructure:"auto_approve"`
+	// IdleTimeout 空闲回收超时：agent 超过该时长无活跃操作（无进行中 prompt）
+	// 且无未回收条件时会被停掉释放内存；0 表示禁用空闲回收。
+	IdleTimeout time.Duration `mapstructure:"idle_timeout"`
 }
 
 // DatabaseConfig 数据库配置。
@@ -56,12 +60,13 @@ type AgentConfig struct {
 func DefaultConfig() *Config {
 	return &Config{
 		Server: ServerConfig{
-			Addr: ":8080",
+			Addr: ":8680",
 			Mode: "debug",
 		},
 		Session: SessionConfig{
 			DefaultCwd:  ".",
 			AutoApprove: false,
+			IdleTimeout: 30 * time.Minute,
 		},
 		Database: DatabaseConfig{
 			Path: "data/zacp.db",
@@ -139,6 +144,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("server.mode", "debug")
 	v.SetDefault("session.default_cwd", ".")
 	v.SetDefault("session.auto_approve", false)
+	v.SetDefault("session.idle_timeout", "30m")
 	v.SetDefault("database.path", "data/zacp.db")
 }
 

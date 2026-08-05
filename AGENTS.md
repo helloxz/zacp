@@ -218,12 +218,13 @@ cmd/server  →  api (router/handlers)  →  service  →  acp/manager|client|pr
 
 ```toml
 [server]
-addr = ":8080"
+addr = ":8680"
 mode = "debug"   # debug | release
 
 [session]
 default_cwd = "."          # Agent 工作区，不是 ZACP_HOME
 auto_approve = false       # 生产默认 false；开发可 true
+idle_timeout = "30m"       # 空闲回收超时；0 禁用（agent 闲置超时后自动停止释放内存）
 
 [database]
 # 相对路径相对于 $ZACP_HOME；默认 data/zacp.db
@@ -306,7 +307,7 @@ cd backend && go run ./cmd/server
 ./scripts/dev-backend.sh
 
 # 健康检查
-curl http://127.0.0.1:8080/healthz
+curl http://127.0.0.1:8680/healthz
 
 # 增加依赖（在 backend 目录）
 cd backend
@@ -327,7 +328,7 @@ bun run build
 ```
 
 
-默认后端监听端口：**8080**（后续以配置文件为准）。
+默认后端监听端口：**8680**（后续以配置文件为准）。
 
 ---
 
@@ -481,6 +482,7 @@ bun run build
 - 选型文档：WebSocket（`coder/websocket`）、配置（TOML + Viper + **`~/.zacp`**）、数据库（SQLite + GORM + 纯 Go 驱动 + WAL + 迁移）
 - 前端选型：**Vue 3 + Naive UI + Tailwind CSS**；包管理/运行 **一律 Bun**
 - 编码约束：可维护性 / 复用拆分 / 适度性能
+- **Agent 生命周期**：启动时仅预加载配置中第一个（最顶部）enabled 的 agent；其余按需启动（前端切 agent 建会话时经 `service` 自动拉起）；`session.idle_timeout` 空闲回收（默认 30m，0 禁用），回收后经 unknown-session 自动恢复
 
 ---
 

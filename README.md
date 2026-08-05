@@ -58,11 +58,11 @@ cd backend && go run ./cmd/chat
 
 ```bash
 ./scripts/demo-api.sh
-# 默认监听 :8080
+# 默认监听 :8680
 
-curl -s http://127.0.0.1:8080/healthz
+curl -s http://127.0.0.1:8680/healthz
 
-curl -s http://127.0.0.1:8080/api/v1/chat \
+curl -s http://127.0.0.1:8680/api/v1/chat \
   -H 'Content-Type: application/json' \
   -d '{"message":"你好，用一句话介绍你自己"}'
 ```
@@ -75,7 +75,7 @@ curl -s http://127.0.0.1:8080/api/v1/chat \
 |-------------|------|
 | `REASONIX_BIN` / `-command` | reasonix 二进制路径 |
 | `ZACP_CWD` / `-cwd` | Agent 工作目录 |
-| `ZACP_ADDR` / `-addr` | HTTP 监听地址（默认 `:8080`） |
+| `ZACP_ADDR` / `-addr` | HTTP 监听地址（默认 `:8680`） |
 | `-yolo` | 自动批准工具权限（默认 true） |
 
 ## Backend quick start
@@ -83,7 +83,7 @@ curl -s http://127.0.0.1:8080/api/v1/chat \
 ```bash
 cd backend
 go run ./cmd/server
-# health: curl http://127.0.0.1:8080/healthz
+# health: curl http://127.0.0.1:8680/healthz
 ```
 
 Dependencies already pinned in `go.mod`:
