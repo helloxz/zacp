@@ -22,29 +22,36 @@ function select(optionId: string) {
     :style="{ width: '420px', maxWidth: 'calc(100vw - 32px)' }"
   >
     <div v-if="sessionStore.pendingPermission" class="flex flex-col gap-4">
-      <!-- 工具调用信息 -->
-      <div class="rounded-lg bg-slate-50 px-3 py-2.5 text-sm">
-        <p class="truncate font-medium text-slate-800">
+      <!-- 工具调用信息：完整展示详情（长文本换行），内容过多时区域内滚动 -->
+      <div
+        class="max-h-48 overflow-y-auto rounded-lg bg-slate-50 px-3 py-2.5 text-sm"
+      >
+        <p class="font-medium break-all whitespace-pre-wrap text-slate-800">
           {{
             sessionStore.pendingPermission.toolCall?.title ||
             t('permission.unknownTool')
           }}
         </p>
-        <p class="mt-0.5 truncate text-xs text-slate-400">
+        <p
+          v-if="sessionStore.pendingPermission.toolCall?.toolCallId"
+          class="mt-0.5 break-all whitespace-pre-wrap text-xs text-slate-400"
+        >
           {{ sessionStore.pendingPermission.toolCall?.toolCallId }}
         </p>
       </div>
 
-      <!-- 选项（后端 Agent 提供 label，无需 i18n） -->
+      <!-- 选项（后端 Agent 提供 label，无需 i18n）：文本过长时按钮内省略号，悬浮可看全文 -->
       <div class="flex flex-col gap-2">
         <n-button
           v-for="opt in sessionStore.pendingPermission.options"
           :key="opt.optionId"
+          block
           type="primary"
           ghost
+          :title="opt.name"
           @click="select(opt.optionId)"
         >
-          {{ opt.name }}
+          <span class="block w-full truncate">{{ opt.name }}</span>
         </n-button>
       </div>
 

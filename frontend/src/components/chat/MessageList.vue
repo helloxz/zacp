@@ -23,14 +23,33 @@ const messageTick = computed(
     `${sessionStore.activeMessages.length}:${sessionStore.activeMessages.at(-1)?.content.length ?? 0}:${sessionStore.activeMessages.at(-1)?.reasoning?.length ?? 0}`,
 )
 
+/**
+ * 切换会话待吸附标记：消息历史是异步加载的（loadMessages 完成后才渲染），
+ * currentId 变化时直接滚动往往发生在消息渲染前（空列表），需等列表变化后再贴底。
+ */
+let pendingSnapToBottom = false
+
 watch(messageTick, () => {
-  void nextTick(followIfAtBottom)
+  void nextTick(() => {
+    if (pendingSnapToBottom) {
+      // 新会话消息渲染完成：无条件贴底，并复位标记（之后恢复「贴底才跟随」策略）
+      pendingSnapToBottom = false
+      scrollToBottom()
+    } else {
+      followIfAtBottom()
+    }
+  })
 })
 
-/** 切换会话时直接回到底部 */
+/** 切换会话：先尝试立即贴底（缓存命中时本 tick 已渲染），并标记等待异步消息加载 */
 watch(
   () => sessionStore.currentId,
-  () => {
+  (id) => {
+    if (id === null) {
+      pendingSnapToBottom = false
+      return
+    }
+    pendingSnapToBottom = true
     void nextTick(() => scrollToBottom())
   },
 )
