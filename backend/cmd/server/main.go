@@ -19,6 +19,7 @@ import (
 	"github.com/zacp/zacp/internal/config"
 	"github.com/zacp/zacp/internal/service"
 	"github.com/zacp/zacp/internal/store"
+	"github.com/zacp/zacp/internal/version"
 	"github.com/zacp/zacp/internal/ws"
 )
 
@@ -30,15 +31,16 @@ func main() {
 	addr := flag.String("addr", "", "HTTP listen address (IP:PORT); fallback: ZACP_ADDR env -> config server.addr -> :8680")
 	dataDir := flag.String("data-dir", "", "ZACP_DATA state directory; fallback: ZACP_DATA env -> ~/.zacp")
 	configPath := flag.String("config", envOr("ZACP_CONFIG", ""), "Config file path (default: $ZACP_DATA/config.toml)")
+	showVersion := flag.Bool("version", false, "Print version info and exit")
 
 	// 自定义 --help/-h 输出（Go flag 包内置支持 -h/--help，但缺省输出较简略）：
 	// 用英文写明各参数的回退链、优先级与示例，便于命令行直接查看。
 	flag.CommandLine.Usage = func() {
 		out := flag.CommandLine.Output()
-		fmt.Fprintf(out, `zacp-server - ACP (Agent Client Protocol) multi-agent web gateway
+		fmt.Fprintf(out, `zacp - ACP (Agent Client Protocol) multi-agent web gateway
 
 Usage:
-  zacp-server [flags]
+  zacp [flags]
 
 Flags:
   -addr string
@@ -52,17 +54,25 @@ Flags:
         Fallback: --data-dir > ZACP_DATA env > ~/.zacp
   -h, -help
         Show this help and exit.
+  -version
+        Print version info (version, commit, build time) and exit.
 
 Precedence (high -> low): command-line flags > ZACP_* env vars > TOML config > built-in defaults.
 
 Examples:
-  zacp-server                                     # listen :8680, state in ~/.zacp
-  zacp-server --addr 127.0.0.1:9000               # listen on loopback port 9000
-  zacp-server --data-dir /var/lib/zacp --config /etc/zacp/config.toml
+  zacp                                     # listen :8680, state in ~/.zacp
+  zacp --addr 127.0.0.1:9000               # listen on loopback port 9000
+  zacp --data-dir /var/lib/zacp --config /etc/zacp/config.toml
 
 `)
 	}
 	flag.Parse()
+
+	// --version 仅打印版本信息后退出，不初始化任何资源（不需要 ZACP_DATA/数据库）
+	if *showVersion {
+		fmt.Println(version.String())
+		os.Exit(0)
+	}
 
 	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
 

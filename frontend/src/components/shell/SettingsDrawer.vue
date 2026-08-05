@@ -1,11 +1,23 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useAppStore } from '@/stores/app'
+import { fetchVersion } from '@/api'
 import LocaleSwitch from '@/components/LocaleSwitch.vue'
 
-/** 版本占位（P0；后续可由构建注入 import.meta.env） */
-const APP_VERSION = '0.0.0'
+/**
+ * 服务端版本号：打开设置抽屉时从 GET /api/v1/version 拉取（构建时注入），
+ * 失败时显示 unknown 而不阻塞抽屉（dev 模式 / 后端未就绪的降级）。
+ */
+const serverVersion = ref('unknown')
+onMounted(async () => {
+  try {
+    const info = await fetchVersion()
+    serverVersion.value = info.version
+  } catch {
+    serverVersion.value = 'unknown'
+  }
+})
 
 const props = defineProps<{ show: boolean }>()
 const emit = defineEmits<{ (e: 'update:show', v: boolean): void }>()
@@ -63,7 +75,7 @@ function onNameChange() {
             {{ t('common.appName') }} · {{ t('settings.aboutHint') }}
           </p>
           <p class="text-xs text-slate-400">
-            {{ t('shell.version') }} {{ APP_VERSION }}
+            {{ t('shell.version') }} v{{ serverVersion }}
           </p>
         </section>
       </div>

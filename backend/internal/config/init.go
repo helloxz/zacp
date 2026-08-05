@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"github.com/zacp/zacp/internal/web"
 )
 
 // EnsureHomeDir 确保 $ZACP_DATA 目录存在，返回绝对路径。
@@ -49,35 +51,14 @@ func EnsureHomeDir(homeDir string) (string, error) {
 	return absPath, nil
 }
 
-// createDefaultConfig 从内嵌的示例配置创建默认配置文件。
+// createDefaultConfig 从内嵌的示例配置（backend/internal/web/config.example.toml，
+// 由 scripts/build.sh 从 backend/configs/config.example.toml 同步）创建默认配置文件。
 func createDefaultConfig(configPath string) error {
-	content := `# ZACP 配置文件
-# 详细配置说明请参考 backend/configs/config.example.toml
-
-[server]
-# 监听地址（IP:PORT；":8680" 表示所有网卡）。
-# 优先级：--addr 命令行 > ZACP_ADDR 环境变量 > 本配置 > 默认 :8680
-addr = ":8680"
-# debug | release；优先级：GIN_MODE 环境变量 > 本配置 > 默认 debug
-mode = "debug"
-
-[session]
-default_cwd = "."          # Agent 默认工作目录
-auto_approve = false       # 生产环境建议 false，开发调试可设为 true
-
-[database]
-# 数据库路径，相对于 $ZACP_DATA
-path = "data/zacp.db"
-
-# Agent 配置示例（请根据实际情况修改）
-# [[agents]]
-# id = "reasonix"
-# name = "Reasonix"
-# enabled = true
-# command = "reasonix"
-# args = ["--acp"]
-`
-	return os.WriteFile(configPath, []byte(content), 0600)
+	content, err := web.ExampleConfig()
+	if err != nil {
+		return fmt.Errorf("read embedded example config: %w", err)
+	}
+	return os.WriteFile(configPath, content, 0600)
 }
 
 // EnsureDataDir 确保数据目录存在，返回绝对路径。

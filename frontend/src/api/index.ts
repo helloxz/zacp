@@ -28,8 +28,14 @@ import type {
   DirectoryList,
   FileEntry,
   MessagePage,
+  VersionInfo,
   Workspace,
 } from '@/types/models'
+
+/** GET /api/v1/version — 服务端构建版本信息（设置页展示） */
+export async function fetchVersion(): Promise<VersionInfo> {
+  return http.get<VersionInfo>('/api/v1/version')
+}
 
 /** GET /api/v1/agents — Agent 状态列表 */
 export async function fetchAgents(): Promise<Agent[]> {

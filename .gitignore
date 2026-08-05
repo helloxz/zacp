@@ -21,6 +21,10 @@ backend/data/
 .env.*
 !.env.example
 
+# Embedded frontend build output (refreshed by scripts/build.sh from frontend/dist; keep .gitkeep placeholder)
+backend/internal/web/dist/*
+!backend/internal/web/dist/.gitkeep
+
 # Node / frontend (when scaffolded; package manager is Bun)
 frontend/node_modules/
 frontend/dist/

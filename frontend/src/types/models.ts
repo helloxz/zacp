@@ -3,6 +3,13 @@
  * 后端变更时同步此处，避免静默字段漂移。
  */
 
+/** 服务端版本信息（GET /api/v1/version；由构建时 -ldflags 注入，来源 frontend/package.json） */
+export interface VersionInfo {
+  version: string
+  commit: string
+  buildTime: string
+}
+
 /** Agent 状态（GET /api/v1/agents → `{ agents: AgentStatus[] }`） */
 export interface Agent {
   agentId: string

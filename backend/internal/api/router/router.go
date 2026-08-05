@@ -1,10 +1,14 @@
 package router
 
 import (
+	"net/http"
+	"strings"
+
 	"github.com/gin-gonic/gin"
 
 	"github.com/zacp/zacp/internal/api/handlers"
 	"github.com/zacp/zacp/internal/api/middleware"
+	"github.com/zacp/zacp/internal/web"
 	"github.com/zacp/zacp/internal/ws"
 )
 
@@ -68,6 +72,44 @@ func New(
 		// WebSocket 连接
 		v1.GET("/ws", func(c *gin.Context) {
 			wsHandler.ServeHTTP(c.Writer, c.Request, eventBridge)
+		})
+
+		// 版本信息（构建时注入，前端设置页展示用）
+		v1.GET("/version", handlers.GetVersion)
+	}
+
+	// 嵌入前端产物时注册静态资源 + SPA fallback（未运行 scripts/build.sh 时跳过，
+	// dev 模式由 vite dev server 独立承担，此处保持 gin 默认 404）。
+	if web.StaticEnabled() {
+		staticFS := web.StaticFS()
+		r.NoRoute(func(c *gin.Context) {
+			p := strings.TrimPrefix(c.Request.URL.Path, "/")
+
+			// API 路径未命中：返回 JSON 404，不能回 HTML（前端依赖错误结构统一解析）
+			if p == "api" || strings.HasPrefix(p, "api/") {
+				c.JSON(http.StatusNotFound, gin.H{
+					"error": gin.H{"code": "not_found", "message": "API endpoint not found: " + c.Request.URL.Path},
+				})
+				return
+			}
+
+			// 静态资源（assets/*、favicon 等）存在则直接提供，不走 SPA fallback
+			if f, err := staticFS.Open(p); err == nil {
+				f.Close()
+				http.ServeFileFS(c.Writer, c.Request, staticFS, p)
+				return
+			}
+
+			// SPA fallback：前端为 history 路由，所有未匹配页面路径一律回 index.html，
+			// 由前端 vue-router 自行解析（刷新 /settings 等深链时仍能正确渲染）
+			idx, err := web.IndexHTML()
+			if err != nil {
+				c.JSON(http.StatusNotFound, gin.H{
+					"error": gin.H{"code": "not_found", "message": "frontend not embedded, run scripts/build.sh"},
+				})
+				return
+			}
+			c.Data(http.StatusOK, "text/html; charset=utf-8", idx)
 		})
 	}
 	return r

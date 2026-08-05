@@ -306,6 +306,12 @@ cd backend && go run ./cmd/server
 # 或
 ./scripts/dev-backend.sh
 
+# 一键构建单二进制（bun 编译前端 → embed 进后端；包名带版本号）
+./scripts/build.sh
+
+# 查看版本（构建注入；版本号来源 frontend/package.json）
+cd backend && ./bin/zacp-v* --version 2>/dev/null || go run ./cmd/server -version
+
 # 健康检查
 curl http://127.0.0.1:8680/healthz
 
@@ -483,6 +489,7 @@ bun run build
 - 前端选型：**Vue 3 + Naive UI + Tailwind CSS**；包管理/运行 **一律 Bun**
 - 编码约束：可维护性 / 复用拆分 / 适度性能
 - **Agent 生命周期**：启动时仅预加载配置中第一个（最顶部）enabled 的 agent；其余按需启动（前端切 agent 建会话时经 `service` 自动拉起）；`session.idle_timeout` 空闲回收（默认 30m，0 禁用），回收后经 unknown-session 自动恢复
+- **构建 / 版本**：`scripts/build.sh` 一键产出单二进制（前端产物 + 配置示例经 `backend/internal/web` embed 打包，`dist/` 以 `.gitkeep` 占位保证裸 `go build` 可编译）；版本号单一来源 `frontend/package.json` 的 `version`，构建时 `-ldflags` 注入 `internal/version`，驱动 `--version`、`GET /api/v1/version` 与前端设置页显示；`--version` 不初始化任何资源；未 embed 前端时 NoRoute 跳过，`/api/*` 404 保持 JSON、静态资源正常提供、其余路径 SPA fallback 到首页
 
 ---
 

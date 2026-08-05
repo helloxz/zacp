@@ -113,7 +113,25 @@ Protocol reference: https://agentclientprotocol.com
 
 ## Frontend
 
-Placeholder only. Scaffold your preferred stack (React / Vue / Svelte, etc.) under `frontend/` when ready.
+Vue 3 + Naive UI + Tailwind CSS，代码在 `frontend/`，包管理与构建一律使用 [Bun](https://bun.sh)（`bun install` / `bun run dev` / `bun run build`）。
+
+## Build & release（单二进制）
+
+```bash
+./scripts/build.sh
+```
+
+一键构建，产出**单一二进制**（前端产物 + 配置示例全部打包进可执行文件）：
+
+- **前端**：`bun install && bun run build`（产物 `frontend/dist`）
+- **打包**：前端产物与配置示例（`backend/configs/config.example.toml`）由 `scripts/build.sh` 拷入 `backend/internal/web/` 后经 `go:embed` 打进后端；未运行 build.sh 时（裸 `go build` / dev 模式）后端自动跳过静态路由，前端由 vite dev server（:8681）独立提供
+- **产物**：`backend/bin/zacp-v<版本>-<GOOS>-<GOARCH>`（可用 `GOOS`/`GOARCH` 环境变量交叉编译；Windows 追加 `.exe`）
+- **版本号单一来源**：`frontend/package.json` 的 `version` 字段（发布时手动修改），构建时经 `-ldflags` 注入后端 `internal/version`，同时驱动：
+  - 二进制包名
+  - `zacp --version`（命令行查看版本）
+  - `GET /api/v1/version`（前端设置页展示，不再硬编码）
+
+后端启动后访问 `http://<host>:8680/` 即可使用内置 Web UI；未匹配的 API 路径返回 JSON 404，其余路径（history 路由深链）回首页。
 
 ## Scripts & deploy
 
