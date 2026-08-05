@@ -51,3 +51,18 @@ type PermissionOptionDTO struct {
 	Name     string `json:"name"`
 	Kind     string `json:"kind,omitempty"`
 }
+
+// FileEntryDTO 文件树条目（目录或文件），Path 为相对工作区根的路径（统一 `/` 分隔）。
+type FileEntryDTO struct {
+	Name     string `json:"name"`
+	Path     string `json:"path"`
+	IsDir    bool   `json:"isDir"`
+	Size     int64  `json:"size,omitempty"`     // 仅文件
+	MimeType string `json:"mimeType,omitempty"` // 仅文件；按扩展名推断，可能为空
+}
+
+// FileListDTO 目录列表结果。
+type FileListDTO struct {
+	Path    string         `json:"path"` // 当前目录的相对路径（空 = 工作区根）
+	Entries []FileEntryDTO `json:"entries"`
+}

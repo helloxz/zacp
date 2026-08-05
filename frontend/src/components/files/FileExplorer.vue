@@ -1,0 +1,467 @@
+<script setup lang="ts">
+/**
+ * FileExplorer — 「文件」Tab 的文件树。
+ *
+ * 功能：
+ * - 懒加载文件树（受控展开，展开时才拉取子目录）
+ * - 拖拽上传：拖到目录节点 = 上传到该目录；拖到空白区 = 上传到工作区根
+ * - 图片自动压缩转 webp（等比不裁剪，>5MB 降采样兜底），非图片原样直传
+ * - 点击图片文件 → Naive UI 图片组件弹窗预览（走后端 raw 接口，天然受 workspace 边界保护）
+ *
+ * 数据根 = 当前会话所属 workspace；无会话时用默认 workspace。
+ */
+import { computed, onMounted, ref, watch, h } from 'vue'
+import { NIcon, useMessage, type TreeOption } from 'naive-ui'
+import {
+  FolderOutline,
+  DocumentOutline,
+  ImageOutline,
+  RefreshOutline,
+} from '@vicons/ionicons5'
+import { fetchFiles, fileRawUrl, uploadFiles } from '@/api'
+import type { FileEntry } from '@/types/models'
+import { useSessionStore } from '@/stores/session'
+
+/** 文件树节点：key 用相对路径（后端约定 `/` 分隔），raw 存原始条目 */
+interface FileTreeNode extends TreeOption {
+  raw: FileEntry
+}
+
+/** 图片压缩后大小上限（与后端 5MB 分档一致，保证后端不会拒绝） */
+const MAX_IMAGE_BYTES = 5 * 1024 * 1024
+
+const message = useMessage()
+const sessionStore = useSessionStore()
+
+/** 当前 workspace：优先当前会话所属项目，其次默认项目 */
+const activeWs = computed(() => {
+  const sid = sessionStore.activeSession?.workspace?.id
+  if (sid) {
+    return sessionStore.workspaces.find((w) => w.id === sid)
+  }
+  return sessionStore.defaultWorkspace()
+})
+const workspaceId = computed(() => activeWs.value?.id ?? 0)
+
+const treeData = ref<FileTreeNode[]>([])
+const expandedKeys = ref<string[]>([])
+const treeLoading = ref(false)
+
+const dragActive = ref(false)
+/** 拖拽悬停的目录 key（null = 空白区 → 上传到根） */
+const dragOverKey = ref<string | null>(null)
+
+const uploading = ref(false)
+const uploadProgress = ref(0)
+const uploadingName = ref('')
+
+const previewShow = ref(false)
+const previewEntry = ref<FileEntry | null>(null)
+const previewSrc = computed(() =>
+  previewEntry.value && workspaceId.value
+    ? fileRawUrl(workspaceId.value, previewEntry.value.path)
+    : '',
+)
+
+// ---------------------------------------------------------------------------
+// 树数据：懒加载
+// ---------------------------------------------------------------------------
+
+function toNode(e: FileEntry): FileTreeNode {
+  return { key: e.path, label: e.name, isLeaf: !e.isDir, raw: e }
+}
+
+async function buildChildren(dir: string): Promise<FileTreeNode[]> {
+  // 隐藏文件由后端强制过滤（不提供开关），这里只拿可见条目
+  const entries = await fetchFiles(workspaceId.value, dir)
+  return entries.map(toNode)
+}
+
+/** 按 key 递归查找节点 */
+function findNode(nodes: FileTreeNode[], key: string): FileTreeNode | null {
+  for (const n of nodes) {
+    if (n.key === key) return n
+    if (n.children) {
+      const r = findNode(n.children as FileTreeNode[], key)
+      if (r) return r
+    }
+  }
+  return null
+}
+
+async function loadRoot() {
+  if (!workspaceId.value) return
+  treeLoading.value = true
+  try {
+    treeData.value = await buildChildren('')
+  } catch (err) {
+    treeData.value = []
+    message.error(err instanceof Error ? err.message : '加载文件列表失败')
+  } finally {
+    treeLoading.value = false
+  }
+}
+
+/**
+ * naive-ui 懒加载回调（on-load）：展开「未加载」（children 为 undefined）的目录时
+ * 由 NTree 调用，返回的 Promise resolve 后自动结束 loading 状态并完成展开。
+ * 必须在此给 node.children 赋值（NTree 以 children 有无判断 shallowLoaded）。
+ * 加载失败按空目录处理，避免无限重试。
+ */
+async function onLoad(node: TreeOption) {
+  const children = await buildChildren(String(node.key)).catch(() => [] as FileTreeNode[])
+  node.children = children
+  // 换引用强制 NTree 重新计算树结构（直接改 children 不保证触发重渲染）
+  treeData.value = [...treeData.value]
+}
+
+/** 受控展开状态记录（实际加载交给 on-load，这里只维护 keys） */
+function onExpandedKeys(keys: Array<string | number>) {
+  expandedKeys.value = keys.map(String)
+}
+
+/** 刷新指定目录（上传成功后调用）；不在当前展开视图内的目录无需刷新 */
+async function reloadDir(dir: string) {
+  if (dir === '') {
+    await loadRoot()
+    return
+  }
+  const node = findNode(treeData.value, dir)
+  if (!node) return
+  node.children = await buildChildren(dir)
+  treeData.value = [...treeData.value]
+}
+
+/** 整树重建（切换 workspace 时） */
+async function reloadAll() {
+  expandedKeys.value = []
+  await loadRoot()
+}
+
+// workspace 变化 → 重建树（目录不同，缓存作废）
+watch(workspaceId, () => {
+  void reloadAll()
+})
+
+onMounted(() => {
+  void loadRoot()
+})
+
+// ---------------------------------------------------------------------------
+// 拖拽上传
+// ---------------------------------------------------------------------------
+
+function isImageEntry(e: FileEntry): boolean {
+  const t = e.mimeType ?? ''
+  return (
+    t.startsWith('image/') ||
+    /\.(png|jpe?g|gif|webp|bmp|svg|avif|ico)$/i.test(e.name)
+  )
+}
+
+/**
+ * 节点 props：把真实路径挂到节点 DOM（naive-ui 非虚拟滚动树节点没有 data-key 属性，
+ * 拖拽定位必须靠自定义 data 属性），拖拽时通过 dataset 取目标目录。
+ * 注意：naive-ui 回调签名是 (info: { option }) => HTMLAttributes，参数包在对象里。
+ */
+function nodeProps({ option }: { option: TreeOption }): Record<string, string> {
+  const e = (option as FileTreeNode).raw
+  return {
+    'data-dir': e.path,
+    'data-isdir': e.isDir ? '1' : '0',
+  }
+}
+
+/** 拖拽悬停：高亮目标节点（路径从节点 DOM 的 data-dir 属性取） */
+function onDragOver(e: DragEvent) {
+  dragActive.value = true
+  const el = (e.target as HTMLElement).closest('.n-tree-node') as HTMLElement | null
+  dragOverKey.value = el?.dataset.dir ?? null
+}
+
+function onDragLeave(e: DragEvent) {
+  // 只有真正离开容器才收起提示（relatedTarget 在容器外）
+  const related = e.relatedTarget as Node | null
+  const container = (e.currentTarget as HTMLElement)
+  if (!container.contains(related)) {
+    dragActive.value = false
+    dragOverKey.value = null
+  }
+}
+
+async function onDrop(e: DragEvent) {
+  dragActive.value = false
+  const files = Array.from(e.dataTransfer?.files ?? [])
+  if (!files.length || !workspaceId.value || uploading.value) return
+
+  // 目标目录：悬停在目录节点 = 该目录；悬停在文件节点 = 其父目录；空白区 = 根
+  const el = (e.target as HTMLElement).closest('.n-tree-node') as HTMLElement | null
+  const over = el?.dataset.dir ?? null
+  let dir = ''
+  if (over) {
+    if (el?.dataset.isdir === '1') {
+      dir = over
+    } else {
+      const i = over.lastIndexOf('/')
+      dir = i >= 0 ? over.slice(0, i) : ''
+    }
+  }
+  dragOverKey.value = null
+  await doUpload(files, dir)
+}
+
+/**
+ * 执行上传：图片逐个串行压缩（避免并行解码多张大图撑爆内存），随后顺序上传。
+ * 单个文件上传原子成功/失败；批次中途失败时已落盘文件保留，最后统一汇总提示。
+ */
+async function doUpload(files: File[], dir: string) {
+  uploading.value = true
+  uploadProgress.value = 0
+  const ok: string[] = []
+  const failed: string[] = []
+  try {
+    const total = files.length
+    let done = 0
+    for (const file of files) {
+      uploadingName.value = file.name
+      try {
+        const prepared = await prepareFile(file)
+        const uploaded = await uploadFiles(workspaceId.value, dir, [prepared], (p) => {
+          uploadProgress.value = (done + p) / total
+        })
+        done += 1
+        ok.push(...uploaded.map((u) => u.name))
+      } catch (err) {
+        done += 1
+        failed.push(`${file.name}（${err instanceof Error ? err.message : '未知错误'}）`)
+      }
+    }
+    if (ok.length) message.success(`已上传 ${ok.length} 个文件：${ok.join('、')}`)
+    if (failed.length) message.error(`上传失败 ${failed.length} 个：${failed.join('；')}`)
+    await reloadDir(dir)
+  } finally {
+    uploading.value = false
+    uploadProgress.value = 0
+    uploadingName.value = ''
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 图片压缩（前端先行，后端 5MB 校验兜底）
+// ---------------------------------------------------------------------------
+
+/** 图片转 webp（等比不裁剪）：原尺寸 0.8 → 超限降采样最长边 2048 → 降质量 0.6 */
+async function prepareFile(file: File): Promise<File> {
+  // 非图片原样直传；SVG 是矢量图且通常很小，直传保留矢量与无损性
+  if (!file.type.startsWith('image/') || file.type === 'image/svg+xml') return file
+  try {
+    const img = await loadImage(file)
+    const { naturalWidth: w, naturalHeight: h } = img
+    let blob = await encodeWebp(img, w, h, 0.8)
+    if (blob.size > MAX_IMAGE_BYTES) {
+      const scale = Math.min(1, 2048 / Math.max(w, h))
+      blob = await encodeWebp(
+        img,
+        Math.max(1, Math.round(w * scale)),
+        Math.max(1, Math.round(h * scale)),
+        0.8,
+      )
+    }
+    if (blob.size > MAX_IMAGE_BYTES) {
+      const scale = Math.min(1, 2048 / Math.max(w, h))
+      blob = await encodeWebp(
+        img,
+        Math.max(1, Math.round(w * scale)),
+        Math.max(1, Math.round(h * scale)),
+        0.6,
+      )
+    }
+    // 压缩后仍超限：原样直传，由后端按图片 5MB 规则处理
+    const name = file.name.replace(/\.[^.]+$/, '') + '.webp'
+    return new File([blob], name, { type: 'image/webp' })
+  } catch {
+    return file // 解码/编码失败（损坏文件、heic 等）→ 原样上传
+  }
+}
+
+function loadImage(file: File): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file)
+    const img = new Image()
+    img.onload = () => {
+      URL.revokeObjectURL(url)
+      resolve(img)
+    }
+    img.onerror = () => {
+      URL.revokeObjectURL(url)
+      reject(new Error('图片解码失败'))
+    }
+    img.src = url
+  })
+}
+
+function encodeWebp(
+  img: HTMLImageElement,
+  w: number,
+  h: number,
+  q: number,
+): Promise<Blob> {
+  return new Promise((resolve, reject) => {
+    const canvas = document.createElement('canvas')
+    canvas.width = w
+    canvas.height = h
+    const ctx = canvas.getContext('2d')
+    if (!ctx) {
+      reject(new Error('canvas 不可用'))
+      return
+    }
+    ctx.drawImage(img, 0, 0, w, h)
+    canvas.toBlob(
+      (b) => (b ? resolve(b) : reject(new Error('webp 编码失败'))),
+      'image/webp',
+      q,
+    )
+  })
+}
+
+// ---------------------------------------------------------------------------
+// 节点渲染 & 点击预览
+// ---------------------------------------------------------------------------
+
+function renderLabel({ option }: { option: TreeOption }) {
+  const e = (option as FileTreeNode).raw
+  const icon = e.isDir
+    ? FolderOutline
+    : isImageEntry(e)
+      ? ImageOutline
+      : DocumentOutline
+  return h('div', { class: 'flex min-w-0 items-center gap-1.5' }, [
+    h(NIcon, { size: 15 }, { default: () => h(icon) }),
+    h('span', { class: 'truncate' }, option.label as string),
+  ])
+}
+
+/** 点击节点：图片文件 → 弹窗预览（naive n-image，可再放大） */
+function onSelect(keys: Array<string | number>) {
+  if (!keys.length) return
+  const node = findNode(treeData.value, String(keys[0]))
+  const e = node?.raw
+  if (e && !e.isDir && isImageEntry(e)) {
+    previewEntry.value = e
+    previewShow.value = true
+  }
+}
+</script>
+
+<template>
+  <div class="relative flex h-full min-h-0 flex-col">
+    <n-empty
+      v-if="!workspaceId"
+      class="mt-16"
+      size="small"
+      description="请先在左侧添加项目"
+    />
+
+    <template v-else>
+      <!-- 工具栏：项目名（tooltip 展示完整路径）+ 刷新 -->
+      <div class="flex items-center gap-2 px-3 pb-1">
+        <n-tooltip
+          class="min-w-0 flex-1"
+          placement="bottom-start"
+          :theme-overrides="{
+            color: '#fff',
+            textColor: '#333',
+            boxShadow: '0 2px 8px rgba(0, 0, 0, 0.12)',
+          }"
+        >
+          <template #trigger>
+            <span class="block w-full truncate text-xs font-medium text-gray-600">
+              {{ activeWs?.name || '项目文件' }}
+            </span>
+          </template>
+          <span class="break-all">{{ activeWs?.path }}</span>
+        </n-tooltip>
+        <n-button
+          quaternary
+          circle
+          size="tiny"
+          title="刷新"
+          :loading="treeLoading"
+          @click="reloadAll"
+        >
+          <template #icon>
+            <n-icon><RefreshOutline /></n-icon>
+          </template>
+        </n-button>
+      </div>
+
+      <!-- 文件树（拖拽目标容器） -->
+      <div
+        class="min-h-0 flex-1 overflow-auto px-1"
+        @dragenter.prevent
+        @dragover.prevent="onDragOver"
+        @dragleave="onDragLeave"
+        @drop.prevent="onDrop"
+      >
+        <n-tree
+          block-line
+          expand-on-click
+          :data="treeData"
+          :expanded-keys="expandedKeys"
+          :node-props="nodeProps"
+          :render-label="renderLabel"
+          :on-load="onLoad"
+          :selectable="true"
+          @update:expanded-keys="onExpandedKeys"
+          @update:selected-keys="onSelect"
+        />
+      </div>
+
+      <!-- 拖拽悬停提示：目录节点高亮 + 上传目标说明 -->
+      <div
+        v-if="dragActive"
+        class="pointer-events-none absolute inset-x-1 bottom-1 top-8 z-10 flex items-center justify-center rounded border-2 border-dashed border-blue-400 bg-blue-50/70 text-sm text-blue-600"
+      >
+        <span>
+          {{
+            dragOverKey
+              ? `上传到「${dragOverKey}」目录`
+              : '拖到目录上可指定位置；此处为项目根目录'
+          }}
+        </span>
+      </div>
+
+      <!-- 上传进度 -->
+      <div v-if="uploading" class="px-3 pb-2">
+        <n-progress
+          type="line"
+          :percentage="Math.round(uploadProgress * 100)"
+          :show-indicator="false"
+          :height="6"
+          :processing="uploadProgress < 1"
+        />
+        <div class="mt-1 truncate text-xs text-gray-400">正在上传 {{ uploadingName }}…</div>
+      </div>
+    </template>
+
+    <!-- 图片预览：naive n-image 弹窗（点击图片可再放大） -->
+    <n-modal
+      v-model:show="previewShow"
+      preset="card"
+      style="width: min(86vw, 860px)"
+      :title="previewEntry?.name"
+      :bordered="false"
+      closable
+    >
+      <div class="flex max-h-[70vh] items-center justify-center overflow-auto">
+        <n-image
+          v-if="previewSrc"
+          :src="previewSrc"
+          object-fit="contain"
+          class="max-h-[68vh]"
+        />
+        <n-empty v-else description="无法预览该文件" />
+      </div>
+    </n-modal>
+  </div>
+</template>

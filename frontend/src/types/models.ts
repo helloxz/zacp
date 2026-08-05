@@ -24,6 +24,18 @@ export interface Workspace {
   updatedAt: string
 }
 
+/**
+ * 文件树条目（GET /api/v1/workspaces/:id/files → `{ path, entries: FileEntry[] }`）
+ * path 为相对工作区根的路径（`/` 分隔）。
+ */
+export interface FileEntry {
+  name: string
+  path: string
+  isDir: boolean
+  size?: number
+  mimeType?: string
+}
+
 /** 会话状态（后端 model.SessionStatus） */
 export type SessionStatus = 'active' | 'closed' | 'error'
 

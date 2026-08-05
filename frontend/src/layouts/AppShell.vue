@@ -2,6 +2,7 @@
 import { onMounted, ref } from 'vue'
 import AppSidebar from '@/components/shell/AppSidebar.vue'
 import ChatPane from '@/components/chat/ChatPane.vue'
+import FilePanel from '@/components/files/FilePanel.vue'
 import SettingsDrawer from '@/components/shell/SettingsDrawer.vue'
 import { useAgentStore } from '@/stores/agent'
 import { useSessionStore } from '@/stores/session'
@@ -25,12 +26,13 @@ onMounted(() => {
 </script>
 
 <template>
-  <!-- 壳层骨架：左固定侧栏 + 右对话主区；整页内部滚动，避免 body 双滚动条（设计文档 §3） -->
+  <!-- 壳层骨架：左固定侧栏 + 中对话主区 + 右文件信息栏；整页内部滚动，避免 body 双滚动条（设计文档 §3） -->
   <div class="flex h-screen overflow-hidden bg-white">
     <AppSidebar class="shrink-0" @open-settings="openSettings" />
     <main class="flex min-w-0 flex-1 flex-col">
       <ChatPane />
     </main>
+    <FilePanel class="shrink-0" />
     <SettingsDrawer :show="settingsOpen" @update:show="settingsOpen = $event" />
   </div>
 </template>

@@ -17,12 +17,15 @@ export { ApiError, type ApiErrorBody, type RequestOptions, type HttpMethod } fro
 // ---------------------------------------------------------------------------
 
 import { http } from './http'
+import { ApiError, type ApiErrorBody } from './types'
+import { apiUrl } from '@/config/env'
 import type {
   Agent,
   AvailableCommand,
   ChatMessage,
   ChatSession,
   ConfigOption,
+  FileEntry,
   MessagePage,
   Workspace,
 } from '@/types/models'
@@ -50,6 +53,84 @@ export async function createWorkspace(path: string): Promise<Workspace> {
 /** DELETE /api/v1/workspaces/:id — 移除项目（后端软删除；同路径再次添加时整体恢复） */
 export async function removeWorkspace(workspaceId: number): Promise<void> {
   await http.delete(`/api/v1/workspaces/${workspaceId}`)
+}
+
+/** GET /api/v1/workspaces/:id/files?path=... — 列出工作区目录内容（隐藏文件由后端强制过滤） */
+export async function fetchFiles(
+  workspaceId: number,
+  path = '',
+): Promise<FileEntry[]> {
+  const data = await http.get<{ path: string; entries: FileEntry[] }>(
+    `/api/v1/workspaces/${workspaceId}/files`,
+    { query: { path: path || undefined } },
+  )
+  return data.entries
+}
+
+/** GET /api/v1/workspaces/:id/files/raw?path=... — 文件原始内容 URL（图片预览 / 下载直链） */
+export function fileRawUrl(workspaceId: number, path: string): string {
+  return apiUrl(
+    `/api/v1/workspaces/${workspaceId}/files/raw?path=${encodeURIComponent(path)}`,
+  )
+}
+
+/**
+ * POST /api/v1/workspaces/:id/files/upload — 上传文件到指定目录。
+ *
+ * 用 XHR 实现以便上报上传进度；失败时解析统一错误体抛 ApiError。
+ * @param dir 目标相对目录（空 = 工作区根）
+ * @param onProgress 上传进度回调（0~1）
+ */
+export async function uploadFiles(
+  workspaceId: number,
+  dir: string,
+  files: File[],
+  onProgress?: (ratio: number) => void,
+): Promise<FileEntry[]> {
+  const form = new FormData()
+  if (dir) form.append('dir', dir)
+  for (const f of files) form.append('files', f, f.name)
+
+  return new Promise<FileEntry[]>((resolve, reject) => {
+    const xhr = new XMLHttpRequest()
+    xhr.open('POST', apiUrl(`/api/v1/workspaces/${workspaceId}/files/upload`))
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable && onProgress) {
+        onProgress(e.loaded / e.total)
+      }
+    }
+    xhr.onload = () => {
+      try {
+        const body = JSON.parse(xhr.responseText || '{}') as {
+          files?: FileEntry[]
+          error?: ApiErrorBody
+        }
+        if (xhr.status >= 200 && xhr.status < 300 && body.files) {
+          resolve(body.files)
+        } else {
+          reject(
+            new ApiError({
+              status: xhr.status,
+              code: body.error?.code ?? 'upload_failed',
+              message: body.error?.message ?? `上传失败（HTTP ${xhr.status}）`,
+              body,
+            }),
+          )
+        }
+      } catch {
+        reject(
+          new ApiError({
+            status: xhr.status,
+            code: 'upload_failed',
+            message: '上传失败：响应解析错误',
+          }),
+        )
+      }
+    }
+    xhr.onerror = () =>
+      reject(new ApiError({ status: 0, code: 'network_error', message: '网络错误，上传失败' }))
+    xhr.send(form)
+  })
 }
 
 /** GET /api/v1/sessions — 最近活跃会话（侧栏数据源） */

@@ -13,6 +13,7 @@ func New(
 	workspaceHandler *handlers.WorkspaceHandler,
 	sessionHandler *handlers.SessionHandler,
 	chatHandler *handlers.ChatHandler,
+	fileHandler *handlers.FileHandler,
 	wsHandler *ws.Handler,
 	eventBridge *ws.EventBridge,
 ) *gin.Engine {
@@ -32,6 +33,11 @@ func New(
 		v1.POST("/workspaces", workspaceHandler.CreateWorkspace)
 		v1.GET("/workspaces/:id", workspaceHandler.GetWorkspace)
 		v1.DELETE("/workspaces/:id", workspaceHandler.DeleteWorkspace)
+
+		// 工作区文件：浏览 / 上传 / 原始内容（图片预览、下载）
+		v1.GET("/workspaces/:id/files", fileHandler.ListFiles)
+		v1.POST("/workspaces/:id/files/upload", fileHandler.Upload)
+		v1.GET("/workspaces/:id/files/raw", fileHandler.RawFile)
 
 		// 会话管理
 		v1.POST("/sessions", sessionHandler.CreateSession)

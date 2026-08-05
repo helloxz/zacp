@@ -100,17 +100,19 @@ func main() {
 	// 创建 Service
 	workspaceSvc := service.NewWorkspaceService(workspaceRepo)
 	sessionSvc := service.NewSessionService(workspaceRepo, sessionRepo, messageRepo, mgr, cfg.Session.DefaultCwd)
+	fileSvc := service.NewFileService(workspaceRepo)
 
 	// 创建 Handler
 	workspaceHandler := handlers.NewWorkspaceHandler(workspaceSvc)
 	sessionHandler := handlers.NewSessionHandler(sessionSvc, eventBridge)
 	chatHandler := &handlers.ChatHandler{Mgr: mgr}
+	fileHandler := handlers.NewFileHandler(fileSvc)
 
 	if os.Getenv("GIN_MODE") == "" {
 		gin.SetMode(gin.ReleaseMode)
 	}
 
-	engine := router.New(workspaceHandler, sessionHandler, chatHandler, wsHandler, eventBridge)
+	engine := router.New(workspaceHandler, sessionHandler, chatHandler, fileHandler, wsHandler, eventBridge)
 
 	// Graceful shutdown on signal.
 	go func() {
