@@ -45,6 +45,7 @@ export default {
     enterHint: 'Enter to send · Shift+Enter for a new line',
     send: 'Send',
     stop: 'Stop',
+    queued: 'Queued — will start after the previous turn finishes',
     agent: 'Agent',
     workspace: 'Workspace',
     selectWorkspace: 'Select workspace',

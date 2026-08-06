@@ -5,7 +5,7 @@ import { useI18n } from 'vue-i18n'
 import { SendOutline, StopOutline } from '@vicons/ionicons5'
 import { NIcon } from 'naive-ui'
 import type { InputInst, SelectGroupOption, SelectOption } from 'naive-ui'
-import { useSessionStore } from '@/stores/session'
+import { useSessionStore, type SessionStreamStatus } from '@/stores/session'
 import type { ConfigOptionValue } from '@/types/models'
 
 /** Composer 提交载荷（card / bar 共用） */
@@ -21,10 +21,13 @@ const props = withDefaults(
     mode?: 'card' | 'bar'
     /** bar 模式当前会话的 Agent（只读标签）；card 模式为下拉默认值 */
     agentId?: string
-    /** 发送中（流式时由父级置 true，显示停止按钮） */
-    sending?: boolean
+    /**
+     * 当前会话的发送状态（由父级从 session store 绑定，多会话时各自独立）：
+     * idle=可发送 / queued=已发送排队中（可取消）/ streaming=流式进行中（停止按钮）
+     */
+    status?: SessionStreamStatus
   }>(),
-  { mode: 'bar', agentId: undefined, sending: false },
+  { mode: 'bar', agentId: undefined, status: 'idle' },
 )
 
 const emit = defineEmits<{
@@ -385,9 +388,17 @@ function onKeydown(e: KeyboardEvent) {
         <span v-else class="text-xs text-slate-400">{{ t('chat.enterHint') }}</span>
       </div>
 
-      <div class="flex shrink-0 items-center">
+      <div class="flex shrink-0 items-center gap-2">
+        <!-- 排队中：停止按钮 + 状态文案（可取消排队；A 结束后自动开跑） -->
+        <span
+          v-if="status === 'queued'"
+          class="flex items-center gap-1.5 text-xs text-amber-500"
+        >
+          <n-spin :size="13" />
+          {{ t('chat.queued') }}
+        </span>
         <n-button
-          v-if="sending"
+          v-if="status !== 'idle'"
           type="error"
           size="medium"
           circle

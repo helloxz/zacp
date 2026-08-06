@@ -34,7 +34,7 @@ const agentName = computed(() => {
 const title = computed(() => props.session.title || t('chat.newChatTitle'))
 
 /** 该会话是否正在等待 Agent 回复（驱动列表项前「任务进行中」呼吸圆点） */
-const isRunning = computed(() => sessionStore.runningSessionId === props.session.id)
+const isRunning = computed(() => sessionStore.runningSessionIds.has(props.session.id))
 
 const relativeTime = computed(() =>
   formatRelativeTime(props.session.updatedAt, appStore.locale),

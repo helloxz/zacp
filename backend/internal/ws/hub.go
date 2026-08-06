@@ -12,14 +12,15 @@ import (
 
 // Client 代表一个 WebSocket 客户端连接
 type Client struct {
-	hub       *Hub
-	conn      *websocket.Conn
-	send      chan []byte
-	sessionID string // 绑定的会话 ID
-	agentID   string // 使用的 Agent ID
-	bridge    *EventBridge // 事件桥接器
-	closed    bool
-	mu        sync.Mutex
+	hub        *Hub
+	conn       *websocket.Conn
+	send       chan []byte
+	sessionID  string          // 最近一次订阅的会话 ID（兼容旧查询语义）
+	agentID    string          // 使用的 Agent ID
+	subscribed map[string]bool // 订阅的会话集合（事件按会话路由；连接关闭前不清空）
+	bridge     *EventBridge    // 事件桥接器
+	closed     bool
+	mu         sync.Mutex
 }
 
 // Hub 管理所有 WebSocket 连接
@@ -179,19 +180,24 @@ func (c *Client) handleMessage(ctx context.Context, msg ClientMessage) {
 	switch msg.Type {
 	case MsgTypePrompt:
 		c.hub.log.Info("received prompt", "sessionID", msg.SessionID, "message", msg.Message)
-		// 无绑定连接（GET /api/v1/ws）通过消息里的 sessionId/agentId 动态绑定，
-		// 使后续事件/turn.done 广播（按 GetSessionID 匹配）能回送到本连接。
+		// 无绑定连接（GET /api/v1/ws）通过消息里的 sessionId/agentId 动态订阅，
+		// 使该会话的事件/turn.done 广播（按订阅集合匹配）能回送到本连接。
+		// 订阅为集合语义：同一连接可同时跟踪多个会话（同 agent 排队、跨 agent 并行），
+		// 避免旧「单绑定覆盖」导致 A 会话进行中发 B 时 A 的广播丢失。
 		if msg.SessionID != "" {
-			c.BindSession(msg.SessionID, msg.AgentID)
+			c.SubscribeSession(msg.SessionID, msg.AgentID)
 		}
 		if bridge != nil {
 			go func() {
 				if err := bridge.HandlePrompt(ctx, msg.SessionID, msg.AgentID, msg.Message); err != nil {
 					c.hub.log.Error("handle prompt error", "error", err)
+					// 错误广播必须带 sessionId：前端按会话路由复位状态，
+					// 缺省时回退当前会话，A 会话出错会误伤排队中的 B（见 session.ts error 分支）
 					c.Send(ServerMessage{
-						Type:    MsgTypeError,
-						Code:    "PROMPT_ERROR",
-						Message: err.Error(),
+						Type:      MsgTypeError,
+						SessionID: msg.SessionID,
+						Code:      "PROMPT_ERROR",
+						Message:   err.Error(),
 					})
 				}
 			}()
@@ -200,7 +206,7 @@ func (c *Client) handleMessage(ctx context.Context, msg ClientMessage) {
 	case MsgTypeCancel:
 		c.hub.log.Info("received cancel", "sessionID", msg.SessionID)
 		if msg.SessionID != "" {
-			c.BindSession(msg.SessionID, msg.AgentID)
+			c.SubscribeSession(msg.SessionID, msg.AgentID)
 		}
 		if bridge != nil {
 			go func() {
@@ -231,12 +237,35 @@ func (c *Client) SetBridge(bridge *EventBridge) {
 	c.bridge = bridge
 }
 
-// BindSession 绑定会话
+// BindSession 绑定会话（兼容旧调用方）：语义等同 SubscribeSession。
 func (c *Client) BindSession(sessionID, agentID string) {
+	c.SubscribeSession(sessionID, agentID)
+}
+
+// SubscribeSession 订阅会话：本连接将收到该会话的事件/turn.done/权限等广播。
+// 与旧「单绑定覆盖」不同，订阅是集合语义——同一连接可同时跟踪多个会话
+// （同 agent 排队、跨 agent 并行时，执行中会话的广播必须继续送达）。
+// 订阅保留到连接关闭才清空：会话结束后无新广播，残留无害，实现最简单。
+func (c *Client) SubscribeSession(sessionID, agentID string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.sessionID = sessionID
-	c.agentID = agentID
+	if sessionID != "" {
+		if c.subscribed == nil {
+			c.subscribed = make(map[string]bool)
+		}
+		c.subscribed[sessionID] = true
+		c.sessionID = sessionID
+	}
+	if agentID != "" {
+		c.agentID = agentID
+	}
+}
+
+// IsSubscribed 检查是否订阅了指定会话（广播按会话匹配用）
+func (c *Client) IsSubscribed(sessionID string) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.subscribed[sessionID]
 }
 
 // GetSessionID 获取绑定的会话 ID

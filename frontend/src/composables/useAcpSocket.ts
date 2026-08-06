@@ -8,10 +8,10 @@ export type SocketStatus = 'idle' | 'connecting' | 'open' | 'closed'
  * 应用级 WebSocket 单例（浏览器一个 Tab 一条连接）。
  *
  * 模型：后端 `GET /api/v1/ws` 为无绑定连接，客户端在 prompt/cancel 消息里带
- * sessionId(ACP session id)+agentId，服务端动态绑定后把事件/turn.done 广播回
- * 本连接（见 hub.go handleMessage 与 BroadcastToSession）。因此本连接天然
- * 绑定「最近一次 prompt 的会话」，符合 AGENTS.md「一条 WS 连接绑定一个后端
- * ACP session」的约定。
+ * sessionId(ACP session id)+agentId，服务端把该会话加入本连接的**订阅集合**
+ * （见 hub.go SubscribeSession 与 BroadcastToSession），事件/turn.done 广播按
+ * 订阅匹配回送。因此一条连接可同时跟踪多个会话：同 agent 排队、跨 agent 并行
+ * 时，各会话的广播都带 sessionId，由 session store 按会话路由（方案 B）。
  *
  * 关键逻辑：
  * - 心跳：每 30s 发应用层 ping，服务端回 pong；任意消息都视为连接健康

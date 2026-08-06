@@ -55,19 +55,24 @@ export interface PermissionToolCall {
   rawInput?: unknown
 }
 
-/** 服务端 → 客户端消息 */
+/** 服务端 → 客户端消息。
+ * 除 session.ready/pong 外，广播类消息均携带 sessionId（**ACP session id**）：
+ * 同一 WS 连接可同时订阅多个会话（同 agent 排队、跨 agent 并行），
+ * 前端按此字段把事件路由到对应 DB 会话的流式槽位，避免串台。 */
 export type WsServerMessage =
   | { type: 'session.ready'; sessionId?: string; agentId?: string }
-  | { type: 'event'; event: WsEvent }
-  | { type: 'turn.done'; reply?: string; stopReason?: string }
+  | { type: 'event'; sessionId?: string; event: WsEvent }
+  | { type: 'turn.started'; sessionId?: string }
+  | { type: 'turn.done'; sessionId?: string; reply?: string; stopReason?: string }
   | {
       type: 'permission.request'
+      sessionId?: string
       permissionId?: string
       toolCall?: PermissionToolCall
       options?: PermissionOption[]
     }
-  | { type: 'configOptions'; configOptions?: ConfigOption[] }
-  | { type: 'slashCommands'; slashCommands?: AvailableCommand[] }
-  | { type: 'sessionInfo'; sessionInfo?: { title?: string } }
-  | { type: 'error'; code?: string; message?: string }
+  | { type: 'configOptions'; sessionId?: string; configOptions?: ConfigOption[] }
+  | { type: 'slashCommands'; sessionId?: string; slashCommands?: AvailableCommand[] }
+  | { type: 'sessionInfo'; sessionId?: string; sessionInfo?: { title?: string } }
+  | { type: 'error'; sessionId?: string; code?: string; message?: string }
   | { type: 'pong' }

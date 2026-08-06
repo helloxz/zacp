@@ -34,6 +34,10 @@ type Event struct {
 	Status  string `json:"status,omitempty"`
 	ToolID  string `json:"toolId,omitempty"`
 	RawKind string `json:"rawKind,omitempty"`
+	// SessionID 为事件所属的 ACP 会话 id（来自 SDK session/update 通知的 SessionId，
+	// v1/v2 通知均自带）。用于 WS 多会话场景：同一 agent 排队、跨 agent 并行时，
+	// 事件按会话路由，避免「执行中会话 A 的事件串到已排队的会话 B」。
+	SessionID string `json:"sessionId,omitempty"`
 	// Input/Output 为工具调用的入参/出参（对应 ACP 的 RawInput/RawOutput），
 	// 供前端在消息里展开查看详情；nil 时省略不序列化。
 	Input  any `json:"input,omitempty"`
@@ -209,25 +213,28 @@ func (b *Bridge) RequestPermission(ctx context.Context, params acp.RequestPermis
 // SessionUpdate implements acp.Client.
 func (b *Bridge) SessionUpdate(ctx context.Context, params acp.SessionNotification) error {
 	u := params.Update
+	// 通知自带的 ACP session id：事件流按会话归属，WS 多会话（排队/并行）时路由不串台
+	sid := string(params.SessionId)
 	switch {
 	case u.AgentMessageChunk != nil:
 		if u.AgentMessageChunk.Content.Text != nil {
-			b.push(Event{Type: "agent_message", Text: u.AgentMessageChunk.Content.Text.Text})
+			b.push(Event{Type: "agent_message", Text: u.AgentMessageChunk.Content.Text.Text, SessionID: sid})
 		}
 	case u.AgentThoughtChunk != nil:
 		if u.AgentThoughtChunk.Content.Text != nil {
-			b.push(Event{Type: "agent_thought", Text: u.AgentThoughtChunk.Content.Text.Text})
+			b.push(Event{Type: "agent_thought", Text: u.AgentThoughtChunk.Content.Text.Text, SessionID: sid})
 		}
 	case u.UserMessageChunk != nil:
 		if u.UserMessageChunk.Content.Text != nil {
-			b.push(Event{Type: "user_message", Text: u.UserMessageChunk.Content.Text.Text})
+			b.push(Event{Type: "user_message", Text: u.UserMessageChunk.Content.Text.Text, SessionID: sid})
 		}
 	case u.ToolCall != nil:
 		b.push(Event{
-			Type:   "tool_call",
-			Title:  u.ToolCall.Title,
-			Status: string(u.ToolCall.Status),
-			ToolID: string(u.ToolCall.ToolCallId),
+			Type:      "tool_call",
+			Title:     u.ToolCall.Title,
+			Status:    string(u.ToolCall.Status),
+			ToolID:    string(u.ToolCall.ToolCallId),
+			SessionID: sid,
 			// 入参/出参透传给前端（可能是大 JSON，展示时由前端截断/滚动）
 			Input:  u.ToolCall.RawInput,
 			Output: u.ToolCall.RawOutput,
@@ -242,10 +249,11 @@ func (b *Bridge) SessionUpdate(ctx context.Context, params acp.SessionNotificati
 			title = *u.ToolCallUpdate.Title
 		}
 		b.push(Event{
-			Type:   "tool_call_update",
-			Title:  title,
-			Status: status,
-			ToolID: string(u.ToolCallUpdate.ToolCallId),
+			Type:      "tool_call_update",
+			Title:     title,
+			Status:    status,
+			ToolID:    string(u.ToolCallUpdate.ToolCallId),
+			SessionID: sid,
 			// update 通知语义为替换：非 nil 才覆盖，保持与流式工具卡一致
 			Input:  u.ToolCallUpdate.RawInput,
 			Output: u.ToolCallUpdate.RawOutput,
@@ -261,7 +269,7 @@ func (b *Bridge) SessionUpdate(ctx context.Context, params acp.SessionNotificati
 				Status:   string(e.Status),
 			})
 		}
-		b.push(Event{Type: "plan", Plan: plan})
+		b.push(Event{Type: "plan", Plan: plan, SessionID: sid})
 	case u.ConfigOptionUpdate != nil:
 		// 会话配置项通知（模型/思考强度/mode 等）：走独立处理器（不混入消息事件流）。
 		// 通知自带 sessionId（v1/v2 均有），按会话分发，避免多会话并发时串到其它会话。
@@ -291,7 +299,7 @@ func (b *Bridge) SessionUpdate(ctx context.Context, params acp.SessionNotificati
 			fn(string(params.SessionId), *u.SessionInfoUpdate)
 		}
 	default:
-		b.push(Event{Type: "other", RawKind: "unknown"})
+		b.push(Event{Type: "other", RawKind: "unknown", SessionID: sid})
 	}
 	return nil
 }

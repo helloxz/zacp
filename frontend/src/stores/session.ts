@@ -54,6 +54,9 @@ export interface PendingPermission {
   options: PermissionOption[]
 }
 
+/** 会话 turn 状态：idle=可发送 / queued=已发送排队中（可取消）/ streaming=流式进行中 */
+export type SessionStreamStatus = 'idle' | 'queued' | 'streaming'
+
 /**
  * 会话工作台状态（P2：REST 数据 + WebSocket 流式发送）。
  * 组件只依赖本 store 暴露的 ref / 方法，不感知传输细节。
@@ -78,32 +81,42 @@ export const useSessionStore = defineStore('session', () => {
 
   const loading = ref(false)
   const loadingError = ref<string | null>(null)
-  /** 是否正在等待 Agent 回复（驱动 Composer 停止按钮 / 消息流式态） */
-  const streaming = ref(false)
+
+  // ---------------------------------------------------------------------------
+  // 流式状态（方案 B「展示并发、执行串行」）：所有 turn 状态按会话隔离。
+  //
+  // 后端允许：同 agent 串行排队（后续 prompt 进入 FIFO）、跨 agent 天然并行。
+  // 因此同一时刻可能有「A streaming、B queued」或「A/B 都 streaming」，
+  // 全局单值无法表达——一律以 DB session id 为 key 的 Map 存储，
+  // 组件经 statusOf / streamBlocksOf 等取当前会话的值。
+  // ---------------------------------------------------------------------------
+
+  /** 会话 turn 状态：idle=可发送 / queued=已发送排队中（可取消）/ streaming=流式进行中 */
+  type SessionStreamStatus = 'idle' | 'queued' | 'streaming'
+
+  /** 各会话 turn 状态（key: DB session id；缺失视为 idle） */
+  const statusBySession = ref<Record<number, SessionStreamStatus>>({})
   /**
-   * 正在等待回复的会话 DB id（侧栏「任务进行中」呼吸圆点数据源）。
-   *
-   * 单例 WS 连接天然绑定最近一次 prompt 的会话（见 useAcpSocket），
-   * 同一时刻最多一个会话在跑，因此用单值而非 Set：prompt 时直接覆盖赋值
-   * 即可正确处理「prompt A 后又 prompt B、A 被抢占」的场景（A 的 turn.done
-   * 不会再投递到本连接，若不清旧值圆点会一直亮着）。
-   * 刷新/重连后为 null（后端 turn 仍在跑也看不到流式内容，属可接受盲区）。
+   * 各会话「任务进行中」集合（侧栏呼吸圆点数据源）。
+   * 与状态机同步：queued/streaming 都算进行中；turn.done/error/取消后移除。
    */
-  const runningSessionId = ref<number | null>(null)
-  /** 流式发送错误（ChatPane 错误条展示） */
+  const runningSessionIds = ref<Set<number>>(new Set())
+  /** 流式发送错误（ChatPane 错误条展示；按会话覆盖，展示时取当前会话） */
   const streamError = ref<string | null>(null)
   /** 待处理的权限请求（非空时 PermissionModal 显示） */
   const pendingPermission = ref<PendingPermission | null>(null)
-  /** 当前 turn 的实时工具调用卡片（流式期间展示；turn.done 清空，历史由消息 events 渲染） */
-  const activeToolCards = ref<ToolCard[]>([])
-  /** 当前 turn 的实时执行计划（plan 事件整体替换；turn.done 清空，历史由消息 events 渲染） */
-  const activePlan = ref<Plan | null>(null)
+  /** 各会话当前 turn 的实时工具调用卡片（流式期间展示；turn.done 清空，历史由消息 events 渲染） */
+  const activeToolCardsBySession = ref<Record<number, ToolCard[]>>({})
+  /** 各会话当前 turn 的实时执行计划（plan 事件整体替换；turn.done 清空，历史由消息 events 渲染） */
+  const activePlanBySession = ref<Record<number, Plan | null>>({})
   /**
-   * 当前 turn 的消息块时间线（text/tool/plan 按事件到达顺序交错排列）。
+   * 各会话当前 turn 的消息块时间线（text/tool/plan 按事件到达顺序交错排列）。
    * 流式期间由 appendStreamChunk / upsertToolCard 增量构建；
    * turn.done 后清空，消息切换到历史路径（deriveBlocks 从 events 重建）。
    */
-  const streamBlocks = ref<MessageBlock[]>([])
+  const streamBlocksBySession = ref<Record<number, MessageBlock[]>>({})
+  /** 各会话当前流式 assistant 占位消息 id（-1 表示无占位） */
+  const streamMsgIdBySession = ref<Record<number, number>>({})
   /**
    * 当前会话的配置项（模型/思考强度/mode 等，来自 GET config-options）。
    * agent 不支持时为空数组 → 前端隐藏配置 UI（用户约定「ACP 不支持才隐藏」）。
@@ -128,6 +141,75 @@ export const useSessionStore = defineStore('session', () => {
   const activeMessages = computed<ChatMessage[]>(() =>
     currentId.value === null ? [] : (messagesById.value[currentId.value] ?? []),
   )
+
+  // ---------------------------------------------------------------------------
+  // ACP session id → DB session id 反向索引 + 「发送过 prompt 的会话」快照。
+  //
+  // 后端广播（event/turn.done/权限等）携带的是 ACP session id（UUID 字符串），
+  // 而本 store 的状态键是 DB session id（number）。WS 事件到达时先反查索引，
+  // 查不到（刷新/重连后的历史事件）则丢弃——不做全局回退，避免串台。
+  // ---------------------------------------------------------------------------
+
+  /** ACP session id → DB session id（sessions 加载/创建/发送刷新时同步） */
+  const dbIdByAcpSession = new Map<string, number>()
+  /** 发送过 prompt 的会话快照（cancel 帧需要 acpSessionId；草稿不在 sessions 列表，只能查这里） */
+  const sentSessions = new Map<number, ChatSession>()
+
+  function indexAcpSession(session: ChatSession | null | undefined) {
+    if (!session?.acpSessionId) return
+    dbIdByAcpSession.set(session.acpSessionId, session.id)
+  }
+
+  function dropSessionIndexes(sessionId: number) {
+    for (const [acpId, dbId] of dbIdByAcpSession) {
+      if (dbId === sessionId) dbIdByAcpSession.delete(acpId)
+    }
+    sentSessions.delete(sessionId)
+    delete statusBySession.value[sessionId]
+    runningSessionIds.value.delete(sessionId)
+    delete streamBlocksBySession.value[sessionId]
+    delete activeToolCardsBySession.value[sessionId]
+    delete activePlanBySession.value[sessionId]
+    delete streamMsgIdBySession.value[sessionId]
+  }
+
+  /** 取会话 turn 状态（缺失视为 idle） */
+  function statusOf(sessionId: number | null | undefined): SessionStreamStatus {
+    if (sessionId === null || sessionId === undefined) return 'idle'
+    return statusBySession.value[sessionId] ?? 'idle'
+  }
+
+  /** 取会话的实时消息块时间线（空数组兜底） */
+  function streamBlocksOf(sessionId: number | null | undefined): MessageBlock[] {
+    if (sessionId === null || sessionId === undefined) return []
+    return streamBlocksBySession.value[sessionId] ?? []
+  }
+
+  /** 取会话的实时工具卡片 */
+  function activeToolCardsOf(sessionId: number | null | undefined): ToolCard[] {
+    if (sessionId === null || sessionId === undefined) return []
+    return activeToolCardsBySession.value[sessionId] ?? []
+  }
+
+  /** 取会话的实时执行计划 */
+  function activePlanOf(sessionId: number | null | undefined): Plan | null {
+    if (sessionId === null || sessionId === undefined) return null
+    return activePlanBySession.value[sessionId] ?? null
+  }
+
+  /** 消息是否处于「流式占位」态（MessageItem 渲染流式内容/打字指示器用） */
+  function isStreamingMessage(message: ChatMessage): boolean {
+    return (
+      message.id === (streamMsgIdBySession.value[message.sessionId] ?? -1) &&
+      statusOf(message.sessionId) === 'streaming'
+    )
+  }
+
+  /** 当前会话 turn 状态（驱动 Composer：idle=发送按钮 / 非 idle=停止按钮+状态文案） */
+  const currentStatus = computed<SessionStreamStatus>(() => statusOf(currentId.value))
+
+  /** 兼容导出：当前会话是否正在流式输出 */
+  const streaming = computed<boolean>(() => currentStatus.value === 'streaming')
 
   /** 默认工作区：isDefault 优先，否则最近使用（侧栏分组兜底） */
   function defaultWorkspace(): Workspace | undefined {
@@ -193,6 +275,11 @@ export const useSessionStore = defineStore('session', () => {
       ...list,
       ...drafts.filter((d) => !list.some((s) => s.id === d.id)),
     ]
+    // 重建 ACP session 反向索引（WS 事件按 ACP id 路由到 DB id）
+    dbIdByAcpSession.clear()
+    for (const s of sessions.value) {
+      indexAcpSession(s)
+    }
   }
 
   /**
@@ -253,6 +340,7 @@ export const useSessionStore = defineStore('session', () => {
         ...sessions.value.filter((s) => s.id !== session.id),
       ]
     }
+    indexAcpSession(session)
     messagesById.value[session.id] = []
     return { session, configOptions }
   }
@@ -281,6 +369,8 @@ export const useSessionStore = defineStore('session', () => {
     await apiDeleteSession(sessionId)
     sessions.value = sessions.value.filter((s) => s.id !== sessionId)
     delete messagesById.value[sessionId]
+    // 清理 ACP 反向索引与流式状态槽位（会话已删除，迟到广播直接丢弃）
+    dropSessionIndexes(sessionId)
     // 顺手清理手动改名标记，避免 localStorage 无限累积死 id（会话已物理删除）
     manuallyRenamedIds.value.delete(sessionId)
     persistManuallyRenamed()
@@ -309,6 +399,7 @@ export const useSessionStore = defineStore('session', () => {
   async function removeDraftSession(sessionId: number) {
     await apiDeleteDraftSession(sessionId)
     delete messagesById.value[sessionId]
+    dropSessionIndexes(sessionId)
   }
 
   /**
@@ -330,6 +421,7 @@ export const useSessionStore = defineStore('session', () => {
       full,
       ...sessions.value.filter((s) => s.id !== session.id),
     ]
+    indexAcpSession(full)
   }
 
   /** 本地乐观追加消息（用户消息无后端 id，用负时间戳占位） */
@@ -367,27 +459,24 @@ export const useSessionStore = defineStore('session', () => {
   // WebSocket 流式发送（P2）
   // ---------------------------------------------------------------------------
 
-  /** 当前流式 assistant 占位消息 id（-1 表示无占位） */
-  let streamMsgId = -1
   let wsRegistered = false
 
   /**
    * 追加流式文本到占位消息（热路径约束：改最后一条，不重建列表）。
    * 同时维护 streamBlocks：追加到末尾 text block 或创建新的 text block，
-   * 保持文本与工具调用的时间线交错顺序。
+   * 保持文本与工具调用的时间线交错顺序。会话隔离：只动指定会话的槽位。
    */
-  function appendStreamChunk(text: string) {
-    const sessionId = currentId.value
-    if (sessionId === null || streamMsgId === -1) {
+  function appendStreamChunk(sessionId: number, text: string) {
+    if (streamMsgIdBySession.value[sessionId] === undefined) {
       return
     }
     const list = messagesById.value[sessionId]
     const last = list?.[list.length - 1]
-    if (last && last.id === streamMsgId) {
+    if (last && last.id === streamMsgIdBySession.value[sessionId]) {
       last.content += text
     }
     // 维护 streamBlocks：追加到末尾 text block 或创建新 text block
-    const blocks = streamBlocks.value
+    const blocks = streamBlocksBySession.value[sessionId] ?? (streamBlocksBySession.value[sessionId] = [])
     const lastBlock = blocks[blocks.length - 1]
     if (lastBlock?.kind === 'text') {
       lastBlock.content += text
@@ -397,14 +486,14 @@ export const useSessionStore = defineStore('session', () => {
   }
 
   /** 追加思维/推理流式文本到占位消息的 reasoning 字段（与正文分离展示） */
-  function appendThoughtChunk(text: string) {
-    const sessionId = currentId.value
-    if (sessionId === null || streamMsgId === -1) {
+  function appendThoughtChunk(sessionId: number, text: string) {
+    const msgId = streamMsgIdBySession.value[sessionId]
+    if (msgId === undefined) {
       return
     }
     const list = messagesById.value[sessionId]
     const last = list?.[list.length - 1]
-    if (last && last.id === streamMsgId) {
+    if (last && last.id === msgId) {
       last.reasoning = (last.reasoning ?? '') + text
     }
   }
@@ -413,13 +502,16 @@ export const useSessionStore = defineStore('session', () => {
    * 工具调用事件 → 实时卡片 upsert + streamBlocks 维护。
    * 同 toolId 更新状态（原地修改 card 属性保持引用稳定）；
    * 首次出现时追加 tool block 到 streamBlocks（与文本交错）。
+   * 会话隔离：只动指定会话的卡片列表。
    */
-  function upsertToolCard(event: WsEvent) {
+  function upsertToolCard(sessionId: number, event: WsEvent) {
     const toolId = event.toolId
     if (!toolId) {
       return
     }
-    const existing = activeToolCards.value.find((c) => c.toolId === toolId)
+    const cards = activeToolCardsBySession.value[sessionId] ?? (activeToolCardsBySession.value[sessionId] = [])
+    const blocks = streamBlocksBySession.value[sessionId] ?? (streamBlocksBySession.value[sessionId] = [])
+    const existing = cards.find((c) => c.toolId === toolId)
     if (existing) {
       // title/status 用 truthy 判断：后端把 nil 归一为空串，空串不应覆盖已有标题
       if (event.title) existing.title = event.title
@@ -429,7 +521,7 @@ export const useSessionStore = defineStore('session', () => {
       if (event.input != null) existing.input = event.input
       if (event.output != null) existing.output = event.output
       // 同步更新 streamBlocks 中对应 tool block 的 card 引用（原地修改）
-      for (const b of streamBlocks.value) {
+      for (const b of blocks) {
         if (b.kind === 'tool' && b.card.toolId === toolId) {
           if (event.title) b.card.title = event.title
           if (event.status) b.card.status = event.status
@@ -446,9 +538,9 @@ export const useSessionStore = defineStore('session', () => {
         input: event.input,
         output: event.output,
       }
-      activeToolCards.value = [...activeToolCards.value, card]
+      cards.push(card)
       // 首次出现：追加 tool block 到 streamBlocks（保持时间线交错）
-      streamBlocks.value.push({ kind: 'tool', card })
+      blocks.push({ kind: 'tool', card })
     }
   }
 
@@ -506,15 +598,19 @@ export const useSessionStore = defineStore('session', () => {
     }, 300)
   }
 
+  /** turn 收尾：复位指定会话的流式状态（幂等；排队取消/正常结束/出错共用） */
+  function endStreamTurn(sessionId: number) {
+    statusBySession.value[sessionId] = 'idle'
+    delete streamMsgIdBySession.value[sessionId]
+    streamBlocksBySession.value[sessionId] = []
+    activeToolCardsBySession.value[sessionId] = []
+    activePlanBySession.value[sessionId] = null
+    runningSessionIds.value.delete(sessionId)
+  }
+
   /** turn.done 收尾：结束流式状态，随后强制刷新为 DB 版本（覆盖本地临时消息） */
-  async function finalizeStream() {
-    const sessionId = currentId.value
-    streaming.value = false
-    streamMsgId = -1
-    streamBlocks.value = []
-    if (sessionId === null) {
-      return
-    }
+  async function finalizeStream(sessionId: number) {
+    endStreamTurn(sessionId)
     void refreshAfterTurn(sessionId)
   }
 
@@ -547,39 +643,52 @@ export const useSessionStore = defineStore('session', () => {
     }
     wsRegistered = true
     acpSocket.onMessage((msg: WsServerMessage) => {
+      // 广播按 ACP session id 路由到 DB 会话：
+      // - 属于已索引会话的事件 → 更新该会话的流式槽位（A 在跑时切到 B，A 的事件仍归 A）
+      // - 未知会话（刷新/重连后迟到的历史广播）→ 丢弃，不做全局回退，避免串台
+      // - sessionInfo/configOptions/slashCommands 等「当前会话视图」状态：仅当前会话的广播生效
+      // - pong/session.ready 不带 sessionId（'sessionId' in msg 为 false），回退当前会话（无 case 消费，无害）
+      const sid = 'sessionId' in msg
+        ? (msg.sessionId ? (dbIdByAcpSession.get(msg.sessionId) ?? null) : currentId.value)
+        : currentId.value
       switch (msg.type) {
         case 'event': {
           const e = msg.event
-          if (!e) {
+          if (!e || sid === null) {
             break
+          }
+          // 排队 → 流式兜底：正常由 turn.started 切换；此处兜底旧后端或
+          // 广播丢失场景——收到本会话事件说明 agent 已开始处理
+          if (statusOf(sid) === 'queued') {
+            statusBySession.value[sid] = 'streaming'
           }
           if (e.type === 'agent_message' && e.text) {
             // 流式文本事件：追加到占位消息
-            appendStreamChunk(e.text)
+            appendStreamChunk(sid, e.text)
           } else if (e.type === 'agent_thought' && e.text) {
             // 思维/推理流式事件：追加到占位消息的 reasoning（折叠展示）
-            appendThoughtChunk(e.text)
+            appendThoughtChunk(sid, e.text)
           } else if (e.type === 'tool_call' || e.type === 'tool_call_update') {
             // 工具调用：实时卡片（title/status 随 update 演进）
-            upsertToolCard(e)
+            upsertToolCard(sid, e)
           } else if (e.type === 'plan' && e.plan) {
             // 执行计划：整体替换语义，直接覆盖实时卡片（不按 toolId 合并）
-            activePlan.value = e.plan
+            activePlanBySession.value[sid] = e.plan
           }
           break
         }
         case 'configOptions': {
           // agent 推送的配置项更新（如切换模型后下发思维强度等新选项）：
-          // 实时刷新下拉，无需重新进入会话
-          if (msg.configOptions) {
+          // 仅当前会话的广播生效，避免 A 的更新串到 B 的视图
+          if (msg.configOptions && sid !== null && sid === currentId.value) {
             configOptions.value = msg.configOptions
           }
           break
         }
         case 'slashCommands': {
           // agent 推送的可用 / 命令更新（available_commands_update）：
-          // 实时刷新候选面板，无需重新进入会话
-          if (msg.slashCommands) {
+          // 仅当前会话的广播生效（同上）
+          if (msg.slashCommands && sid !== null && sid === currentId.value) {
             slashCommands.value = msg.slashCommands
           }
           break
@@ -589,31 +698,52 @@ export const useSessionStore = defineStore('session', () => {
           // zacp 本地的首条消息截取标题，实时刷新侧栏与信息面板（activeSession
           // 由 sessions 派生，更新列表项即可，无需额外状态）。
           // 例外：用户手动重命名过的会话（manuallyRenamedIds 含该 id）不被 AI
-          // 标题覆盖，尊重用户命名。
+          // 标题覆盖，尊重用户命名。仅当前会话的广播生效（sid 过滤）。
           const title = msg.sessionInfo?.title
-          if (title && currentId.value !== null && !manuallyRenamedIds.value.has(currentId.value)) {
-            const s = sessions.value.find((x) => x.id === currentId.value)
+          if (
+            title &&
+            sid !== null &&
+            sid === currentId.value &&
+            !manuallyRenamedIds.value.has(sid)
+          ) {
+            const s = sessions.value.find((x) => x.id === sid)
             if (s) {
               s.title = title
             }
           }
           break
         }
+        case 'turn.started': {
+          // 后端排队门闩获取成功、agent 已开始处理本会话 prompt：
+          // queued → streaming。立即执行的会话几乎瞬间收到（排队中一闪而过），
+          // 真正排队的会话在轮到自己时才收到（排队中文案持续到此刻）。
+          if (sid !== null && statusOf(sid) === 'queued') {
+            statusBySession.value[sid] = 'streaming'
+          }
+          break
+        }
         case 'turn.done': {
-          // 流式结束：实时工具卡片/计划清空（历史由 assistant 消息 events 渲染）
-          activeToolCards.value = []
-          activePlan.value = null
-          // 本轮结束：清除侧栏「任务进行中」圆点（turn.done 只投递给绑定会话，清空即清当前）
-          runningSessionId.value = null
-          // 回复完成提示音：仅当本轮确在流式（过滤用户取消、历史迟到 turn.done 等场景）
-          if (streaming.value) {
+          // 收尾目标：优先按广播 sessionId 路由；解析失败（如执行中 agent 重启、
+          // recoverSession 换了新 ACP id，索引尚未更新）时回退「唯一运行中会话」——
+          // 多会话并行时无法区分则丢弃，避免误复位
+          const target =
+            sid ?? (runningSessionIds.value.size === 1 ? [...runningSessionIds.value][0] : null)
+          if (target === null) {
+            break
+          }
+          // 回复完成提示音：仅当本轮确在流式（过滤排队取消、历史迟到 turn.done 等场景）
+          if (statusOf(target) === 'streaming') {
             playSuccessTone()
           }
-          void finalizeStream()
+          void finalizeStream(target)
           break
         }
         case 'permission.request': {
-          // 权限请求：弹出 Modal 等待用户选择
+          // 权限请求：弹出 Modal 等待用户选择。
+          // 若本会话仍在排队（后端不可能发出，属防御）→ 视为已开始执行
+          if (sid !== null && statusOf(sid) === 'queued') {
+            statusBySession.value[sid] = 'streaming'
+          }
           pendingPermission.value = {
             permissionId: msg.permissionId ?? '',
             toolCall: msg.toolCall ?? null,
@@ -622,10 +752,13 @@ export const useSessionStore = defineStore('session', () => {
           break
         }
         case 'error': {
-          streaming.value = false
-          streamMsgId = -1
-          // 出错同样结束本轮：清除侧栏「任务进行中」圆点
-          runningSessionId.value = null
+          // 出错同样结束本轮：清除侧栏「任务进行中」圆点 + 复位状态。
+          // sid 解析失败时同 turn.done 回退唯一运行中会话（recover 换 id 的自愈链）
+          const target =
+            sid ?? (runningSessionIds.value.size === 1 ? [...runningSessionIds.value][0] : null)
+          if (target !== null) {
+            endStreamTurn(target)
+          }
           streamError.value = msg.message ?? msg.code ?? 'unknown error'
           break
         }
@@ -676,9 +809,10 @@ export const useSessionStore = defineStore('session', () => {
     // 乐观展示用户消息 + 空占位（流式追加目标）
     appendLocal(sessionId, 'user', content)
     // 占位 id 必须与 user 消息不同（appendLocal 用 -Date.now()，同一毫秒会撞 key）
-    streamMsgId = -(Date.now() + 1)
+    const placeholderId = -(Date.now() + 1)
+    streamMsgIdBySession.value[sessionId] = placeholderId
     const placeholder: ChatMessage = {
-      id: streamMsgId,
+      id: placeholderId,
       sessionId,
       role: 'assistant',
       content: '',
@@ -691,9 +825,18 @@ export const useSessionStore = defineStore('session', () => {
     ]
     touch(sessionId, placeholder.createdAt)
 
-    streaming.value = true
+    // 状态机：发送后先置 queued（「排队中」+ 停止按钮），后端排队门闩获取成功
+    // 即广播 turn.started（立即执行的会话毫秒级收到，排队中一闪而过；真正排队的
+    // 会话保持到轮到自己）→ 转 streaming。event/permission.request 兜底切换
+    // （旧后端/广播丢失场景），保证状态机不会卡在 queued。
+    statusBySession.value[sessionId] = 'queued'
     streamError.value = null
-    streamBlocks.value = []
+    streamBlocksBySession.value[sessionId] = []
+    activeToolCardsBySession.value[sessionId] = []
+    activePlanBySession.value[sessionId] = null
+    // 快照发送用会话：cancel 帧需要 acpSessionId（草稿不在 sessions 列表）
+    sentSessions.set(sessionId, session)
+    indexAcpSession(session)
 
     const sent = acpSocket.send({
       type: 'prompt',
@@ -703,20 +846,27 @@ export const useSessionStore = defineStore('session', () => {
     })
     if (!sent) {
       // 连接未就绪：提示并回退？P2 简化：置错并结束流式
-      runningSessionId.value = null
-      streaming.value = false
-      streamMsgId = -1
-      streamBlocks.value = []
+      endStreamTurn(sessionId)
       streamError.value = 'websocket not connected'
     } else {
-      // 发送成功即视为「任务进行中」，点亮侧栏圆点（覆盖赋值处理抢占）
-      runningSessionId.value = sessionId
+      // 发送成功即视为「任务进行中」，点亮侧栏圆点
+      runningSessionIds.value.add(sessionId)
     }
   }
 
-  /** 取消当前回复（发送 cancel 帧；agent 停止后事件流随之结束） */
-  function cancelSend() {
-    const session = activeSession.value
+  /**
+   * 取消回复（发送 cancel 帧）。
+   * 按会话语义：排队中的 prompt 被后端撤销排队（广播 turn.done(cancelled)），
+   * 正在执行的 prompt 被 ACP cancel 中断——两者都不影响其它会话的 turn。
+   * 本地立即复位（幂等；后端 turn.done 到达时再走一遍收尾）。
+   */
+  function cancelSend(sessionId?: number) {
+    const sid = sessionId ?? currentId.value
+    if (sid === null) {
+      return
+    }
+    // 优先用发送时快照（草稿不在 sessions 列表），其次当前列表
+    const session = sentSessions.get(sid) ?? sessions.value.find((s) => s.id === sid)
     if (session?.acpSessionId) {
       acpSocket.send({
         type: 'cancel',
@@ -724,11 +874,7 @@ export const useSessionStore = defineStore('session', () => {
         agentId: session.agentId,
       })
     }
-    streaming.value = false
-    streamMsgId = -1
-    streamBlocks.value = []
-    // 取消后 agent 停止、事件流结束：清除侧栏「任务进行中」圆点
-    runningSessionId.value = null
+    endStreamTurn(sid)
   }
 
   function clearStreamError() {
@@ -745,13 +891,17 @@ export const useSessionStore = defineStore('session', () => {
     currentId,
     loading,
     loadingError,
+    // 流式状态（方案 B）：按会话隔离的存取函数 + 当前会话便捷视图
     streaming,
-    runningSessionId,
+    currentStatus,
+    statusOf,
+    streamBlocksOf,
+    activeToolCardsOf,
+    activePlanOf,
+    isStreamingMessage,
+    runningSessionIds,
     streamError,
     pendingPermission,
-    activeToolCards,
-    activePlan,
-    streamBlocks,
     configOptions,
     slashCommands,
     activeSession,

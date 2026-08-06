@@ -183,6 +183,13 @@ Examples:
 
 	// 创建 EventBridge
 	eventBridge := ws.NewEventBridge(wsHandler, mgr, sessionRepo, messageRepo, log)
+	// 注入「prompt 开始执行」钩子：排队门闩获取成功（真正执行）时才注册
+	// 该会话的事件回调 + 广播 turn.started，排队期间不注册——
+	// 执行中会话的流式事件不串台（同 agent 排队/跨 agent 并行场景，
+	// 见 manager.promptGate 与 EventBridge.SetupEventCallback/OnPromptStarted）。
+	mgr.SetPromptStartedHook(func(agentID, sessionID string) {
+		eventBridge.OnPromptStarted(agentID, sessionID)
+	})
 	log.Info("event bridge created")
 
 	// 创建 Service
@@ -239,7 +246,7 @@ Examples:
 	// 提示用回环地址（normalizeAddr 已把 0.0.0.0/[::] 等通配监听转成本机可访问地址），
 	// 无论配置里写的是 :8680 还是 0.0.0.0:8680，用户都能直接打开。
 	fmt.Printf("\nzacp is running at:  http://%s/\n", normalizeAddr(listenAddr))
-	fmt.Println("Press Ctrl+C to stop.\n")
+	fmt.Println("Press Ctrl+C to stop.")
 	if err := engine.Run(listenAddr); err != nil {
 		log.Error("http server failed", "err", err)
 		os.Exit(1)

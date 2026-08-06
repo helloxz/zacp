@@ -79,7 +79,8 @@ function agentNameOf(agentId: string): string {
  */
 async function onSubmit(payload: ComposerSubmitPayload) {
   const text = payload.text.trim()
-  if (!text || sessionStore.streaming) {
+  // 本会话非空闲时不发送（防止 Composer 停用状态下的竞态双击）
+  if (!text || sessionStore.statusOf(current.value?.id) !== 'idle') {
     return
   }
 
@@ -157,9 +158,9 @@ function onNewProjectFromHero() {
         <Composer
           mode="bar"
           :agent-id="current.agentId"
-          :sending="sessionStore.streaming"
+          :status="sessionStore.statusOf(current.id)"
           @submit="onSubmit"
-          @cancel="sessionStore.cancelSend()"
+          @cancel="sessionStore.cancelSend(current.id)"
         />
       </div>
     </div>

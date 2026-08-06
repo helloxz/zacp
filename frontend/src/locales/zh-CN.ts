@@ -57,6 +57,7 @@ export default {
     enterHint: 'Enter 发送 · Shift+Enter 换行',
     send: '发送',
     stop: '停止',
+    queued: '排队中，前一个对话完成后自动开始',
     agent: 'Agent',
     workspace: '工作区',
     selectWorkspace: '选择工作区',

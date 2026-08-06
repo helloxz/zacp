@@ -7,6 +7,7 @@ package manager
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -33,6 +34,11 @@ type Manager struct {
 
 	mu     sync.Mutex
 	agents map[string]*AgentConnection // agentID -> connection
+
+	// promptStartedHook 由外部（EventBridge）注入：agent 连接每次真正开始执行
+	// prompt（排队门闩获取成功）时回调，用于按会话注册事件回调——排队期间
+	// 不注册，执行中会话的回调不会被后到的 prompt 覆盖（见 ws.EventBridge）。
+	promptStartedHook func(agentID, sessionID string)
 
 	// 空闲回收器控制通道；idleTimeout <= 0 时不启动
 	stopReaper chan struct{}
@@ -143,6 +149,102 @@ func (m *Manager) ListAgents() []*AgentStatus {
 	return result
 }
 
+// SetPromptStartedHook 注入「prompt 开始执行」钩子（ws.EventBridge 组装时调用，
+// 内部实现为 SetupEventCallback 的按会话注册）。持 m.mu 写入，StartAgent 读，无竞态。
+func (m *Manager) SetPromptStartedHook(fn func(agentID, sessionID string)) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.promptStartedHook = fn
+}
+
+// ErrPromptCancelled 排队中的 prompt 被用户取消（撤销排队）。
+// 与「正在执行的 prompt 被 ACP cancel」不同：撤销排队时 agent 尚未收到任何内容，
+// 调用方（ws bridge）据此广播 turn.done(cancelled) 复位前端「排队中」状态，不报错。
+var ErrPromptCancelled = errors.New("prompt cancelled while queued")
+
+// IsPromptCancelledErr 判断错误是否为排队撤销。
+func IsPromptCancelledErr(err error) bool {
+	return errors.Is(err, ErrPromptCancelled)
+}
+
+// promptGate 可取消排队门闩：同一 AgentConnection 的 prompt 串行执行，
+// 后续 prompt 进入 FIFO 等待队列；等待者可通过 context 取消撤销排队。
+// 锁在持有者之间「传递」：release 唤醒队首（locked 保持 true），队首被取消时
+// 继续唤醒下一个，队列清空才置 locked=false——因此任意时刻只有一人持有。
+type promptGate struct {
+	mu     sync.Mutex
+	locked bool
+	queue  []chan struct{}
+}
+
+// acquire 获取门闩；ctx 取消时撤销排队并返回 ctx.Err()（不持有门闩）。
+func (g *promptGate) acquire(ctx context.Context) (func(), error) {
+	g.mu.Lock()
+	if !g.locked {
+		g.locked = true
+		g.mu.Unlock()
+		return g.release, nil
+	}
+	ch := make(chan struct{})
+	g.queue = append(g.queue, ch)
+	g.mu.Unlock()
+
+	select {
+	case <-ch:
+		// 轮到自己：release 已把队首（自己）移出队列并 close，锁已传递，无需再竞争。
+		// 但 ch 与 ctx.Done() 可能同时就绪而被随机选中——若调用方已取消，
+		// 不得把已取消的排队提升为执行者，锁必须继续传给下一个。
+		if ctx.Err() != nil {
+			g.mu.Lock()
+			g.passLockLocked()
+			g.mu.Unlock()
+			return nil, ctx.Err()
+		}
+		return g.release, nil
+	case <-ctx.Done():
+		// 撤销排队：从队列移除自己。若队列中找不到自己，说明 release 已把
+		// 锁传给自己（队首被移出并 close）而自己选择放弃——此时必须继续把锁
+		// 传给下一个等待者（或解锁），否则队列卡死。
+		g.mu.Lock()
+		found := false
+		for i, c := range g.queue {
+			if c == ch {
+				g.queue = append(g.queue[:i], g.queue[i+1:]...)
+				found = true
+				break
+			}
+		}
+		if !found {
+			// 锁已传给自己但放弃：必须把锁传给下一个等待者（pop+close，
+			// 与 release 对称——被唤醒者已在队列之外，其 release 不会重复 close），
+			// 队列为空则解锁。
+			g.passLockLocked()
+		}
+		g.mu.Unlock()
+		return nil, ctx.Err()
+	}
+}
+
+// passLockLocked 在持有 g.mu 的前提下把锁传给下一个等待者（队首 pop+close），
+// 队列为空则解锁。release 与「唤醒后放弃」的取消分支共用。
+func (g *promptGate) passLockLocked() {
+	if len(g.queue) > 0 {
+		ch := g.queue[0]
+		g.queue = g.queue[1:]
+		close(ch)
+	} else {
+		g.locked = false
+	}
+}
+
+// release 释放门闩：把队首移出队列并唤醒（锁随之传递到队首，locked 保持 true）；
+// 队列为空时解锁。队首元素被移出后其 ch 恰好被 close 一次，不会重复 close。
+func (g *promptGate) release() {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.passLockLocked()
+}
+
 // StartAgent 启动指定 agent 进程（如果未启动）。
 func (m *Manager) StartAgent(ctx context.Context, agentID string) error {
 	m.mu.Lock()
@@ -165,6 +267,17 @@ func (m *Manager) StartAgent(ctx context.Context, agentID string) error {
 
 	// 创建新连接
 	conn := NewAgentConnection(m.log, provider, m.autoApprove)
+	// 注入「prompt 开始执行」钩子：排队门闩获取成功（真正执行）时才注册
+	// 该会话的事件回调；排队期间不注册，执行中会话的回调不被覆盖。
+	// 锁内快照 hook（StartAgent 持 m.mu 写、此处读，避免热重载期间的竞态）。
+	conn.onPromptStarted = func(sessionID string) {
+		m.mu.Lock()
+		fn := m.promptStartedHook
+		m.mu.Unlock()
+		if fn != nil {
+			fn(agentID, sessionID)
+		}
+	}
 	if err := conn.Start(ctx); err != nil {
 		return fmt.Errorf("start agent '%s': %w", agentID, err)
 	}
@@ -360,6 +473,7 @@ func (m *Manager) LoadSession(ctx context.Context, agentID, sessionID string) er
 // 不同 agent 对「会话失效」返回的错误文本不同，这里统一做大小写不敏感匹配：
 //   - reasonix 等：`session/xxx: unknown session <uuid>`
 //   - qoder 等：`{"code":-32603,...,"details":"Session not found: <uuid>"}`
+//
 // ws bridge（prompt 路径）与 service（config-options 路径）共用此判断触发自动恢复。
 func IsUnknownSessionErr(err error) bool {
 	if err == nil {
@@ -547,7 +661,17 @@ type AgentConnection struct {
 	currentSession *SessionState
 	started        bool
 	procCancel     context.CancelFunc
-	promptMu       sync.Mutex // 序列化 prompt 调用
+	promptGate     promptGate // 同 agent prompt 串行门闩（可取消排队）
+
+	// 排队撤销：queuedCancels 记录「等待门闩中」的 prompt 的取消函数（按会话），
+	// Cancel 先查这里撤销排队（不向 agent 发任何内容），再发 ACP cancel（针对正在执行的 prompt）
+	cancelMu      sync.Mutex
+	queuedCancels map[acp.SessionId]context.CancelFunc
+
+	// onPromptStarted 在排队门闩获取成功（本会话真正开始执行）后调用，
+	// 由 EventBridge 注入：此时才注册该会话的事件回调，保证排队期间
+	// 执行中会话的事件仍按原会话路由（修复旧「每次 prompt 前覆盖注册」的串台）。
+	onPromptStarted func(sessionID string)
 
 	// 空闲回收用：lastUsed 为最后一次活跃操作时间，activePrompts 为进行中的 prompt 数
 	lastUsed      time.Time
@@ -571,7 +695,8 @@ func NewAgentConnection(log *slog.Logger, provider *providers.Provider, autoAppr
 		provider: provider,
 		bridge:   acpclient.New(log, autoApprove),
 		// 初始视为活跃：刚启动的连接不应被立即回收
-		lastUsed: time.Now(),
+		lastUsed:      time.Now(),
+		queuedCancels: make(map[acp.SessionId]context.CancelFunc),
 	}
 }
 
@@ -726,6 +851,10 @@ type PromptResult struct {
 }
 
 // Prompt 发送消息并等待响应。
+// 同 agent 的 prompt 经 promptGate 串行：后续 prompt 进入 FIFO 排队，
+// 排队期间不向 agent 发送任何内容（agent 端始终只有一个 turn 在执行）。
+// 排队中的 prompt 可被 Cancel 撤销（按会话，不向 agent 发任何东西）；
+// 已开始执行的 turn 由 ACP cancel 中断。
 func (c *AgentConnection) Prompt(ctx context.Context, sessionID acp.SessionId, message string) (*PromptResult, error) {
 	message = strings.TrimSpace(message)
 	if message == "" {
@@ -740,8 +869,33 @@ func (c *AgentConnection) Prompt(ctx context.Context, sessionID acp.SessionId, m
 	conn := c.conn
 	c.mu.Unlock()
 
-	c.promptMu.Lock()
-	defer c.promptMu.Unlock()
+	// 排队等待门闩用 qctx：可被 Cancel 触发取消（撤销排队）。
+	// 执行阶段仍用原 ctx——排队撤销只影响「等待」，不误伤已开始的 turn
+	// （取消执行中 turn 走下方 ACP cancel 路径）。
+	qctx, qcancel := context.WithCancel(ctx)
+	defer qcancel()
+	c.cancelMu.Lock()
+	c.queuedCancels[sessionID] = qcancel
+	c.cancelMu.Unlock()
+
+	release, err := c.promptGate.acquire(qctx)
+
+	c.cancelMu.Lock()
+	delete(c.queuedCancels, sessionID)
+	c.cancelMu.Unlock()
+
+	if err != nil {
+		// 排队期间被取消（撤销排队）：agent 尚未收到任何内容，
+		// 返回可识别错误，调用方据此广播 turn.done(cancelled) 复位前端「排队中」
+		return nil, fmt.Errorf("%w: session %s", ErrPromptCancelled, sessionID)
+	}
+	defer release()
+
+	// 真正开始执行：通知外部（EventBridge）注册本会话的事件回调，
+	// 使后续事件/turn.done 按本会话路由（排队期间不覆盖其它会话的回调）。
+	if c.onPromptStarted != nil {
+		c.onPromptStarted(string(sessionID))
+	}
 
 	c.bridge.Reset()
 	start := time.Now()
@@ -763,8 +917,18 @@ func (c *AgentConnection) Prompt(ctx context.Context, sessionID acp.SessionId, m
 	}, nil
 }
 
-// Cancel 取消当前 prompt。
+// Cancel 取消 prompt：排队中的先撤销排队（不向 agent 发任何内容），
+// 正在执行的发 ACP cancel 中断。两步都做（幂等），任意状态都能取消。
 func (c *AgentConnection) Cancel(ctx context.Context, sessionID acp.SessionId) error {
+	// 第一步：撤销排队（若该会话的 prompt 仍在等待门闩）。触发后等待中的
+	// Prompt 会从队列移除并返回 ErrPromptCancelled，不落任何内容。
+	c.cancelMu.Lock()
+	if cancel, ok := c.queuedCancels[sessionID]; ok {
+		cancel()
+	}
+	c.cancelMu.Unlock()
+
+	// 第二步：ACP cancel（针对正在执行的 prompt；对未执行的会话是 no-op，无害）
 	c.mu.Lock()
 	defer c.mu.Unlock()
 

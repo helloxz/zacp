@@ -166,7 +166,8 @@ async function onSwitchAgent(agentId: string) {
  */
 async function onSubmit(payload: ComposerSubmitPayload) {
   const text = payload.text.trim()
-  if (!text || sessionStore.streaming || !draftSession.value) {
+  // 本草稿非空闲时不发送（排队中/流式中由停止按钮接管）
+  if (!text || sessionStore.statusOf(draftSession.value?.id) !== 'idle' || !draftSession.value) {
     return
   }
   const draft = draftSession.value
@@ -300,9 +301,9 @@ onUnmounted(() => {
             ref="composerRef"
             mode="card"
             :agent-id="selectedAgentId"
-            :sending="sessionStore.streaming"
+            :status="sessionStore.statusOf(draftSession?.id)"
             @submit="onSubmit"
-            @cancel="sessionStore.cancelSend()"
+            @cancel="sessionStore.cancelSend(draftSession?.id)"
           />
         </div>
       </div>

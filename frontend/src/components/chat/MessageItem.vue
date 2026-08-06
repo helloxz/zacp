@@ -44,29 +44,33 @@ const reasoning = computed(() => {
 })
 
 /**
- * 流式终态判定：仅当「当前 turn 仍在流式」且「本条就是流式占位消息（列表最后一条）」时
+ * 流式终态判定：仅当「本消息所属会话的 turn 仍在流式」且「本条就是流式占位消息（列表最后一条）」时
  * 视为未完成；incremark 据此决定块状态（pending/completed）与渐入动画。
- * turn.done / cancelSend 后 streaming=false，消息转终态，再由 store 刷新 DB 最终内容。
+ * turn.done / cancelSend 后状态回 idle，消息转终态，再由 store 刷新 DB 最终内容。
+ * 按会话判断：A 流式时切到 B，A 的消息仍显示流式态。
  */
 const isFinished = computed(
   () =>
     !(
-      sessionStore.streaming &&
+      sessionStore.statusOf(props.message.sessionId) === 'streaming' &&
       sessionStore.activeMessages.at(-1)?.id === props.message.id
     ),
 )
 
 /**
- * 是否为流式占位消息（当前 turn 正在流式且本条是列表最后一条）。
- * 流式期间该消息 events 为空，工具卡片由 store.activeToolCards 实时渲染，
+ * 是否为流式占位消息（本会话 turn 正在流式且本条是列表最后一条）。
+ * 流式期间该消息 events 为空，工具卡片由 store.activeToolCardsOf 实时渲染，
  * 与历史 toolCards 区块互斥、位置一致（都在 AI 内容框上方），避免 tool.done
  * 后工具条从消息下方“跳”到上方。
  */
 const isStreamingPlaceholder = computed(
   () =>
-    sessionStore.streaming &&
+    sessionStore.statusOf(props.message.sessionId) === 'streaming' &&
     sessionStore.activeMessages.at(-1)?.id === props.message.id,
 )
+
+/** 本消息会话的实时执行计划（流式占位消息展示用；null=无计划） */
+const activePlan = computed(() => sessionStore.activePlanOf(props.message.sessionId))
 
 /**
  * 消息渲染块：流式期间用 store.streamBlocks（实时维护），
@@ -75,9 +79,9 @@ const isStreamingPlaceholder = computed(
  * 按工具调用点拆分为多段，恢复文本→工具→文本的因果交错。
  */
 const blocks = computed<MessageBlock[]>(() => {
-  // 流式占位消息：使用 store.streamBlocks（随事件增量构建）
+  // 流式占位消息：使用本会话的 store.streamBlocks（随事件增量构建）
   if (isStreamingPlaceholder.value) {
-    return sessionStore.streamBlocks
+    return sessionStore.streamBlocksOf(props.message.sessionId)
   }
   // 历史消息：从 events 重建，tool block 携带 contentSplit 位置
   if (props.message.role !== 'assistant' || !props.message.events) {
@@ -218,10 +222,10 @@ const plan = computed<Plan | null>(() => {
         class="w-full"
         :card="block.card"
       />
-      <!-- 执行计划块（reasoning 之后单独渲染，不参与交错） -->
+      <!-- 执行计划块（reasoning 之后单独渲染，不参与交错；按会话取） -->
       <PlanCard
-        v-else-if="block.kind === 'plan' && sessionStore.activePlan"
-        :plan="sessionStore.activePlan"
+        v-else-if="block.kind === 'plan' && activePlan"
+        :plan="activePlan"
       />
     </template>
 
