@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -232,6 +233,13 @@ Examples:
 	log.Info("HTTP listening", "addr", listenAddr)
 	log.Info("try: curl -s http://" + normalizeAddr(listenAddr) + "/api/v1/agents")
 	log.Info("websocket endpoint: ws://" + normalizeAddr(listenAddr) + "/api/v1/ws")
+
+	// 启动提示：向 stdout 打印用户可直接访问的 Web UI 地址（英文提示，便于复制到浏览器）。
+	// 与 slog 日志（默认输出到 stderr）分开：用户重定向日志到文件时，访问地址仍保留在终端。
+	// 提示用回环地址（normalizeAddr 已把 0.0.0.0/[::] 等通配监听转成本机可访问地址），
+	// 无论配置里写的是 :8680 还是 0.0.0.0:8680，用户都能直接打开。
+	fmt.Printf("\nzacp is running at:  http://%s/\n", normalizeAddr(listenAddr))
+	fmt.Println("Press Ctrl+C to stop.\n")
 	if err := engine.Run(listenAddr); err != nil {
 		log.Error("http server failed", "err", err)
 		os.Exit(1)
@@ -245,14 +253,21 @@ func envOr(k, def string) string {
 	return def
 }
 
-// normalizeAddr 把监听地址转成可拼 URL 的 host:port 形式（仅用于日志提示）：
-// ":8680" → "127.0.0.1:8680"；"127.0.0.1:8680" / "0.0.0.0:8680" → 原样（0.0.0.0 仅提示用）。
+// normalizeAddr 把监听地址转成可拼 URL 的 host:port 形式（仅用于提示，不影响实际监听）：
+// ":8680" → "127.0.0.1:8680"；"127.0.0.1:8680" / "192.168.x.x:8680" → 原样；
+// "0.0.0.0:8680" → "127.0.0.1:8680"、"[::]:8680" → "[::1]:8680"
+// （绑定所有网卡时回环地址本机一定可访问，作为提示 URL 最稳妥）。
 func normalizeAddr(addr string) string {
-	if addr == "" {
+	switch {
+	case addr == "":
 		return "127.0.0.1:8680"
-	}
-	if addr[0] == ':' {
+	case addr[0] == ':':
 		return "127.0.0.1" + addr
+	case strings.HasPrefix(addr, "0.0.0.0:"):
+		return "127.0.0.1" + addr[len("0.0.0.0"):]
+	case strings.HasPrefix(addr, "[::]:"):
+		return "[::1]" + addr[len("[::]"):]
+	default:
+		return addr
 	}
-	return addr
 }

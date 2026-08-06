@@ -16,6 +16,7 @@ import {
   setConfigOption as apiSetConfigOption,
 } from '@/api'
 import { acpSocket } from '@/composables/useAcpSocket'
+import { playSuccessTone } from '@/utils/successTone'
 import type { MessageBlock } from '@/composables/useMessageBlocks'
 import type {
   AvailableCommand,
@@ -592,6 +593,10 @@ export const useSessionStore = defineStore('session', () => {
           // 流式结束：实时工具卡片/计划清空（历史由 assistant 消息 events 渲染）
           activeToolCards.value = []
           activePlan.value = null
+          // 回复完成提示音：仅当本轮确在流式（过滤用户取消、历史迟到 turn.done 等场景）
+          if (streaming.value) {
+            playSuccessTone()
+          }
           void finalizeStream()
           break
         }

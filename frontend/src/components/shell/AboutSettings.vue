@@ -20,11 +20,12 @@ const X_URL = 'https://x.com/xiaozblog'
   <div class="flex flex-col items-center gap-6 pt-2 text-center">
     <!-- Logo + 名称 + 简介 -->
     <div class="flex flex-col items-center gap-3">
-      <div
-        class="flex h-16 w-16 items-center justify-center rounded-2xl bg-gradient-to-br from-indigo-500 to-violet-500 text-3xl font-bold text-white shadow-lg shadow-indigo-200"
-      >
-        Z
-      </div>
+      <!-- 应用图标：使用 public/favicon.png（与站点 favicon 一致） -->
+      <img
+        src="/favicon.png"
+        alt=""
+        class="h-16 w-16 rounded-2xl object-contain shadow-lg shadow-indigo-200"
+      />
       <div>
         <h3 class="text-lg font-semibold text-slate-800">
           {{ t('common.appName') }}
