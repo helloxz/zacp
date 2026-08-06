@@ -6,12 +6,16 @@
 #   pack.sh  —— 发布打包：多平台矩阵 + UPX + zip（供 GitHub Actions release.yml 调用，也可本机使用）
 #
 # 产物（backend/bin/ 下，与 build.sh 产物同目录）：
-#   zacp-v<版本>-<GOOS>-<GOARCH>.zip
+#   linux/*            -> zacp-v<版本>-linux-<GOARCH>.tar.gz
+#   darwin|windows/*   -> zacp-v<版本>-<GOOS>-<GOARCH>.zip
 #   包内结构（顶层目录，解压后不污染客户目录）：
 #     zacp-v<版本>-<GOOS>-<GOARCH>/
 #     └── zacp                      （Windows 平台为 zacp.exe）
 #
-# 说明：发布包仅含二进制。README 与 config.example.toml 不随 zip 分发——
+# 格式选择：Linux 用 .tar.gz（tar 是所有发行版的基础工具，unzip 常未预装），
+#   与 install.sh 的 Linux 下载路径对齐；macOS / Windows 保持 zip。
+#
+# 说明：发布包仅含二进制。README 与 config.example.toml 不随包分发——
 #   config.example.toml 已由 go:embed 打进二进制（首次启动自动生成 ~/.zacp/config.toml）；
 #   README 可在仓库 / Release 页面查看。
 #
@@ -50,13 +54,10 @@ for arg in "$@"; do
 done
 
 # --- 0. 前置检查 ---
-# 前端构建依赖 bun（AGENTS.md 强制）；打包需要 zip（缺失时用 python3 标准库兜底）
+# 前端构建依赖 bun（AGENTS.md 强制）；zip 打包工具按平台在打包循环内检查
+# （linux 用 tar，不需要 zip；darwin/windows 需要 zip 或 python3 兜底）
 if [ "$SKIP_FRONTEND" != 1 ] && ! command -v bun >/dev/null 2>&1; then
   echo "错误: 未找到 bun，请先安装 https://bun.sh（本项目前端禁止用 npm/pnpm/yarn）" >&2
-  exit 1
-fi
-if ! command -v zip >/dev/null 2>&1 && ! command -v python3 >/dev/null 2>&1; then
-  echo "错误: 打包需要 zip 命令或 python3" >&2
   exit 1
 fi
 
@@ -102,7 +103,7 @@ mkdir -p backend/bin
 STAGE="$(mktemp -d)"
 trap 'rm -rf "$STAGE"' EXIT
 
-# --- 4. 逐平台：编译 → UPX → 组装 zip ---
+# --- 4. 逐平台：编译 → UPX → 组装发布包（linux 用 tar.gz，其它平台用 zip）---
 for p in $PLATFORMS; do
   GOOS="${p%/*}"
   GOARCH="${p#*/}"
@@ -131,16 +132,24 @@ for p in $PLATFORMS; do
   fi
 
   # 组装发布包内容：仅二进制（config.example.toml 已 embed 进二进制，见 backend/internal/web）
-
-  OUT="${ROOT}/backend/bin/${DIR}.zip"
-  if command -v zip >/dev/null 2>&1; then
-    (cd "$STAGE" && zip -qr "$OUT" "$DIR")
+  if [ "$GOOS" = "linux" ]; then
+    # Linux 用 .tar.gz：tar 是所有发行版的基础工具，unzip 常未预装，install.sh 下载路径依赖此格式
+    OUT="${ROOT}/backend/bin/${DIR}.tar.gz"
+    (cd "$STAGE" && tar -czf "$OUT" "$DIR")
   else
-    # 本机无 zip 命令时的标准库兜底（python3 -m zipfile 保留文件权限位）
-    (cd "$STAGE" && python3 -m zipfile -c "$OUT" "$DIR")
+    # macOS / Windows 保持 zip；本机无 zip 命令时用 python3 标准库兜底（保留文件权限位）
+    OUT="${ROOT}/backend/bin/${DIR}.zip"
+    if command -v zip >/dev/null 2>&1; then
+      (cd "$STAGE" && zip -qr "$OUT" "$DIR")
+    elif command -v python3 >/dev/null 2>&1; then
+      (cd "$STAGE" && python3 -m zipfile -c "$OUT" "$DIR")
+    else
+      echo "错误: 打包 ${GOOS}/${GOARCH} 需要 zip 命令或 python3" >&2
+      exit 1
+    fi
   fi
-  echo "    zip: $(basename "$OUT") ($(wc -c < "$OUT") bytes)"
+  echo "    package: $(basename "$OUT") ($(wc -c < "$OUT") bytes)"
 done
 
 echo ""
-echo "完成: backend/bin/ 下共 $(ls backend/bin/zacp-v*.zip 2>/dev/null | wc -l) 个发布包"
+echo "完成: backend/bin/ 下共 $(( $(ls backend/bin/zacp-v*.tar.gz 2>/dev/null | wc -l) + $(ls backend/bin/zacp-v*.zip 2>/dev/null | wc -l) )) 个发布包"

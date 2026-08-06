@@ -1,7 +1,8 @@
 name: release
 
 # zacp 发布工作流：编译 6 平台二进制（Linux/macOS/Windows × amd64/arm64）→
-# linux 平台 UPX 最高压缩 → 组装标准 zip 发布包 → 上传到 GitHub Release 附件。
+# linux 平台 UPX 最高压缩 → 组装发布包（Linux 为 .tar.gz，避免目标机未装 unzip；
+# macOS/Windows 为 .zip）→ 上传到 GitHub Release 附件。
 #
 # 触发方式（二选一）：
 #   1) release: published —— 在 GitHub 界面 / gh CLI 创建 Release 后自动构建并上传附件（推荐）
@@ -77,11 +78,11 @@ jobs:
       - name: 运行后端测试（发布前 sanity）
         run: cd backend && go test ./...
 
-      - name: 全量打包（6 平台 + UPX + zip）
+      - name: 全量打包（6 平台 + UPX + tar.gz/zip）
         run: ./scripts/pack.sh --all
 
       - name: 上传 Release 附件
-        # --clobber：工作流失败重跑时同名 zip 已存在，允许覆盖
-        run: gh release upload "${{ steps.tag.outputs.tag }}" backend/bin/zacp-v*.zip --clobber
+        # --clobber：工作流失败重跑时同名包已存在，允许覆盖
+        run: gh release upload "${{ steps.tag.outputs.tag }}" backend/bin/zacp-v*.zip backend/bin/zacp-v*.tar.gz --clobber
         env:
           GH_TOKEN: ${{ github.token }}
