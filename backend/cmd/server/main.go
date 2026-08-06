@@ -186,7 +186,7 @@ Examples:
 
 	// 创建 Service
 	workspaceSvc := service.NewWorkspaceService(workspaceRepo)
-	sessionSvc := service.NewSessionService(workspaceRepo, sessionRepo, messageRepo, mgr, cfg.Session.DefaultCwd)
+	sessionSvc := service.NewSessionService(workspaceRepo, sessionRepo, messageRepo, mgr, cfg.Session.DefaultCwd, cfg.Session.StartTimeout)
 	fileSvc := service.NewFileService(workspaceRepo, cfg.Session.DefaultCwd)
 
 	// 创建 Handler

@@ -18,6 +18,10 @@ auto_approve = false
 # 空闲回收：agent 超过该时长无活跃操作即被停止释放内存（下次使用时自动重启）
 # 0 表示禁用空闲回收；格式为 Go duration（如 "30m"、"1h"）
 idle_timeout = "30m"
+# 启动超时：agent 进程拉起 + ACP 握手 + 首次建会话的总体上限。
+# agent 命令/参数配置错误时可能无限挂起（如进入了非 ACP 模式），
+# 超时后终止启动并向前端报错，避免一直转圈；0 表示不限制
+start_timeout = "30s"
 
 [database]
 # 相对路径相对于 $ZACP_DATA（默认 ~/.zacp）

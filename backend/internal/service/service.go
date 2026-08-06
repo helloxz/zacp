@@ -118,16 +118,20 @@ type SessionService struct {
 	mgr           *manager.Manager
 	// defaultCwd 是 config session.default_cwd；创建会话未指定工作区时的回退路径。
 	defaultCwd string
+	// startTimeout 是 config session.start_timeout：agent 启动段（拉起进程 + ACP
+	// 握手 + 首次 session/new）的超时上限；0 表示不限制。
+	startTimeout time.Duration
 }
 
 // NewSessionService 创建会话服务
-func NewSessionService(workspaceRepo *store.WorkspaceRepository, sessionRepo *store.SessionRepository, msgRepo *store.MessageRepository, mgr *manager.Manager, defaultCwd string) *SessionService {
+func NewSessionService(workspaceRepo *store.WorkspaceRepository, sessionRepo *store.SessionRepository, msgRepo *store.MessageRepository, mgr *manager.Manager, defaultCwd string, startTimeout time.Duration) *SessionService {
 	return &SessionService{
 		workspaceRepo: workspaceRepo,
 		sessionRepo:   sessionRepo,
 		msgRepo:       msgRepo,
 		mgr:           mgr,
 		defaultCwd:    defaultCwd,
+		startTimeout:  startTimeout,
 	}
 }
 
@@ -197,15 +201,33 @@ func (s *SessionService) CreateSession(ctx context.Context, workspaceID uint, ag
 
 	// 启动 agent（如果未启动）
 	agentStatus, _ := s.mgr.GetAgentStatus(agentID)
+
+	// 启动段超时保护：agent 进程拉起 + ACP initialize 握手 + 首次 session/new
+	// 都可能因命令/参数配置错误而无限挂起（如命令存在但进入了普通 REPL 而非
+	// ACP 模式），用 start_timeout（默认 30s）兜底：超时即中断调用
+	// （manager 在 Initialize 失败路径会 kill 子进程，防僵尸）并向前端返回
+	// 明确错误，避免界面永久 loading；0 表示不限制。
+	startCtx := ctx
+	cancel := func() {}
+	if s.startTimeout > 0 {
+		startCtx, cancel = context.WithTimeout(ctx, s.startTimeout)
+		defer cancel()
+	}
 	if !agentStatus.Running {
-		if err := s.mgr.StartAgent(ctx, agentID); err != nil {
+		if err := s.mgr.StartAgent(startCtx, agentID); err != nil {
+			if errors.Is(err, context.DeadlineExceeded) {
+				return nil, fmt.Errorf("start agent '%s' timed out after %s", agentID, s.startTimeout)
+			}
 			return nil, fmt.Errorf("failed to start agent: %w", err)
 		}
 	}
 
 	// 创建 ACP session（返回 agent 下发的配置项：模型/思考强度/mode 等）
-	acpSessionID, configOptions, err := s.mgr.CreateSession(ctx, agentID, workspace.Path)
+	acpSessionID, configOptions, err := s.mgr.CreateSession(startCtx, agentID, workspace.Path)
 	if err != nil {
+		if errors.Is(err, context.DeadlineExceeded) {
+			return nil, fmt.Errorf("create ACP session for agent '%s' timed out after %s", agentID, s.startTimeout)
+		}
 		return nil, fmt.Errorf("failed to create ACP session: %w", err)
 	}
 

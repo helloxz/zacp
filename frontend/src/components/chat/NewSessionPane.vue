@@ -55,27 +55,49 @@ const draftCreating = ref(false)
 let alive = true
 
 /**
+ * 创建请求代际号：每次发起 createDraftFor 自增。
+ * 异步返回时若 gen 已不等于最新 draftGen，说明期间用户又切了 agent
+ * （或组件已卸载），本次请求作废：只做清理（释放已创建的草稿），
+ * 不写任何状态、不弹错误。解决「切 tab 时旧请求仍挂起 → 新 agent
+ * 一直被 draftCreating 拦截、界面永远转圈」的问题。
+ */
+let draftGen = 0
+
+/** 当前选中 agent 的显示名（加载遮罩文案用，避免只转圈不知在启动哪个） */
+const selectedAgentName = computed(
+  () => agents.value.find((a) => a.agentId === selectedAgentId.value)?.name ?? '',
+)
+
+/**
  * 为指定 agent 创建隐式草稿会话，并加载其 configOptions。
  * 切 tab 前先释放旧草稿，避免堆积空 ACP session。
  * 注意：draftCreating 必须先置 true（在释放旧草稿之前），
  * 让遮罩全程覆盖输入卡片，避免「释放→创建」间隙内容区空窗导致的跳动闪烁。
+ * draftCreating 只表示「有请求在途」，不再拦截新请求——切换时旧请求
+ * 通过代际号作废，新请求立即放行（旧请求返回后自行清理）。
  */
 async function createDraftFor(agentId: string) {
-  if (!agentId || draftCreating.value) return
+  if (!agentId) return
+  // 新代际开始：此前未完成的创建请求全部作废
+  const gen = ++draftGen
+  // 切换即清除上一次的报错横幅，避免旧 agent 的错误串到新 agent 界面
+  sessionStore.clearStreamError()
   draftCreating.value = true
   try {
     // 释放上一个草稿（如有）
     if (draftSession.value) {
       await releaseDraft()
     }
+    // 释放期间用户可能又切了 tab：本次请求作废，不继续创建
+    if (!alive || gen !== draftGen) return
 
     const { session, configOptions } = await sessionStore.createSession(
       agentId,
       props.workspaceId,
       true, // isDraft
     )
-    if (!alive) {
-      // 用户在草稿创建期间已切走（组件卸载）：立即释放刚创建的草稿，
+    if (!alive || gen !== draftGen) {
+      // 用户在草稿创建期间已切走（卸载或切到其它 agent）：立即释放刚创建的草稿，
       // 避免泄露 ACP session；且不得再写 currentId 覆盖新会话的选中态
       void sessionStore.removeDraftSession(session.id).catch(() => {})
       return
@@ -93,9 +115,14 @@ async function createDraftFor(agentId: string) {
     // 无此步时 /new 空态输入框拿不到候选，/ 提示不出现。
     await sessionStore.loadSlashCommands(session.id)
   } catch (e) {
+    // 过期请求的错误丢弃：用户已切到其它 agent，别把旧 agent 的失败弹到新界面上
+    if (gen !== draftGen) return
     sessionStore.streamError = e instanceof Error ? e.message : String(e)
   } finally {
-    draftCreating.value = false
+    // 仅最新代际负责清遮罩：旧请求完成时若有更新代际在途，遮罩归新代际管
+    if (gen === draftGen) {
+      draftCreating.value = false
+    }
   }
 }
 
@@ -266,7 +293,7 @@ onUnmounted(() => {
           >
             <span class="flex items-center gap-2 text-sm text-slate-400">
               <span class="inline-block h-4 w-4 animate-spin rounded-full border-2 border-slate-300 border-t-slate-600"></span>
-              {{ t('chat.loadingAgent') }}
+              {{ t('chat.loadingAgent') }}{{ selectedAgentName ? ' ' + selectedAgentName : '' }}
             </span>
           </div>
           <Composer

@@ -35,6 +35,10 @@ type SessionConfig struct {
 	// IdleTimeout 空闲回收超时：agent 超过该时长无活跃操作（无进行中 prompt）
 	// 且无未回收条件时会被停掉释放内存；0 表示禁用空闲回收。
 	IdleTimeout time.Duration `mapstructure:"idle_timeout"`
+	// StartTimeout 启动超时：agent 进程拉起 + ACP initialize 握手 + 首次
+	// session/new 的总体上限；超时即终止启动（kill 进程）并向前端报错，
+	// 防止 agent 命令/参数配置错误时请求无限挂起。0 表示不限制。
+	StartTimeout time.Duration `mapstructure:"start_timeout"`
 }
 
 // DatabaseConfig 数据库配置。
@@ -64,9 +68,10 @@ func DefaultConfig() *Config {
 			Mode: "debug",
 		},
 		Session: SessionConfig{
-			DefaultCwd:  ".",
-			AutoApprove: false,
-			IdleTimeout: 30 * time.Minute,
+			DefaultCwd:   ".",
+			AutoApprove:  false,
+			IdleTimeout:  30 * time.Minute,
+			StartTimeout: 30 * time.Second,
 		},
 		Database: DatabaseConfig{
 			Path: "data/zacp.db",
@@ -145,6 +150,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("session.default_cwd", ".")
 	v.SetDefault("session.auto_approve", false)
 	v.SetDefault("session.idle_timeout", "30m")
+	v.SetDefault("session.start_timeout", "30s")
 	v.SetDefault("database.path", "data/zacp.db")
 }
 
