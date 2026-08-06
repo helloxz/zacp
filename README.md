@@ -1,180 +1,69 @@
 # zacp
 
-Web UI gateway for multiple **Agent Client Protocol (ACP)** agents (e.g. Pi, Reasonix, Grok).
+> 一个基于 **ACP（Agent Client Protocol）** 协议的多 Agent Web 网关，让你在浏览器里同时使用多种 AI Agent 工具（如 Reasonix、Grok、Omp 等）进行对话。
 
-- **Backend**: Go + [Gin](https://github.com/gin-gonic/gin) + [acp-go-sdk](https://github.com/coder/acp-go-sdk)
-- **Frontend**: Web UI (to be scaffolded under `frontend/`)
+**zacp 就是这些 Agent 的统一 Web 前端**：
 
-## Install
+- 后端以 **ACP Client** 的身份连接各种支持 ACP 协议的 Agent（本地 stdio 子进程），负责 Agent 的启动、会话生命周期管理、消息流转发；
+- 前端是一个浏览器 Web UI（Vue 3），通过 WebSocket 与后端实时通信，把 Agent 的流式输出、工具调用、权限请求实时展示出来，并支持多 Agent 切换、多会话管理；
+- 你不需要为每个 Agent 单独安装一套客户端或记住不同的 CLI 用法，打开浏览器就能和所有 Agent 对话。
 
-One-line install (auto-detect macOS / Linux + architecture, latest release):
+**技术栈**：后端 Go（Gin + acp-go-sdk + SQLite），前端 Vue 3 + Naive UI + Tailwind CSS，发布为**单个二进制**（前端页面已内嵌，无需安装 Node.js 环境）。
+
+## 功能特性
+
+- **多 Agent 接入**：内置 Reasonix、Grok、omp、Qoder 等 Agent 适配，只需在配置文件 `~/.zacp/config.toml` 的 `[[agents]]` 增加条目即可接入新 Agent；
+- **浏览器 Web UI**：会话式聊天界面，支持多会话、多 Agent 切换，流式输出实时展示（思考过程、工具调用、执行计划等）；
+- **实时通信**：基于 WebSocket 的流式消息推送与权限回传，交互延迟低；
+- **权限确认**：Agent 请求执行操作（读写文件、执行命令等）时，权限请求会推送到 Web UI 由你亲自确认，而不是服务端无脑自动放行（开发模式可配置自动批准）；
+- **并发与排队**：同一 Agent 的对话串行执行、后续请求自动排队，不同 Agent 之间并行互不干扰；
+- **会话空闲回收**：Agent 空闲超过设定时间（默认 30 分钟）自动停止释放内存，下次使用自动恢复，不占用系统资源；
+- **智能体管理**：设置页可随时启用/禁用某个 Agent，热更新配置，无需重启服务；
+- **会话与消息持久化**：历史会话、消息记录存入本地 SQLite（WAL 模式），重启不丢失；
+- **单二进制发布**：前端页面与默认配置全部内嵌进一个可执行文件，`--version` 查看版本，即下即用；
+- **一键安装与更新**：提供 `install.sh` / `update.sh` 脚本，自动识别 macOS / Linux 与 CPU 架构（amd64 / arm64），安装、升级、回滚一条命令搞定。
+
+## 安装（macOS / Linux）
+
+### 一键安装（推荐）
+
+自动检测操作系统与 CPU 架构，从 GitHub Releases 下载最新版本并安装：
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/helloxz/zacp/main/install.sh | bash
 ```
 
-Or download [install.sh](./install.sh) and run it locally:
+
+### 首次启动
+
+安装完成后直接运行 `zacp` 即可启动服务（默认监听 `:8680`），然后浏览器访问 `http://127.0.0.1:8680/` 使用 Web UI：
 
 ```bash
-bash install.sh                 # latest release, installs to ~/.local/bin
-bash install.sh -v 0.1.0        # pin a version (v prefix optional)
-bash install.sh --dir /usr/local/bin   # custom dir (usually needs sudo)
-bash install.sh --arch amd64    # override arch detection (e.g. Rosetta)
+zacp
 ```
 
-First run auto-creates `~/.zacp/config.toml` (see `backend/configs/config.example.toml`).
+首次启动会自动生成配置文件 `~/.zacp/config.toml`，按需编辑其中 `[[agents]]` 的 Agent 命令等；运行时数据（SQLite 数据库）存放在 `~/.zacp/data/`。
 
-## Repository layout
+## 更新
 
-```
-zacp/
-├── backend/                 # Go API server
-│   ├── cmd/server/          # process entrypoint
-│   ├── configs/             # YAML examples / runtime config
-│   ├── internal/
-│   │   ├── acp/             # ACP client, manager, provider adapters
-│   │   │   ├── client/      # Client-side ACP connection helpers
-│   │   │   ├── manager/     # multi-agent session lifecycle
-│   │   │   └── providers/   # pi / reasonix / grok / ...
-│   │   ├── api/             # HTTP layer (handlers, middleware, router)
-│   │   ├── config/          # load & validate config
-│   │   ├── model/           # DTOs / domain types
-│   │   ├── service/         # business logic
-│   │   └── ws/              # WebSocket streaming to Web UI
-│   ├── pkg/                 # optional shared libraries
-│   ├── go.mod
-│   └── go.sum
-├── frontend/                # Web UI (framework TBD)
-│   ├── public/
-│   └── src/
-├── scripts/                 # dev / build / release shell scripts
-├── deployments/             # Docker, compose, k8s manifests
-├── docs/                    # design notes & docs
-├── Dockerfile               # (optional) multi-stage image
-└── README.md
-```
+### 一键更新（推荐）
 
-## Demo: 接入 reasonix ACP 并对话
-
-本仓库已包含 **最小可跑 demo**：拉起 `reasonix --acp`，用终端 REPL 或 HTTP API 对话。
-
-### 前置
-
-- 本机可执行 `reasonix`（或设置 `REASONIX_BIN=/path/to/reasonix`）
-- 已配置 reasonix 模型密钥（`reasonix doctor` 可检查）
-
-### 方式 A：终端 REPL
+自动检测已安装的 zacp 并升级到最新版本：
 
 ```bash
-./scripts/demo-chat.sh
-# 或
-cd backend && go run ./cmd/chat
+curl -fsSL https://raw.githubusercontent.com/helloxz/zacp/main/update.sh | bash
 ```
 
-输入消息回车发送；`:exit` 退出，`:cancel` 取消当前回合。
-
-### 方式 B：HTTP API
+如果 zacp 安装在 `/usr/local/bin`（需要 root 权限），请用 `sudo` 执行：
 
 ```bash
-./scripts/demo-api.sh
-# 默认监听 :8680
-
-curl -s http://127.0.0.1:8680/healthz
-
-curl -s http://127.0.0.1:8680/api/v1/chat \
-  -H 'Content-Type: application/json' \
-  -d '{"message":"你好，用一句话介绍你自己"}'
+curl -fsSL https://raw.githubusercontent.com/helloxz/zacp/main/update.sh | sudo bash
 ```
 
-响应示例字段：`sessionId`、`reply`（汇总的 agent 文本）、`events`（含 thought / tool 等）、`stopReason`、`durationMs`。
 
-常用环境变量 / flag：
+## 联系作者
 
-| 变量 / flag | 说明 |
-|-------------|------|
-| `REASONIX_BIN` / `-command` | reasonix 二进制路径 |
-| `ZACP_CWD` / `-cwd` | Agent 工作目录 |
-| `ZACP_ADDR` / `-addr` | HTTP 监听地址（默认 `:8680`） |
-| `-yolo` | 自动批准工具权限（默认 true） |
+- 博客：<https://blog.xiaoz.org/>
+- X（Twitter）：<https://x.com/xiaozblog>
 
-## Backend quick start
-
-```bash
-cd backend
-go run ./cmd/server
-# health: curl http://127.0.0.1:8680/healthz
-```
-
-启动参数（均可选，**命令行优先级最高**，缺省按回退链取值）：
-
-| 参数 | 说明 | 回退链 |
-|------|------|--------|
-| `--addr IP:PORT` | 监听地址（`:8680` 表示所有网卡） | `ZACP_ADDR` → TOML `server.addr` → `:8680` |
-| `--data-dir DIR` | `$ZACP_DATA` 状态根目录（数据/配置所在） | `ZACP_DATA` → `~/.zacp` |
-| `--config FILE` | 配置文件路径 | `ZACP_CONFIG` → `$ZACP_DATA/config.toml` |
-
-示例：`go run ./cmd/server --addr 127.0.0.1:9000 --data-dir /var/lib/zacp`
-
-Dependencies already pinned in `go.mod`:
-
-| Package | Role |
-|---------|------|
-| `github.com/gin-gonic/gin` | HTTP API |
-| `github.com/coder/acp-go-sdk` | ACP client/agent protocol |
-
-## ACP agents
-
-Backend acts as an **ACP Client**: spawns or connects to agent processes (stdio / remote), runs `Initialize` → `NewSession` → `Prompt`, and streams `session/update` events to the Web UI (typically over WebSocket).
-
-当前 demo 使用 **stdio + 单 session**；权限默认自动 approve（`-yolo`）。
-
-Protocol reference: https://agentclientprotocol.com
-
-## Frontend
-
-Vue 3 + Naive UI + Tailwind CSS，代码在 `frontend/`，包管理与构建一律使用 [Bun](https://bun.sh)（`bun install` / `bun run dev` / `bun run build`）。
-
-## Build & release（单二进制）
-
-```bash
-./scripts/build.sh
-```
-
-一键构建，产出**单一二进制**（前端产物 + 配置示例全部打包进可执行文件）：
-
-- **前端**：`bun install && bun run build`（产物 `frontend/dist`）
-- **打包**：前端产物与配置示例（`backend/configs/config.example.toml`）由 `scripts/build.sh` 拷入 `backend/internal/web/` 后经 `go:embed` 打进后端；未运行 build.sh 时（裸 `go build` / dev 模式）后端自动跳过静态路由，前端由 vite dev server（:8681）独立提供
-- **产物**：`backend/bin/zacp-v<版本>-<GOOS>-<GOARCH>`（可用 `GOOS`/`GOARCH` 环境变量交叉编译；Windows 追加 `.exe`）
-- **版本号单一来源**：`frontend/package.json` 的 `version` 字段（发布时手动修改），构建时经 `-ldflags` 注入后端 `internal/version`，同时驱动：
-  - 二进制包名
-  - `zacp --version`（命令行查看版本）
-  - `GET /api/v1/version`（前端设置页展示，不再硬编码）
-
-后端启动后访问 `http://<host>:8680/` 即可使用内置 Web UI；未匹配的 API 路径返回 JSON 404，其余路径（history 路由深链）回首页。
-
-### 发布打包（多平台 zip，`scripts/pack.sh`）
-
-与 `build.sh` 分工：`build.sh` 是本地快速构建单个二进制；**`pack.sh` 用于发布打包**——多平台矩阵编译 + linux 平台 UPX 最高压缩 + 组装标准 zip 发布包（`build.sh` 保持不变）：
-
-```bash
-./scripts/pack.sh            # 本机平台单包
-./scripts/pack.sh --all      # 6 平台全量：linux/macOS/windows × amd64/arm64
-GOOS=darwin GOARCH=arm64 ./scripts/pack.sh   # 指定平台
-```
-
-- **产物**：`backend/bin/zacp-v<版本>-<GOOS>-<GOARCH>.zip`；包内为同名顶层目录（仅 `zacp`/`zacp.exe`），解压不污染客户目录；`config.example.toml` 已 embed 进二进制（首次启动自动生成 `~/.zacp/config.toml`），README 请在仓库 / Release 页面查看
-- **UPX 策略**：仅 linux 平台 `upx --best`（约 -73%~-75%）；macOS 因 UPX 官方 4.2.0 起禁用 macOS 支持而不压；Windows 按约定不压（规避杀软误报）
-- **版本**：与 build.sh 同一来源 `frontend/package.json`，可用 `ZACP_VERSION` 环境变量覆盖；`--skip-frontend` 可跳过前端构建（dist 已就位时）
-
-### 发布流程（GitHub Actions，`.github/workflows/release.yml`）
-
-创建 GitHub Release 后自动编译 6 平台并上传 zip 附件到该 Release：
-
-1. 修改 `frontend/package.json` 的 `version`（如 `0.1.0`），提交并推送
-2. 打 tag 并推送：`git tag v0.1.0 && git push origin v0.1.0`
-3. 在 GitHub **Releases → Create a new release** 选 tag `v0.1.0` 并发布（推荐，创建即自动构建）；或在 Actions 页手动 **Run workflow** 填 tag（兜底通道）
-4. 工作流自动执行：校验 tag 版本与 `package.json` 一致（不一致直接失败）→ `go test ./...` → `./scripts/pack.sh --all` → `gh release upload` 上传 `zacp-v*.zip`
-
-## Scripts & deploy
-
-Put shell helpers in `scripts/`, container / compose files in `deployments/` or repo root as preferred.
+欢迎反馈问题、提建议或参与贡献！
