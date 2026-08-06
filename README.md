@@ -6,6 +6,8 @@
 
 ![CleanShot 2026-08-06 at 15.54.43@2x.png](https://img.rss.ink/2026/08/06/NhxMDQR8.png)
 
+![CleanShot 2026-08-06 at 15.56.52@2x.png](https://img.rss.ink/2026/08/06/NgJ6OCzi.png)
+
 ## 实现原理
 
 - 后端以 **ACP Client** 的身份连接各种支持 ACP 协议的 Agent（本地 stdio 子进程），负责 Agent 的启动、会话生命周期管理、消息流转发；
