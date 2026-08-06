@@ -3,10 +3,11 @@ import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { IncremarkContent } from '@incremark/vue'
 import type { ChatMessage } from '@/types/models'
-import type { WsEvent } from '@/types/ws'
+import type { Plan, WsEvent } from '@/types/ws'
 import type { ToolCard } from '@/stores/session'
 import { useSessionStore } from '@/stores/session'
 import ToolCallCard from '@/components/chat/ToolCallCard.vue'
+import PlanCard from '@/components/chat/PlanCard.vue'
 
 const props = defineProps<{ message: ChatMessage }>()
 
@@ -113,6 +114,29 @@ const toolCards = computed<ToolCard[]>(() => {
     return []
   }
 })
+
+/**
+ * 历史执行计划：ACP plan 事件为整体替换语义（每次携带完整条目列表），
+ * 取 events 中最后一个带 plan 数据的 plan 事件即可，无需按 toolId 合并。
+ * 流式期间的实时计划由 store.activePlan 负责（占位消息 events 为空，互斥）。
+ */
+const plan = computed<Plan | null>(() => {
+  if (props.message.role !== 'assistant' || !props.message.events) {
+    return null
+  }
+  try {
+    const events = JSON.parse(props.message.events) as WsEvent[]
+    for (let i = events.length - 1; i >= 0; i--) {
+      if (events[i].type === 'plan' && events[i].plan) {
+        return events[i].plan as Plan
+      }
+    }
+    return null
+  } catch {
+    // events 不是合法 JSON：静默跳过计划卡片，不影响文本渲染
+    return null
+  }
+})
 </script>
 
 <template>
@@ -168,6 +192,13 @@ const toolCards = computed<ToolCard[]>(() => {
       :content="message.content"
       :is-finished="isFinished"
       :incremark-options="{ htmlTree: true }"
+    />
+    <!-- 执行计划（TODO）：放在 AI 文本正文下方；历史取最后一个 plan 事件，
+         流式期间占位消息 events 为空、由 store.activePlan 实时覆盖（互斥） -->
+    <PlanCard v-if="!isUser && plan" :plan="plan" />
+    <PlanCard
+      v-if="!isUser && isStreamingPlaceholder && sessionStore.activePlan"
+      :plan="sessionStore.activePlan"
     />
   </div>
 </template>

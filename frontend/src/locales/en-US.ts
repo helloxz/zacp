@@ -66,6 +66,11 @@ export default {
     output: 'Output',
     truncated: '… (truncated)',
   },
+  plan: {
+    title: 'Plan',
+    inProgress: 'In progress',
+    empty: 'No plan entries',
+  },
   permission: {
     title: 'Permission request',
     unknownTool: 'Tool call',

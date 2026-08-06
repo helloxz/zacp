@@ -12,6 +12,18 @@ export type WsClientMessage =
   | { type: 'permission'; permissionId: string; optionId: string }
   | { type: 'ping' }
 
+/** 计划任务步骤（ACP plan 事件 entries 项；对齐 client.PlanStep） */
+export interface PlanStep {
+  content: string
+  priority?: string
+  status: string
+}
+
+/** 执行计划（TODO 列表；对齐 client.Plan；ACP 整体替换语义，每次携带完整条目） */
+export interface Plan {
+  entries: PlanStep[]
+}
+
 /** ACP 事件（对齐 ws/bridge.go handleEvent 的 wsEvent 字段） */
 export interface WsEvent {
   /** agent_message | agent_thought | user_message | tool_call | tool_call_update | plan | other */
@@ -24,6 +36,8 @@ export interface WsEvent {
   input?: unknown
   /** 工具调用出参（tool_call / tool_call_update 事件携带，可能是大 JSON） */
   output?: unknown
+  /** 执行计划（plan 事件携带；整体替换语义） */
+  plan?: Plan
 }
 
 /** 权限选项（后端广播 permission.request 的 options 结构） */

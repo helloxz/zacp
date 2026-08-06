@@ -78,6 +78,11 @@ export default {
     output: '结果',
     truncated: '…（内容过长已截断）',
   },
+  plan: {
+    title: '执行计划',
+    inProgress: '进行中',
+    empty: '暂无计划条目',
+  },
   permission: {
     title: '权限请求',
     unknownTool: '工具调用',

@@ -280,6 +280,10 @@ func (b *EventBridge) handleEvent(sessionID string, event client.Event) {
 	if !isNilOrEmpty(event.Output) {
 		wsEvent["output"] = event.Output
 	}
+	// 执行计划（TODO 列表）：整体替换语义，随事件原样透传；nil 时省略
+	if event.Plan != nil {
+		wsEvent["plan"] = event.Plan
+	}
 
 	// 广播事件到该会话的所有连接
 	b.handler.BroadcastEvent(sessionID, wsEvent)

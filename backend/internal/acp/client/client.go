@@ -13,6 +13,19 @@ import (
 	acp "github.com/coder/acp-go-sdk"
 )
 
+// PlanStep 表示执行计划中的一个任务条目（对应 ACP PlanEntry）。
+type PlanStep struct {
+	Content  string `json:"content"`
+	Priority string `json:"priority,omitempty"`
+	Status   string `json:"status"`
+}
+
+// Plan 是 agent 的执行计划（TODO 列表）。
+// ACP 语义为整体替换：每次 plan 事件携带完整条目列表，前端直接覆盖展示。
+type Plan struct {
+	Entries []PlanStep `json:"entries"`
+}
+
 // Event is a simplified session update for API/CLI consumers.
 type Event struct {
 	Type    string `json:"type"`
@@ -25,6 +38,8 @@ type Event struct {
 	// 供前端在消息里展开查看详情；nil 时省略不序列化。
 	Input  any `json:"input,omitempty"`
 	Output any `json:"output,omitempty"`
+	// Plan 为 agent 执行计划（仅 plan 事件携带；整体替换语义，见 Plan 注释）
+	Plan *Plan `json:"plan,omitempty"`
 }
 
 // Bridge is an ACP Client that buffers session updates and auto-approves permissions (demo).
@@ -236,7 +251,17 @@ func (b *Bridge) SessionUpdate(ctx context.Context, params acp.SessionNotificati
 			Output: u.ToolCallUpdate.RawOutput,
 		})
 	case u.Plan != nil:
-		b.push(Event{Type: "plan", RawKind: "plan"})
+		// 执行计划通知：ACP 语义为整体替换（每次携带完整条目列表，见 SDK SessionUpdatePlan 注释）。
+		// 转为独立 plan 事件透传：实时卡片直接覆盖，历史消息取最后一个 plan 事件即可。
+		plan := &Plan{}
+		for _, e := range u.Plan.Entries {
+			plan.Entries = append(plan.Entries, PlanStep{
+				Content:  e.Content,
+				Priority: string(e.Priority),
+				Status:   string(e.Status),
+			})
+		}
+		b.push(Event{Type: "plan", Plan: plan})
 	case u.ConfigOptionUpdate != nil:
 		// 会话配置项通知（模型/思考强度/mode 等）：走独立处理器（不混入消息事件流）。
 		// 通知自带 sessionId（v1/v2 均有），按会话分发，避免多会话并发时串到其它会话。

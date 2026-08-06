@@ -47,6 +47,7 @@ declare module 'vue' {
     NTooltip: typeof import('naive-ui')['NTooltip']
     NTree: typeof import('naive-ui')['NTree']
     PermissionModal: typeof import('./components/chat/PermissionModal.vue')['default']
+    PlanCard: typeof import('./components/chat/PlanCard.vue')['default']
     RouterLink: typeof import('vue-router')['RouterLink']
     RouterView: typeof import('vue-router')['RouterView']
     SessionInfo: typeof import('./components/files/SessionInfo.vue')['default']

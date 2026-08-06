@@ -26,6 +26,7 @@ import type {
 import type {
   PermissionOption,
   PermissionToolCall,
+  Plan,
   WsEvent,
   WsServerMessage,
 } from '@/types/ws'
@@ -83,6 +84,8 @@ export const useSessionStore = defineStore('session', () => {
   const pendingPermission = ref<PendingPermission | null>(null)
   /** 当前 turn 的实时工具调用卡片（流式期间展示；turn.done 清空，历史由消息 events 渲染） */
   const activeToolCards = ref<ToolCard[]>([])
+  /** 当前 turn 的实时执行计划（plan 事件整体替换；turn.done 清空，历史由消息 events 渲染） */
+  const activePlan = ref<Plan | null>(null)
   /**
    * 当前会话的配置项（模型/思考强度/mode 等，来自 GET config-options）。
    * agent 不支持时为空数组 → 前端隐藏配置 UI（用户约定「ACP 不支持才隐藏」）。
@@ -514,6 +517,9 @@ export const useSessionStore = defineStore('session', () => {
           } else if (e.type === 'tool_call' || e.type === 'tool_call_update') {
             // 工具调用：实时卡片（title/status 随 update 演进）
             upsertToolCard(e)
+          } else if (e.type === 'plan' && e.plan) {
+            // 执行计划：整体替换语义，直接覆盖实时卡片（不按 toolId 合并）
+            activePlan.value = e.plan
           }
           break
         }
@@ -549,8 +555,9 @@ export const useSessionStore = defineStore('session', () => {
           break
         }
         case 'turn.done': {
-          // 流式结束：实时工具卡片清空（历史由 assistant 消息 events 渲染）
+          // 流式结束：实时工具卡片/计划清空（历史由 assistant 消息 events 渲染）
           activeToolCards.value = []
+          activePlan.value = null
           void finalizeStream()
           break
         }
@@ -680,6 +687,7 @@ export const useSessionStore = defineStore('session', () => {
     streamError,
     pendingPermission,
     activeToolCards,
+    activePlan,
     configOptions,
     slashCommands,
     activeSession,
