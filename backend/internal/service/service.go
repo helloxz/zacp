@@ -13,6 +13,7 @@ import (
 
 	acpclient "github.com/zacp/zacp/internal/acp/client"
 	"github.com/zacp/zacp/internal/acp/manager"
+	"github.com/zacp/zacp/internal/acp/providers"
 	"github.com/zacp/zacp/internal/model"
 	"github.com/zacp/zacp/internal/store"
 	"gorm.io/gorm"
@@ -418,14 +419,16 @@ func (s *SessionService) GetSlashCommands(sessionID uint) ([]model.AvailableComm
 	if err != nil {
 		return nil, fmt.Errorf("session not found: %w", err)
 	}
-	if session.AvailableCommands == "" {
-		return []model.AvailableCommandDTO{}, nil
+	// agent 经 ACP 通告的命令（DB 落库原样；为空表示 agent 未通告，如 grok）
+	var advertised []model.AvailableCommandDTO
+	if session.AvailableCommands != "" {
+		if err := json.Unmarshal([]byte(session.AvailableCommands), &advertised); err != nil {
+			return nil, fmt.Errorf("parse slash commands: %w", err)
+		}
 	}
-	var cmds []model.AvailableCommandDTO
-	if err := json.Unmarshal([]byte(session.AvailableCommands), &cmds); err != nil {
-		return nil, fmt.Errorf("parse slash commands: %w", err)
-	}
-	return cmds, nil
+	// 合并静态兜底命令：agent 不通告时（如 grok）前端仍能展示内置 / 命令；
+	// 其它 agent 无内置命令时保持「仅 agent 通告」的现状（MergeSlashCommands 返回原样）。
+	return providers.MergeSlashCommands(advertised, providers.DefaultSlashCommands(session.AgentID)), nil
 }
 
 // SetConfigOption 设置会话配置项（如切换模型/思考强度/mode），并回写 DB 中该选项的 currentValue。

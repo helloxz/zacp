@@ -14,6 +14,7 @@ import (
 
 	"github.com/zacp/zacp/internal/acp/client"
 	"github.com/zacp/zacp/internal/acp/manager"
+	"github.com/zacp/zacp/internal/acp/providers"
 	"github.com/zacp/zacp/internal/model"
 	"github.com/zacp/zacp/internal/store"
 )
@@ -198,6 +199,8 @@ func (b *EventBridge) handleAvailableCommands(sessionID string, cmds []acp.Avail
 func (b *EventBridge) applyAvailableCommands(dbSession *model.Session, cmds []acp.AvailableCommand) {
 	sessionID := dbSession.ACPSessionID
 	dtos := client.ToAvailableCommandDTOs(cmds)
+	// 落库保持 agent 通告原样（静态命令不入库，避免 DB 语义被污染；
+	// 重进会话时由 REST GetSlashCommands 动态合并兜底）。
 	data, err := json.Marshal(dtos)
 	if err != nil {
 		b.log.Warn("marshal slash commands failed", "sessionID", sessionID, "err", err)
@@ -207,8 +210,11 @@ func (b *EventBridge) applyAvailableCommands(dbSession *model.Session, cmds []ac
 		b.log.Warn("save slash commands failed", "sessionID", sessionID, "err", err)
 		return
 	}
-	b.handler.BroadcastSlashCommands(sessionID, dtos)
-	b.log.Info("slash commands updated", "sessionID", sessionID, "count", len(cmds))
+	// 广播合并后的列表：agent 不通告命令（如 grok）时静态命令仍能展示；
+	// 同名以 agent 通告为准，见 providers.MergeSlashCommands。
+	broadcast := providers.MergeSlashCommands(dtos, providers.DefaultSlashCommands(dbSession.AgentID))
+	b.handler.BroadcastSlashCommands(sessionID, broadcast)
+	b.log.Info("slash commands updated", "sessionID", sessionID, "count", len(broadcast))
 }
 
 // handleSessionInfo 收到 agent 通告的会话信息（AI 总结标题等）后落库 + 实时广播给前端。

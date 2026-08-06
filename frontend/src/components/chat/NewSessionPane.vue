@@ -89,6 +89,9 @@ async function createDraftFor(agentId: string) {
     sessionStore.configOptions = configOptions
     // 草稿视为当前会话：Composer 内置的 setConfigOption 用 currentId 定位后端目标会话
     sessionStore.currentId = session.id
+    // 加载草稿的可用 / 命令（含静态兜底，如 grok；失败视为空数组，不阻塞草稿流程）。
+    // 无此步时 /new 空态输入框拿不到候选，/ 提示不出现。
+    await sessionStore.loadSlashCommands(session.id)
   } catch (e) {
     sessionStore.streamError = e instanceof Error ? e.message : String(e)
   } finally {
@@ -114,6 +117,9 @@ async function releaseDraft() {
   // 仍是本次释放的草稿时才清空。
   if (sessionStore.currentId === draftId) {
     sessionStore.currentId = null
+    // 同守卫清空 / 命令：避免旧草稿的命令残留串到下一个会话
+    // （残留会被下一次 loadSlashCommands 覆盖，此处仅保证释放语义干净）。
+    sessionStore.slashCommands = []
   }
 }
 

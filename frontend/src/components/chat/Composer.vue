@@ -160,12 +160,12 @@ const slashCandidates = computed(() => {
   )
 })
 /**
- * 面板可见性：bar 模式 + 以 / 开头 + 未被关闭 + 有候选命令。
- * card（新建会话空态）不显示；agent 未通告命令时列表为空也不显示（不做本地兜底）。
+ * 面板可见性：以 / 开头 + 未被关闭 + 有候选命令。
+ * bar（会话输入条）与 card（新建会话空态）都支持；
+ * 候选为空（agent 未通告且无静态兜底）时不显示。
  */
 const slashVisible = computed(
   () =>
-    props.mode === 'bar' &&
     slashActive.value &&
     !slashDismissed.value &&
     slashCandidates.value.length > 0,
