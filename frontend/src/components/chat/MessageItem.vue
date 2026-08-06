@@ -6,6 +6,7 @@ import type { ChatMessage } from '@/types/models'
 import type { Plan, WsEvent } from '@/types/ws'
 import type { ToolCard } from '@/stores/session'
 import { useSessionStore } from '@/stores/session'
+import { type MessageBlock } from '@/composables/useMessageBlocks'
 import ToolCallCard from '@/components/chat/ToolCallCard.vue'
 import PlanCard from '@/components/chat/PlanCard.vue'
 
@@ -68,49 +69,74 @@ const isStreamingPlaceholder = computed(
 )
 
 /**
- * 历史工具调用卡片：解析 assistant 消息的 events JSON（client.Event 数组），
- * 按 toolId 去重保留最后一次状态。流式期间的实时卡片由 store.activeToolCards 负责。
+ * 消息渲染块：流式期间用 store.streamBlocks（实时维护），
+ * 历史消息从 events JSON 按时间线重建。
+ * tool block 携带 contentSplit 位置信息，供模板将 message.content
+ * 按工具调用点拆分为多段，恢复文本→工具→文本的因果交错。
  */
-const toolCards = computed<ToolCard[]>(() => {
+const blocks = computed<MessageBlock[]>(() => {
+  // 流式占位消息：使用 store.streamBlocks（随事件增量构建）
+  if (isStreamingPlaceholder.value) {
+    return sessionStore.streamBlocks
+  }
+  // 历史消息：从 events 重建，tool block 携带 contentSplit 位置
   if (props.message.role !== 'assistant' || !props.message.events) {
     return []
   }
   try {
     const events = JSON.parse(props.message.events) as WsEvent[]
-    const map = new Map<string, WsEvent>()
-    for (const e of events) {
-      if (
-        (e.type === 'tool_call' || e.type === 'tool_call_update') &&
-        e.toolId
-      ) {
-        const existing = map.get(e.toolId)
-        if (existing) {
-          // 合并语义（与流式 upsertToolCard 一致）：update 事件未携带的字段
-          // 保留 tool_call 时的值——title/status 空串、input/output 为 null/undefined
-          // 都视为未携带，避免刷新后入参/出参丢失
-          map.set(e.toolId, {
-            ...existing,
-            ...e,
-            title: e.title || existing.title,
-            status: e.status || existing.status,
-            input: e.input ?? existing.input,
-            output: e.output ?? existing.output,
-          })
-        } else {
-          map.set(e.toolId, e)
-        }
+    const result: MessageBlock[] = []
+    let textBuf = ''
+    let cumulativeLen = 0
+
+    const flushText = () => {
+      if (textBuf) {
+        result.push({ kind: 'text', content: textBuf })
+        cumulativeLen += textBuf.length
+        textBuf = ''
       }
     }
-    return [...map.values()].map((e) => ({
-      toolId: e.toolId as string,
-      title: e.title,
-      status: e.status,
-      // 入参/出参透传，供 ToolCallCard 展开详情；旧消息无此字段则为 undefined
-      input: e.input,
-      output: e.output,
-    }))
+
+    const toolIndex = new Map<string, { kind: 'tool'; card: ToolCard; contentSplit: number }>()
+
+    for (const e of events) {
+      if (e.type === 'agent_message' || e.type === 'user_message') {
+        if (e.text) textBuf += e.text
+      } else if (e.type === 'agent_thought') {
+        // 思维/推理：由 reasoning 区块单独渲染，不混入 blocks
+      } else if (e.type === 'tool_call' || e.type === 'tool_call_update') {
+        if (!e.toolId) continue
+        const existing = toolIndex.get(e.toolId)
+        if (existing) {
+          // 合并语义：update 未携带的字段保留前值
+          if (e.title) existing.card.title = e.title
+          if (e.status) existing.card.status = e.status
+          if (e.input != null) existing.card.input = e.input
+          if (e.output != null) existing.card.output = e.output
+        } else {
+          flushText()
+          const block: { kind: 'tool'; card: ToolCard; contentSplit: number } = {
+            kind: 'tool',
+            card: {
+              toolId: e.toolId,
+              title: e.title,
+              status: e.status ?? 'running',
+              input: e.input,
+              output: e.output,
+            },
+            contentSplit: cumulativeLen,
+          }
+          result.push(block)
+          toolIndex.set(e.toolId, block)
+        }
+      } else if (e.type === 'plan' && e.plan) {
+        flushText()
+        result.push({ kind: 'plan' })
+      }
+    }
+    flushText()
+    return result
   } catch {
-    // events 不是合法 JSON：静默跳过工具卡片，不影响文本渲染
     return []
   }
 })
@@ -153,53 +179,63 @@ const plan = computed<Plan | null>(() => {
       <div class="mt-1.5 whitespace-pre-wrap">{{ reasoning }}</div>
     </details>
 
-    <!-- 历史工具调用卡片（assistant 消息上方，与正文同宽） -->
-    <div v-if="toolCards.length" class="flex w-full flex-col gap-2">
-      <ToolCallCard v-for="c in toolCards" :key="c.toolId" :card="c" />
-    </div>
-
-    <!-- 实时工具调用卡片（仅流式占位消息渲染；turn.done 后由上方历史卡片接替） -->
-    <div
-      v-if="isStreamingPlaceholder && sessionStore.activeToolCards.length"
-      class="flex w-full flex-col gap-2"
-    >
-      <ToolCallCard
-        v-for="c in sessionStore.activeToolCards"
-        :key="c.toolId"
-        :card="c"
-      />
-    </div>
-
-    <!-- user：右对齐气泡；assistant：markdown 全宽渲染（边框+阴影与气泡区分，样式由 incremark 主题提供） -->
+    <!-- user：右对齐气泡 -->
     <div
       v-if="isUser"
       class="max-w-[85%] whitespace-pre-wrap rounded-2xl rounded-br-md bg-green-50 px-3.5 py-2.5 text-sm leading-relaxed text-slate-900 ring-1 ring-inset ring-green-100"
     >
       {{ message.content }}
     </div>
-    <!-- 流式占位：assistant 首条内容尚未到达（content 为空且 turn 未结束）时
-         显示三点加载动画，避免空白 AI 卡片；首个文本块到达后由 incremark 替换 -->
+
+    <!-- 消息块时间线：按事件顺序交错渲染 AI 文本与工具调用，
+         恢复因果关系（每个工具卡紧跟触发它的文字之后） -->
+    <template v-for="(block, idx) in blocks" :key="idx">
+      <!-- 文本块：从 message.content 按 contentSplit 位置切片，
+           流式期间仅最后一个 text block 有内容（其余为空占位） -->
+      <div
+        v-if="block.kind === 'text'"
+        class="w-full min-w-0"
+      >
+        <!-- 流式占位：content 为空且 turn 未结束时显示加载动画 -->
+        <div
+          v-if="!block.content && !isFinished"
+          class="flex w-full min-w-0 items-center gap-1.5 rounded-xl border border-slate-200/80 bg-white px-4 py-3.5 shadow-sm"
+          aria-label="loading"
+        >
+          <span v-for="i in 3" :key="i" class="loading-dot" />
+        </div>
+        <IncremarkContent
+          v-else-if="block.content"
+          class="w-full min-w-0 rounded-xl border border-slate-200/80 bg-white px-4 py-3 text-sm leading-relaxed shadow-sm"
+          :content="block.content"
+          :is-finished="isFinished"
+          :incremark-options="{ htmlTree: true }"
+        />
+      </div>
+      <!-- 工具调用块 -->
+      <ToolCallCard
+        v-else-if="block.kind === 'tool'"
+        class="w-full"
+        :card="block.card"
+      />
+      <!-- 执行计划块（reasoning 之后单独渲染，不参与交错） -->
+      <PlanCard
+        v-else-if="block.kind === 'plan' && sessionStore.activePlan"
+        :plan="sessionStore.activePlan"
+      />
+    </template>
+
+    <!-- 流式初始态：streamBlocks 尚无内容时显示加载动画（首个文本块到达后由 IncremarkContent 接管） -->
     <div
-      v-else-if="!message.content && !isFinished"
+      v-if="isStreamingPlaceholder && !blocks.length"
       class="flex w-full min-w-0 items-center gap-1.5 rounded-xl border border-slate-200/80 bg-white px-4 py-3.5 shadow-sm"
       aria-label="loading"
     >
       <span v-for="i in 3" :key="i" class="loading-dot" />
     </div>
-    <IncremarkContent
-      v-else
-      class="w-full min-w-0 rounded-xl border border-slate-200/80 bg-white px-4 py-3 text-sm leading-relaxed shadow-sm"
-      :content="message.content"
-      :is-finished="isFinished"
-      :incremark-options="{ htmlTree: true }"
-    />
-    <!-- 执行计划（TODO）：放在 AI 文本正文下方；历史取最后一个 plan 事件，
-         流式期间占位消息 events 为空、由 store.activePlan 实时覆盖（互斥） -->
-    <PlanCard v-if="!isUser && plan" :plan="plan" />
-    <PlanCard
-      v-if="!isUser && isStreamingPlaceholder && sessionStore.activePlan"
-      :plan="sessionStore.activePlan"
-    />
+
+    <!-- 历史执行计划：events 中最后一个 plan 事件（仅在 blocks 中无 plan block 时兜底） -->
+    <PlanCard v-if="!isUser && plan && !blocks.some(b => b.kind === 'plan')" :plan="plan" />
   </div>
 </template>
 

@@ -16,6 +16,7 @@ import {
   setConfigOption as apiSetConfigOption,
 } from '@/api'
 import { acpSocket } from '@/composables/useAcpSocket'
+import type { MessageBlock } from '@/composables/useMessageBlocks'
 import type {
   AvailableCommand,
   ChatMessage,
@@ -86,6 +87,12 @@ export const useSessionStore = defineStore('session', () => {
   const activeToolCards = ref<ToolCard[]>([])
   /** 当前 turn 的实时执行计划（plan 事件整体替换；turn.done 清空，历史由消息 events 渲染） */
   const activePlan = ref<Plan | null>(null)
+  /**
+   * 当前 turn 的消息块时间线（text/tool/plan 按事件到达顺序交错排列）。
+   * 流式期间由 appendStreamChunk / upsertToolCard 增量构建；
+   * turn.done 后清空，消息切换到历史路径（deriveBlocks 从 events 重建）。
+   */
+  const streamBlocks = ref<MessageBlock[]>([])
   /**
    * 当前会话的配置项（模型/思考强度/mode 等，来自 GET config-options）。
    * agent 不支持时为空数组 → 前端隐藏配置 UI（用户约定「ACP 不支持才隐藏」）。
@@ -353,7 +360,11 @@ export const useSessionStore = defineStore('session', () => {
   let streamMsgId = -1
   let wsRegistered = false
 
-  /** 追加流式文本到占位消息（热路径约束：改最后一条，不重建列表） */
+  /**
+   * 追加流式文本到占位消息（热路径约束：改最后一条，不重建列表）。
+   * 同时维护 streamBlocks：追加到末尾 text block 或创建新的 text block，
+   * 保持文本与工具调用的时间线交错顺序。
+   */
   function appendStreamChunk(text: string) {
     const sessionId = currentId.value
     if (sessionId === null || streamMsgId === -1) {
@@ -363,6 +374,14 @@ export const useSessionStore = defineStore('session', () => {
     const last = list?.[list.length - 1]
     if (last && last.id === streamMsgId) {
       last.content += text
+    }
+    // 维护 streamBlocks：追加到末尾 text block 或创建新 text block
+    const blocks = streamBlocks.value
+    const lastBlock = blocks[blocks.length - 1]
+    if (lastBlock?.kind === 'text') {
+      lastBlock.content += text
+    } else {
+      blocks.push({ kind: 'text', content: text })
     }
   }
 
@@ -379,7 +398,11 @@ export const useSessionStore = defineStore('session', () => {
     }
   }
 
-  /** 工具调用事件 → 实时卡片 upsert（同 toolId 更新状态，否则追加） */
+  /**
+   * 工具调用事件 → 实时卡片 upsert + streamBlocks 维护。
+   * 同 toolId 更新状态（原地修改 card 属性保持引用稳定）；
+   * 首次出现时追加 tool block 到 streamBlocks（与文本交错）。
+   */
   function upsertToolCard(event: WsEvent) {
     const toolId = event.toolId
     if (!toolId) {
@@ -394,17 +417,27 @@ export const useSessionStore = defineStore('session', () => {
       // update 事件通常不携带 input/output，避免把 tool_call 阶段的入参清掉
       if (event.input != null) existing.input = event.input
       if (event.output != null) existing.output = event.output
+      // 同步更新 streamBlocks 中对应 tool block 的 card 引用（原地修改）
+      for (const b of streamBlocks.value) {
+        if (b.kind === 'tool' && b.card.toolId === toolId) {
+          if (event.title) b.card.title = event.title
+          if (event.status) b.card.status = event.status
+          if (event.input != null) b.card.input = event.input
+          if (event.output != null) b.card.output = event.output
+          break
+        }
+      }
     } else {
-      activeToolCards.value = [
-        ...activeToolCards.value,
-        {
-          toolId,
-          title: event.title,
-          status: event.status ?? 'running',
-          input: event.input,
-          output: event.output,
-        },
-      ]
+      const card: ToolCard = {
+        toolId,
+        title: event.title,
+        status: event.status ?? 'running',
+        input: event.input,
+        output: event.output,
+      }
+      activeToolCards.value = [...activeToolCards.value, card]
+      // 首次出现：追加 tool block 到 streamBlocks（保持时间线交错）
+      streamBlocks.value.push({ kind: 'tool', card })
     }
   }
 
@@ -467,6 +500,7 @@ export const useSessionStore = defineStore('session', () => {
     const sessionId = currentId.value
     streaming.value = false
     streamMsgId = -1
+    streamBlocks.value = []
     if (sessionId === null) {
       return
     }
@@ -640,6 +674,7 @@ export const useSessionStore = defineStore('session', () => {
 
     streaming.value = true
     streamError.value = null
+    streamBlocks.value = []
 
     const sent = acpSocket.send({
       type: 'prompt',
@@ -651,6 +686,7 @@ export const useSessionStore = defineStore('session', () => {
       // 连接未就绪：提示并回退？P2 简化：置错并结束流式
       streaming.value = false
       streamMsgId = -1
+      streamBlocks.value = []
       streamError.value = 'websocket not connected'
     }
   }
@@ -667,6 +703,7 @@ export const useSessionStore = defineStore('session', () => {
     }
     streaming.value = false
     streamMsgId = -1
+    streamBlocks.value = []
   }
 
   function clearStreamError() {
@@ -688,6 +725,7 @@ export const useSessionStore = defineStore('session', () => {
     pendingPermission,
     activeToolCards,
     activePlan,
+    streamBlocks,
     configOptions,
     slashCommands,
     activeSession,
