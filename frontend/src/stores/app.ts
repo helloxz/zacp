@@ -96,6 +96,9 @@ export const useAppStore = defineStore('app', () => {
   /** 新建项目弹窗开关（WelcomeHero 与 AppSidebar 共享） */
   const newProjectModalOpen = ref(false)
 
+  /** 设置弹窗开关（AppShell 与各页面的「前往设置」入口共享；默认定位「智能体」目录） */
+  const settingsOpen = ref(false)
+
   return {
     locale,
     naiveLocale,
@@ -107,5 +110,6 @@ export const useAppStore = defineStore('app', () => {
     isDark,
     toggleTheme,
     newProjectModalOpen,
+    settingsOpen,
   }
 })

@@ -55,6 +55,8 @@ export default {
     workspacePathPlaceholder: 'Enter a workspace path, e.g. /path/to/project',
     enableWorkspace: 'Enable',
     newChatTitle: 'New chat',
+    noAgentHint: 'No agents enabled yet. Install an agent first, then enable it in Settings → Agents',
+    goSettings: 'Open settings',
     emptyMessages: 'No messages yet. Send the first message to begin.',
     user: 'You',
     assistant: 'Agent',

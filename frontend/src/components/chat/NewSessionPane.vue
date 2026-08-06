@@ -13,9 +13,12 @@
  * A 方案代价：每次切 tab = 真实 session/new（启动 agent 子进程），有启动延迟。
  */
 import { computed, nextTick, onUnmounted, ref, watch } from 'vue'
+import { NIcon } from 'naive-ui'
+import { WarningOutline } from '@vicons/ionicons5'
 import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 import { useAgentStore } from '@/stores/agent'
+import { useAppStore } from '@/stores/app'
 import { useSessionStore } from '@/stores/session'
 import type { ChatSession, ConfigOption } from '@/types/models'
 import Composer, {
@@ -27,10 +30,19 @@ const props = defineProps<{ workspaceId?: number }>()
 const { t } = useI18n()
 const router = useRouter()
 const agentStore = useAgentStore()
+const appStore = useAppStore()
 const sessionStore = useSessionStore()
 
 /** 可用 agent 列表（未运行项可点击，点击时按需启动对应 agent） */
 const agents = computed(() => agentStore.list)
+
+/** 一个智能体都没有：输入框不可用，需提示先安装 Agent 并到「设置 - 智能体」启用 */
+const noAgent = computed(() => agents.value.length === 0)
+
+/** 打开设置弹窗（默认定位「智能体」目录，SettingsModal activeKey 初始为 agent） */
+function goSettings() {
+  appStore.settingsOpen = true
+}
 
 /** 当前工作区路径（空态提示用）：优先 ?workspaceId 指定的工作区，缺省回退默认工作区 */
 const workspacePath = computed(() => {
@@ -283,6 +295,26 @@ onUnmounted(() => {
             @click="sessionStore.clearStreamError()"
           >
             ✕
+          </button>
+        </div>
+
+        <!-- 无可用智能体：输入框上方醒目的引导提示（amber 警示色，亮暗双主题兼容）。
+             此时无 agent 可选，Composer 发送按钮天然禁用（card 模式要求已选 agent），
+             提示条引导用户先安装 Agent 再到「设置 - 智能体」启用 -->
+        <div
+          v-if="noAgent"
+          class="flex w-full items-center justify-between gap-3 rounded-xl bg-amber-50 px-4 py-3 ring-1 ring-inset ring-amber-300/60 dark:bg-amber-950/30 dark:ring-amber-700/50"
+        >
+          <span class="flex items-center gap-2 text-sm text-amber-700 dark:text-amber-300">
+            <n-icon :size="18"><WarningOutline /></n-icon>
+            <span>{{ t('chat.noAgentHint') }}</span>
+          </span>
+          <button
+            type="button"
+            class="shrink-0 cursor-pointer rounded-lg bg-amber-500 px-3 py-1.5 text-sm font-medium text-white shadow-sm transition-colors hover:bg-amber-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-400/60 dark:bg-amber-600 dark:hover:bg-amber-500"
+            @click="goSettings"
+          >
+            {{ t('chat.goSettings') }}
           </button>
         </div>
 

@@ -5,11 +5,15 @@ import ChatPane from '@/components/chat/ChatPane.vue'
 import FilePanel from '@/components/files/FilePanel.vue'
 import SettingsModal from '@/components/shell/SettingsModal.vue'
 import { useAgentStore } from '@/stores/agent'
+import { useAppStore } from '@/stores/app'
 import { useSessionStore } from '@/stores/session'
 import { acpSocket } from '@/composables/useAcpSocket'
 
-/** 设置弹窗开关（由 UserFooter 齿轮触发；壳层级状态，覆盖全屏） */
-const settingsOpen = ref(false)
+/**
+ * 设置弹窗开关：状态放 appStore（与 newProjectModalOpen 同模式），
+ * 供 UserFooter 齿轮与各页面「前往设置」入口（如无智能体提示条）共享。
+ */
+const appStore = useAppStore()
 
 /**
  * 右侧面板（信息|文件|Git）折叠状态：默认收起（不持久化）。
@@ -18,7 +22,7 @@ const settingsOpen = ref(false)
 const rightPanelOpen = ref(false)
 
 function openSettings() {
-  settingsOpen.value = true
+  appStore.settingsOpen = true
 }
 
 /** 首屏：拉取 agent 列表 + 工作区 + 最近会话（并行，失败不阻塞壳层渲染）+ 建立 WS 长连接 */
@@ -48,6 +52,6 @@ onMounted(() => {
     >
       <FilePanel class="h-full w-80" />
     </div>
-    <SettingsModal :show="settingsOpen" @update:show="settingsOpen = $event" />
+    <SettingsModal :show="appStore.settingsOpen" @update:show="appStore.settingsOpen = $event" />
   </div>
 </template>

@@ -66,6 +66,8 @@ export default {
     workspacePathPlaceholder: '输入工作区路径，如 /path/to/project',
     enableWorkspace: '开启',
     newChatTitle: '新会话',
+    noAgentHint: '尚未启用任何智能体：请先安装 Agent，再到【设置 - 智能体】中启用',
+    goSettings: '前往设置',
     emptyMessages: '暂无消息，发送第一条消息开始对话',
     user: '你',
     assistant: 'Agent',
