@@ -11,6 +11,7 @@ backend/vendor/
 
 # Runtime config/db live under ~/.zacp (not in repo).
 # Keep ignoring accidental local copies under backend/configs/
+.zacp/
 backend/configs/config.toml
 backend/configs/config.yaml
 backend/data/
