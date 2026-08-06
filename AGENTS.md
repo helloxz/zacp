@@ -28,7 +28,7 @@ Go SDK：https://github.com/coder/acp-go-sdk（模块路径 `github.com/coder/ac
 | 数据库 | **SQLite3 + GORM + 纯 Go 驱动** | ORM：`gorm.io/gorm`；驱动：`github.com/glebarez/sqlite`（底层 `modernc.org/sqlite`，**无 CGO**）；持久化在 `internal/store` |
 | ACP | `github.com/coder/acp-go-sdk` `v0.13.5` | Client 侧连接、会话、Prompt、SessionUpdate |
 | 前端 | **Vue 3 + Naive UI + Tailwind CSS** | 代码在 `frontend/`；构建建议 Vite；**包管理与脚本一律用 Bun**；实时通道用浏览器原生 `WebSocket` |
-| 部署 | 根目录 `Dockerfile`、`deployments/`、`scripts/` | 镜像与运维脚本 |
+| 部署 | 根目录 `Dockerfile`、`scripts/` | 镜像与运维脚本 |
 
 **实时通信选型（已定）：**
 
@@ -145,7 +145,6 @@ zacp/
 │   ├── package.json
 │   └── vite.config.ts        # 或等价构建配置
 ├── scripts/                  # Shell 脚本（开发、构建、发布）
-├── deployments/              # compose / k8s 等部署清单
 └── docs/                     # 设计文档、协议笔记
 ```
 
@@ -156,7 +155,7 @@ zacp/
 | Go 业务与依赖 | **仅** `backend/` |
 | Web UI 源码 | **仅** `frontend/`（Vue 3 + Naive UI + Tailwind） |
 | 可执行脚本 | `scripts/` 或根目录（根目录仅放极少数全局脚本） |
-| Docker / 部署 | 根目录 `Dockerfile` 或 `deployments/` |
+| Docker / 部署 | 根目录 `Dockerfile` |
 | 配置样例（入库） | `backend/configs/config.example.toml` |
 | 运行时配置 / 数据库 | **`$ZACP_DATA`**（默认 `~/.zacp`），**不入库** |
 
@@ -507,7 +506,7 @@ bun run build
 
 在动手改代码前确认：
 
-1. 改动是否落在正确目录（backend / frontend / scripts / deployments）？
+1. 改动是否落在正确目录（backend / frontend / scripts）？
 2. 运行时状态是否写在 **`$ZACP_DATA`（默认 `~/.zacp`）**，而不是仓库目录或随意 cwd？
 3. 是否把 Agent 差异关在 `providers`，而不是污染通用 manager？
 4. 子进程 / 连接 / DB 是否有生命周期与错误处理（含 WAL、迁移失败即退出）？
