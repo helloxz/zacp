@@ -19,3 +19,4 @@
 - 内置opencode的/命令
 - 支持codex acp
 - 支持Pi acp接入
+- 思考过程，改成思考中

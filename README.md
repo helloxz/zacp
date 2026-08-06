@@ -27,11 +27,11 @@
 - **智能体管理**：设置页可随时启用/禁用某个 Agent，热更新配置，无需重启服务；
 - **会话与消息持久化**：历史会话、消息记录存入本地 SQLite（WAL 模式），重启不丢失；
 - **单二进制发布**：前端页面与默认配置全部内嵌进一个可执行文件，`--version` 查看版本，即下即用；
-- **一键安装与更新**：提供 `install.sh` / `update.sh` 脚本，自动识别 macOS / Linux 与 CPU 架构（amd64 / arm64），安装、升级、回滚一条命令搞定。
+- **一键安装与更新**：提供 `install.sh` / `update.sh`（macOS / Linux）与 `install.ps1` / `update.ps1`（Windows）脚本，自动识别操作系统与 CPU 架构（amd64 / arm64），安装、升级、回滚一条命令搞定。
 
-## 安装（macOS / Linux）
+## 安装
 
-### 一键安装（推荐）
+### macOS / Linux 一键安装（推荐）
 
 自动检测操作系统与 CPU 架构，从 GitHub Releases 下载最新版本并安装：
 
@@ -40,6 +40,24 @@ curl -fsSL https://raw.githubusercontent.com/helloxz/zacp/main/install.sh | bash
 ```
 
 > 注意：如果您需要对接第三方Agent，比如Grok、Omp等需要先自行安装，然后在设置里面启用。
+
+### Windows 一键安装
+
+在 PowerShell 中执行（推荐）：
+
+```powershell
+irm https://raw.githubusercontent.com/helloxz/zacp/main/install.ps1 | iex
+```
+
+或在 CMD 中执行（下载到本地后运行，可指定版本）：
+
+```cmd
+curl -fsSL https://raw.githubusercontent.com/helloxz/zacp/main/install.ps1 -o "%TEMP%\zacp-install.ps1" && powershell -ExecutionPolicy Bypass -File "%TEMP%\zacp-install.ps1"
+```
+
+安装脚本会把 bin 目录加入用户 PATH（新开终端生效），并将最新版本复制为 `zacp.exe`，旧版本保留一份用于回滚。升级请用下面的 [一键更新](#一键更新推荐) 命令，不必重跑安装。
+
+> 提示：`irm ... | iex` 会直接执行来自网络的脚本，请确认来源可信；首次启动若弹出 Windows 防火墙提示，允许后即可通过 `http://127.0.0.1:8680/` 访问。
 
 ### 首次启动
 
@@ -66,6 +84,20 @@ curl -fsSL https://raw.githubusercontent.com/helloxz/zacp/main/update.sh | bash
 ```bash
 curl -fsSL https://raw.githubusercontent.com/helloxz/zacp/main/update.sh | sudo bash
 ```
+
+Windows 用户在 PowerShell 中更新（自动检测已安装的 zacp 并升级到最新版本；需先停止正在运行的 `zacp` 进程，更新脚本不会自动结束它）：
+
+```powershell
+irm https://raw.githubusercontent.com/helloxz/zacp/main/update.ps1 | iex
+```
+
+或下载到本地后执行（可指定版本 / 强制重装）：
+
+```cmd
+curl -fsSL https://raw.githubusercontent.com/helloxz/zacp/main/update.ps1 -o "%TEMP%\zacp-update.ps1" && powershell -ExecutionPolicy Bypass -File "%TEMP%\zacp-update.ps1"
+```
+
+更新脚本会保留当前版本与最近一个旧版本用于回滚；不想保留太多时旧版本会按需清理。
 
 
 ## 联系作者
