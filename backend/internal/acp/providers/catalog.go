@@ -28,6 +28,7 @@ var BuiltinAgents = []config.AgentConfig{
 	{ID: "qodercn", Name: "QoderCN", Command: "qoderclicn", Args: []string{"--acp"}},
 	{ID: "qoder", Name: "Qoder", Command: "qodercli", Args: []string{"--acp"}},
 	{ID: "grok", Name: "Grok", Command: "grok", Args: []string{"agent", "stdio"}},
+	{ID: "opencode", Name: "OpenCode", Command: "opencode", Args: []string{"acp"}},
 }
 
 // BuiltinTemplate 按 id（大小写不敏感）返回内置模板；未命中返回 false。
