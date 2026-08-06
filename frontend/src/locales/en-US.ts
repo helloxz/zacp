@@ -43,6 +43,8 @@ export default {
     agentNotRunning: 'Not running, click to start',
     placeholder: 'Message the agent…',
     enterHint: 'Enter to send · Shift+Enter for a new line',
+    reasoning: 'Thought process',
+    reasoningThinking: 'Thinking',
     send: 'Send',
     stop: 'Stop',
     queued: 'Queued — will start after the previous turn finishes',

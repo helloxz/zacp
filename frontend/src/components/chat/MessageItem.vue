@@ -183,8 +183,15 @@ const displayPlan = computed<Plan | null>(() => activePlan.value ?? plan.value)
       v-if="!isUser && reasoning"
       class="w-full rounded-lg bg-amber-50/70 px-3 py-2 text-xs leading-relaxed text-slate-500 ring-1 ring-inset ring-amber-100"
     >
-      <summary class="cursor-pointer select-none font-medium text-slate-400">
-        {{ t('chat.reasoning') }}
+      <summary
+        class="cursor-pointer select-none font-medium"
+        :class="isStreamingPlaceholder ? 'text-amber-600' : 'text-slate-400'"
+      >
+        <!-- 思考中：显示「思考中」+ 弹跳圆点（amber 活跃色）；turn.done 后切回「思考过程」且圆点消失 -->
+        {{ isStreamingPlaceholder ? t('chat.reasoningThinking') : t('chat.reasoning') }}
+        <span v-if="isStreamingPlaceholder" class="inline-flex items-center gap-1 align-middle">
+          <span v-for="i in 3" :key="i" class="loading-dot loading-dot-sm" />
+        </span>
       </summary>
       <div class="mt-1.5 whitespace-pre-wrap">{{ reasoning }}</div>
     </details>
@@ -261,6 +268,13 @@ const displayPlan = computed<Plan | null>(() => activePlan.value ?? plan.value)
 }
 .loading-dot:nth-child(3) {
   animation-delay: 0.3s;
+}
+/* 思考中 summary 内的小号圆点：尺寸更小、amber-600 色，与「思考中」活跃提示一致；
+   动画复用上方 loading-dot（弹跳），本类仅覆盖尺寸与颜色（须定义在 .loading-dot 之后） */
+.loading-dot-sm {
+  width: 4px;
+  height: 4px;
+  background-color: #d97706; /* amber-600 */
 }
 @keyframes loading-dot-bounce {
   0%,
