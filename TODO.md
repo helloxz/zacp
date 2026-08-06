@@ -15,3 +15,7 @@
 - 每次发送消息后滚动到最底部
 - 切换到旧对话，感觉mode没传递到后端（存疑）
 - 并发对话
+- Pi启动中，切换回reasonix还提示在启动reasonix，其实reasonix是早就启动了的。
+- 内置opencode的/命令
+- 支持codex acp
+- 支持Pi acp接入

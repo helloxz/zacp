@@ -1,8 +1,12 @@
 # zacp
 
-> 一个基于 **ACP（Agent Client Protocol）** 协议的多 Agent Web 网关，让你在浏览器里同时使用多种 AI Agent 工具（如 Reasonix、Grok、Omp 等）进行对话。
+一个基于 **ACP（Agent Client Protocol）** 协议的多 Agent Web 网关，让你在浏览器里同时使用多种 AI Agent 工具（如 Reasonix、Grok、Omp 等）进行对话，让原本不具备 Web 前端的 Agent 也能在浏览器里使用。
 
-**zacp 就是这些 Agent 的统一 Web 前端**：
+![CleanShot 2026-08-06 at 15.52.53@2x.png](https://img.rss.ink/2026/08/06/xqyCT2Wq.png)
+
+![CleanShot 2026-08-06 at 15.54.43@2x.png](https://img.rss.ink/2026/08/06/NhxMDQR8.png)
+
+## 实现原理
 
 - 后端以 **ACP Client** 的身份连接各种支持 ACP 协议的 Agent（本地 stdio 子进程），负责 Agent 的启动、会话生命周期管理、消息流转发；
 - 前端是一个浏览器 Web UI（Vue 3），通过 WebSocket 与后端实时通信，把 Agent 的流式输出、工具调用、权限请求实时展示出来，并支持多 Agent 切换、多会话管理；
@@ -12,7 +16,7 @@
 
 ## 功能特性
 
-- **多 Agent 接入**：内置 Reasonix、Grok、omp、Qoder 等 Agent 适配，只需在配置文件 `~/.zacp/config.toml` 的 `[[agents]]` 增加条目即可接入新 Agent；
+- **多 Agent 接入**：内置 Reasonix、Grok、Omp、Qoder 等 Agent 适配，只需在配置文件
 - **浏览器 Web UI**：会话式聊天界面，支持多会话、多 Agent 切换，流式输出实时展示（思考过程、工具调用、执行计划等）；
 - **实时通信**：基于 WebSocket 的流式消息推送与权限回传，交互延迟低；
 - **权限确认**：Agent 请求执行操作（读写文件、执行命令等）时，权限请求会推送到 Web UI 由你亲自确认，而不是服务端无脑自动放行（开发模式可配置自动批准）；
@@ -33,6 +37,7 @@
 curl -fsSL https://raw.githubusercontent.com/helloxz/zacp/main/install.sh | bash
 ```
 
+> 注意：如果您需要对接第三方Agent，比如Grok、Omp等需要先自行安装，然后在设置里面启用。
 
 ### 首次启动
 
