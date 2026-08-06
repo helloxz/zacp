@@ -13,6 +13,7 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -468,11 +469,24 @@ func (m *Manager) LoadSession(ctx context.Context, agentID, sessionID string) er
 	return conn.LoadSession(ctx, acp.SessionId(sessionID))
 }
 
+// uuidLikeRe 匹配 uuid 或 uuid 的十六进制前缀（如 "019fd945" / "019fd945-ff8c-..."），
+// 作为「错误文本里确实带 session id」的证据，用于收窄会话失效判定。
+var uuidLikeRe = regexp.MustCompile(`[0-9a-f]{8,}`)
+
 // IsUnknownSessionErr 判断 ACP 错误是否为「agent 侧会话不存在/已失效」。
 // 后端或 agent 重启后，DB 中记录的 acp_session_id 在 agent 内存中已丢失，
 // 不同 agent 对「会话失效」返回的错误文本不同，这里统一做大小写不敏感匹配：
-//   - reasonix 等：`session/xxx: unknown session <uuid>`
+//   - omp（pi 系）：`{"code":-32603,...,"details":"Unsupported ACP session: <uuid>"}`
+//   - reasonix 等：`session/<uuid>: unknown session <uuid>`
 //   - qoder 等：`{"code":-32603,...,"details":"Session not found: <uuid>"}`
+//
+// 判定前置条件：错误文本必须同时含 "session" 与 session id（uuid / hex 前缀）。
+// 已知 agent 的失效错误都带 id，要求 id 共现可排除无 id 的误伤文本，例如：
+//   - "unsupported session config option: foo"（会话正常，参数问题）
+//   - "write /workspace/session.json: no such file or directory"（文件路径）
+//
+// 误判代价可控：至多触发一次 session/load（失败则重建）重试；对支持 load 的
+// agent（如 omp 可从磁盘恢复）误判也只是多一次无害的 load + 重试。
 //
 // ws bridge（prompt 路径）与 service（config-options 路径）共用此判断触发自动恢复。
 func IsUnknownSessionErr(err error) bool {
@@ -480,7 +494,27 @@ func IsUnknownSessionErr(err error) bool {
 		return false
 	}
 	msg := strings.ToLower(err.Error())
-	return strings.Contains(msg, "unknown session") || strings.Contains(msg, "session not found")
+	if !strings.Contains(msg, "session") || !uuidLikeRe.MatchString(msg) {
+		return false
+	}
+	// 失效语义词：与 "session" + session id 组合出现即视为会话失效，
+	// 组合判断可覆盖未来新增 agent 的措辞变体，不必每接入一个 agent 改白名单。
+	// "invalid" 不纳入：语义过宽（如 "invalid session config option: <uuid>" 是
+	// 参数错误而非会话失效），误判会触发 RecoverSession 重建会话、静默丢失上下文。
+	for _, word := range []string{
+		"unknown",
+		"not found",
+		"unsupported",
+		"not exist",
+		"doesn't exist",
+		"no such",
+		"not recognized",
+	} {
+		if strings.Contains(msg, word) {
+			return true
+		}
+	}
+	return false
 }
 
 // RecoverSession 恢复 agent 侧已失效的 ACP session（unknown session 时调用）：
@@ -775,7 +809,22 @@ func (c *AgentConnection) Start(ctx context.Context) error {
 		err := cmd.Wait()
 		c.log.Info("agent process exited", "agent", c.provider.ID, "err", err)
 		c.mu.Lock()
-		c.started = false
+		// 仅当 c.cmd 仍是本 goroutine 启动的进程时才清理（compare-and-clear）：
+		// 清理不得清掉更新的进程状态（如进程退出后、抢到锁前已按需重启的新进程），
+		// 否则新进程会变成 started=false、无法被 Close 杀掉的孤儿，并引发反复重启。
+		if c.cmd == cmd {
+			c.started = false
+			// 进程已退出：底层 ACP 连接必然失效，进程内存中的 session 也随进程丢失。
+			// 清空引用，避免 ListAgents 把已死的 session 当活跃展示，也避免后续
+			// 操作拿到悬挂的 conn/stdin；重启后旧 session id 在 agent 内存中不存在，
+			// Prompt 返回 unknown/unsupported session 错误，由 ws bridge / service 的
+			// 恢复逻辑（IsUnknownSessionErr + RecoverSession）自动 load 或重建。
+			c.currentSession = nil
+			c.conn = nil
+			c.stdin = nil
+			c.cmd = nil
+			c.procCancel = nil
+		}
 		c.mu.Unlock()
 	}()
 
