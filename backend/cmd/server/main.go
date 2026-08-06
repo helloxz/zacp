@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
@@ -91,6 +92,16 @@ Examples:
 		os.Exit(1)
 	}
 	log.Info("config loaded", "agents", len(cfg.Agents), "autoApprove", cfg.Session.AutoApprove)
+
+	// 解析配置文件绝对路径（设置页写回 [[agents]] 用）：
+	// --config / ZACP_CONFIG 显式指定时以其为准，否则默认 $ZACP_DATA/config.toml
+	agentCfgPath := *configPath
+	if agentCfgPath == "" {
+		agentCfgPath = filepath.Join(homeDir, "config.toml")
+	}
+	if abs, err := filepath.Abs(agentCfgPath); err == nil {
+		agentCfgPath = abs
+	}
 
 	// 合成最终监听地址：--addr > ZACP_ADDR 环境变量 > TOML server.addr > :8680
 	listenAddr := *addr
@@ -183,6 +194,10 @@ Examples:
 	sessionHandler := handlers.NewSessionHandler(sessionSvc, eventBridge)
 	chatHandler := &handlers.ChatHandler{Mgr: mgr}
 	fileHandler := handlers.NewFileHandler(fileSvc)
+	agentManageHandler := &handlers.AgentManageHandler{
+		Mgr:        mgr,
+		ConfigPath: agentCfgPath,
+	}
 
 	// gin mode 优先级：GIN_MODE 环境变量（gin 包 init 已读取）> TOML server.mode > 默认 debug。
 	// GIN_MODE 显式设置时以环境变量为准（不覆盖）；否则以配置为准。
@@ -190,7 +205,7 @@ Examples:
 		gin.SetMode(cfg.Server.Mode)
 	}
 
-	engine := router.New(workspaceHandler, sessionHandler, chatHandler, fileHandler, wsHandler, eventBridge)
+	engine := router.New(workspaceHandler, sessionHandler, chatHandler, fileHandler, agentManageHandler, wsHandler, eventBridge)
 
 	// Graceful shutdown on signal.
 	go func() {

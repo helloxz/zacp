@@ -20,6 +20,7 @@ import (
 
 	acpclient "github.com/zacp/zacp/internal/acp/client"
 	"github.com/zacp/zacp/internal/acp/providers"
+	"github.com/zacp/zacp/internal/config"
 )
 
 // Manager 管理多个 agent 连接和 session。
@@ -208,6 +209,37 @@ func (m *Manager) StopAgent(agentID string) error {
 	return nil
 }
 
+// SetAgentEnabled 设置页开关的运行时热更新（不落盘，文件写入由调用方负责）：
+//   - 启用：按配置创建 Provider 注册进 registry，之后前端可立即创建会话
+//   - 停用：先从 registry 移除注册，再停止该 agent 已启动的进程（若有）
+//
+// 与 ListAgents/CreateSession 等共享 m.mu，保证注册表与连接状态一致。
+func (m *Manager) SetAgentEnabled(cfg config.AgentConfig, enabled bool) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if enabled {
+		p, err := providers.NewFromConfig(cfg)
+		if err != nil {
+			return fmt.Errorf("enable agent '%s': %w", cfg.ID, err)
+		}
+		m.registry.Add(p)
+		m.log.Info("agent enabled (hot)", "agent", cfg.ID)
+		return nil
+	}
+
+	// 停用：先停进程再移除注册
+	if conn, exists := m.agents[cfg.ID]; exists {
+		if err := conn.Close(); err != nil {
+			return fmt.Errorf("stop agent '%s': %w", cfg.ID, err)
+		}
+		delete(m.agents, cfg.ID)
+	}
+	m.registry.Remove(cfg.ID)
+	m.log.Info("agent disabled (hot)", "agent", cfg.ID)
+	return nil
+}
+
 // reapLoop 空闲回收主循环：固定 5 分钟扫描一次，直到 stop 关闭。
 func (m *Manager) reapLoop(stop <-chan struct{}, done chan<- struct{}) {
 	defer close(done)
@@ -266,16 +298,18 @@ func (m *Manager) recycleIdle() {
 // CreateSession 在指定 agent 上创建新 session，返回 session ID 与 agent 下发的配置项
 // （模型/思考强度/mode 等，来自 session/new 响应的 configOptions）。
 func (m *Manager) CreateSession(ctx context.Context, agentID, cwd string) (string, []acp.SessionConfigOption, error) {
+	// conn 与 provider 须在同一把锁内取得：设置页热更新（SetAgentEnabled）
+	// 会在锁内写 registry，锁外读会与热更新写产生 data race。
 	m.mu.Lock()
 	conn, exists := m.agents[agentID]
+	provider, _ := m.registry.Get(agentID)
 	m.mu.Unlock()
 
 	if !exists {
 		return "", nil, fmt.Errorf("agent '%s' not started", agentID)
 	}
 
-	provider, _ := m.registry.Get(agentID)
-	if cwd == "" {
+	if cwd == "" && provider != nil {
 		cwd = provider.ResolveCwd(m.defaultCwd)
 	}
 
@@ -354,8 +388,12 @@ func (m *Manager) RecoverSession(ctx context.Context, agentID, oldAcpID, cwd str
 		return oldAcpID, false, nil
 	}
 
-	// load 失败：新建 ACP session（沿用 cwd；空时回退 provider 默认工作区）
+	// load 失败：新建 ACP session（沿用 cwd；空时回退 provider 默认工作区）。
+	// provider 须在锁内取得（避免与热更新写 registry 产生 data race）；
+	// conn 已在上方同锁取得，若此时已被热更新停用，下方 CreateSession 会报错返回。
+	m.mu.Lock()
 	provider, _ := m.registry.Get(agentID)
+	m.mu.Unlock()
 	if cwd == "" && provider != nil {
 		cwd = provider.ResolveCwd(m.defaultCwd)
 	}

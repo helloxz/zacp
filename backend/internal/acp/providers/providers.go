@@ -89,20 +89,10 @@ func resolveCommand(agentID, command string) string {
 		return p
 	}
 
-	// 特殊处理：reasonix 的常见安装路径
+	// 支持通过环境变量指定 reasonix 路径
 	if agentID == "reasonix" {
 		if v := os.Getenv("REASONIX_BIN"); v != "" {
 			return v
-		}
-		candidates := []string{
-			"/home/xiaoz/.local/share/pnpm/global/5/.pnpm/@reasonix+cli-linux-x64@1.17.1-rc.1/node_modules/@reasonix/cli-linux-x64/bin/reasonix",
-			"/data/apps/znode/bin/reasonix",
-			filepath.Join(os.Getenv("HOME"), ".local/share/pnpm/reasonix"),
-		}
-		for _, c := range candidates {
-			if st, err := os.Stat(c); err == nil && !st.IsDir() {
-				return c
-			}
 		}
 	}
 
@@ -149,4 +139,27 @@ func (r *ProviderRegistry) Get(id string) (*Provider, bool) {
 // List 返回所有已注册的 Provider ID 列表（按 config.toml 书写顺序）。
 func (r *ProviderRegistry) List() []string {
 	return append([]string(nil), r.order...)
+}
+
+// Add 注册或替换 Provider（设置页热更新用）。
+// 已存在时替换实现并保持原顺序位置；不存在时追加到末尾。
+func (r *ProviderRegistry) Add(p *Provider) {
+	if _, exists := r.providers[p.ID]; !exists {
+		r.order = append(r.order, p.ID)
+	}
+	r.providers[p.ID] = p
+}
+
+// Remove 移除指定 ID 的 Provider（设置页停用热更新用）。
+func (r *ProviderRegistry) Remove(id string) {
+	if _, exists := r.providers[id]; !exists {
+		return
+	}
+	delete(r.providers, id)
+	for i, o := range r.order {
+		if o == id {
+			r.order = append(r.order[:i], r.order[i+1:]...)
+			return
+		}
+	}
 }

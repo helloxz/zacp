@@ -81,10 +81,19 @@ export default {
     close: 'Close',
     agent: {
       title: 'Agents',
-      desc: 'Manage the connected ACP agents',
+      desc: 'Manage the connected ACP agents; enabled ones show up when creating a session',
       comingSoon: 'Agent management is coming soon',
       placeholder:
         'Here you will be able to view connected agents, start/stop them, and tweak launch arguments.',
+      enabledCount: '{count} enabled',
+      installed: 'Installed',
+      notInstalled: 'Not installed',
+      builtin: 'Built-in',
+      notInstalledHint: 'Command not found on this machine, install it first',
+      toggleFailed: 'Operation failed, please retry',
+      enabledToast: '{name} enabled',
+      disabledToast: '{name} disabled',
+      empty: 'No agents yet',
     },
     system: {
       title: 'System',

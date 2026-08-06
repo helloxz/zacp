@@ -18,6 +18,7 @@ func New(
 	sessionHandler *handlers.SessionHandler,
 	chatHandler *handlers.ChatHandler,
 	fileHandler *handlers.FileHandler,
+	agentManageHandler *handlers.AgentManageHandler,
 	wsHandler *ws.Handler,
 	eventBridge *ws.EventBridge,
 ) *gin.Engine {
@@ -31,6 +32,10 @@ func New(
 		// Agent 管理
 		v1.GET("/agents", chatHandler.ListAgents)
 		v1.GET("/agents/:agentId/status", chatHandler.GetAgentStatus)
+		// 设置页智能体管理（全量目录 + 开关，见 handlers.AgentManageHandler）
+		// 注意：/agents/manage 为静态段，与 /agents/:agentId/status 无路由冲突
+		v1.GET("/agents/manage", agentManageHandler.ListManageAgents)
+		v1.PUT("/agents/:agentId", agentManageHandler.SetAgentEnabled)
 
 		// 工作目录管理
 		v1.GET("/workspaces", workspaceHandler.ListWorkspaces)

@@ -17,6 +17,23 @@ export interface Agent {
   running: boolean
 }
 
+/**
+ * 设置页智能体目录条目（GET /api/v1/agents/manage → `{ agents: ManageAgent[] }`）。
+ * 来源为配置 [[agents]] + 后端内置目录合并（配置优先），含已停用与未安装项。
+ */
+export interface ManageAgent {
+  agentId: string
+  name: string
+  /** 启动命令（如 reasonix / qoderclicn / grok） */
+  command: string
+  /** 配置中是否启用 */
+  enabled: boolean
+  /** 本机是否已安装（后端 which/文件存在性检测，尽力而为） */
+  installed: boolean
+  /** "config" = 来自用户配置；"builtin" = 后端内置模板（未写入配置） */
+  source: 'config' | 'builtin'
+}
+
 /** 工作目录（GET /api/v1/workspaces → `{ workspaces: Workspace[] }`） */
 export interface Workspace {
   id: number

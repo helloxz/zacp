@@ -27,6 +27,7 @@ import type {
   ConfigOption,
   DirectoryList,
   FileEntry,
+  ManageAgent,
   MessagePage,
   VersionInfo,
   Workspace,
@@ -41,6 +42,28 @@ export async function fetchVersion(): Promise<VersionInfo> {
 export async function fetchAgents(): Promise<Agent[]> {
   const data = await http.get<{ agents: Agent[] }>('/api/v1/agents')
   return data.agents
+}
+
+/**
+ * GET /api/v1/agents/manage — 设置页智能体目录（配置 + 内置合并，含未安装项）。
+ * 与 fetchAgents（运行时可用列表）语义不同，勿混用。
+ */
+export async function fetchManageAgents(): Promise<ManageAgent[]> {
+  const data = await http.get<{ agents: ManageAgent[] }>('/api/v1/agents/manage')
+  return data.agents
+}
+
+/**
+ * PUT /api/v1/agents/:agentId — 设置页开关智能体（写 config.toml + 运行时热更新）。
+ * 开启未安装的智能体会被后端拒绝（code: agent_not_installed）。
+ */
+export async function setAgentEnabled(
+  agentId: string,
+  enabled: boolean,
+): Promise<void> {
+  await http.put(`/api/v1/agents/${encodeURIComponent(agentId)}`, {
+    body: { enabled },
+  })
 }
 
 /** GET /api/v1/workspaces — 工作区列表（按最近使用排序） */
