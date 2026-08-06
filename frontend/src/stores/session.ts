@@ -544,6 +544,20 @@ export const useSessionStore = defineStore('session', () => {
     }
   }
 
+  /**
+   * plan 事件 → streamBlocks 维护：PlanCard 挂在 blocks 循环里渲染，
+   * 必须存在 plan 块才会显示（数据本身由 activePlanBySession 承载，块只做位置占位）。
+   * ACP plan 为整体替换语义：一个 turn 内仅保留一个 plan 块，
+   * 首次出现追加，后续替换事件复用原块（位置稳定，不重复插入）。
+   */
+  function upsertPlanBlock(sessionId: number) {
+    const blocks = streamBlocksBySession.value[sessionId] ?? (streamBlocksBySession.value[sessionId] = [])
+    if (blocks.some((b) => b.kind === 'plan')) {
+      return
+    }
+    blocks.push({ kind: 'plan' })
+  }
+
   /** 用户选择权限选项：回传 permission 帧并关闭弹窗 */
   function resolvePermission(optionId: string) {
     const pending = pendingPermission.value
@@ -674,6 +688,9 @@ export const useSessionStore = defineStore('session', () => {
           } else if (e.type === 'plan' && e.plan) {
             // 执行计划：整体替换语义，直接覆盖实时卡片（不按 toolId 合并）
             activePlanBySession.value[sid] = e.plan
+            // 同步维护 streamBlocks：PlanCard 挂在 blocks 循环里渲染，
+            // 无 plan 块则卡片永不显示（数据由 activePlan 单独承载）
+            upsertPlanBlock(sid)
           }
           break
         }

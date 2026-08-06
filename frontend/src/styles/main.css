@@ -1,6 +1,16 @@
 @import 'tailwindcss';
 
 /*
+ * 主题色 token：与 config/theme.ts 中 Naive UI primaryColor 保持一致（sky 蓝）。
+ * 业务代码统一使用 bg-primary / text-primary / ring-primary 等，不要硬编码色值。
+ */
+@theme {
+  --color-primary: #0ea5e9; /* sky-500 */
+  --color-primary-hover: #38bdf8; /* sky-400 */
+  --color-primary-active: #0284c7; /* sky-600 */
+}
+
+/*
  * 全局基础样式：页面骨架用 Tailwind；组件外观跟 Naive UI。
  * 避免在这里覆盖 Naive 内部大量样式。
  */

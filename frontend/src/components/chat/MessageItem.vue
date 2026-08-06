@@ -167,6 +167,12 @@ const plan = computed<Plan | null>(() => {
     return null
   }
 })
+
+/**
+ * blocks 中 plan 块的展示数据：流式期间取实时 activePlan；
+ * turn.done 后 activePlan 被清空，回退到从 events 恢复的历史 plan。
+ */
+const displayPlan = computed<Plan | null>(() => activePlan.value ?? plan.value)
 </script>
 
 <template>
@@ -186,7 +192,7 @@ const plan = computed<Plan | null>(() => {
     <!-- user：右对齐气泡 -->
     <div
       v-if="isUser"
-      class="max-w-[85%] whitespace-pre-wrap rounded-2xl rounded-br-md bg-green-50 px-3.5 py-2.5 text-sm leading-relaxed text-slate-900 ring-1 ring-inset ring-green-100"
+      class="max-w-[85%] whitespace-pre-wrap rounded-2xl rounded-br-md bg-sky-50 px-3.5 py-2.5 text-sm leading-relaxed text-slate-900 ring-1 ring-inset ring-sky-100"
     >
       {{ message.content }}
     </div>
@@ -222,10 +228,11 @@ const plan = computed<Plan | null>(() => {
         class="w-full"
         :card="block.card"
       />
-      <!-- 执行计划块（reasoning 之后单独渲染，不参与交错；按会话取） -->
+      <!-- 执行计划块：数据取 displayPlan（流式=activePlan，历史=events 恢复的 plan） -->
       <PlanCard
-        v-else-if="block.kind === 'plan' && activePlan"
-        :plan="activePlan"
+        v-else-if="block.kind === 'plan' && displayPlan"
+        class="w-full"
+        :plan="displayPlan"
       />
     </template>
 
@@ -237,9 +244,6 @@ const plan = computed<Plan | null>(() => {
     >
       <span v-for="i in 3" :key="i" class="loading-dot" />
     </div>
-
-    <!-- 历史执行计划：events 中最后一个 plan 事件（仅在 blocks 中无 plan block 时兜底） -->
-    <PlanCard v-if="!isUser && plan && !blocks.some(b => b.kind === 'plan')" :plan="plan" />
   </div>
 </template>
 

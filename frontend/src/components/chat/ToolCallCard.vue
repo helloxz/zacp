@@ -12,13 +12,19 @@ const { t } = useI18n()
 /** 详情展开/折叠状态（默认收起；无详情时按钮禁用，仅展示标题行） */
 const expanded = ref(false)
 
-/** 状态展示文案（running/completed/error 之外显示原文） */
+/** 状态展示文案（ACP 状态词汇：pending/in_progress/completed/failed；
+ * running/error 兼容旧数据；未知值原样展示） */
 const statusText = computed(() => {
   switch (props.card.status) {
+    case 'pending':
+      return t('tool.pending')
+    case 'in_progress':
     case 'running':
-      return t('tool.running')
+      return t('tool.inProgress')
     case 'completed':
       return t('tool.completed')
+    case 'failed':
+      return t('tool.failed')
     case 'error':
       return t('tool.error')
     default:
@@ -26,11 +32,18 @@ const statusText = computed(() => {
   }
 })
 
-/** 状态点颜色：进行中蓝色呼吸 / 完成绿色 / 出错红色 */
+/** 是否终态（completed/failed/error）：终态停止呼吸动画 */
+const isTerminal = computed(() =>
+  ['completed', 'failed', 'error'].includes(props.card.status ?? ''),
+)
+
+/** 状态点颜色：进行中蓝色呼吸 / 完成绿色 / 失败黄色 / 出错红色 */
 const statusDotClass = computed(() => {
   switch (props.card.status) {
     case 'completed':
       return 'bg-green-500'
+    case 'failed':
+      return 'bg-amber-500'
     case 'error':
       return 'bg-red-500'
     default:
@@ -92,13 +105,13 @@ const hasDetail = computed(() => hasValue(props.card.input) || hasValue(props.ca
     <!-- 标题行：整行可点击，切换详情展开/折叠（无详情时禁用点击） -->
     <button
       type="button"
-      class="flex w-full items-center gap-2 px-3 py-2 text-left text-sm transition-colors hover:bg-slate-50 disabled:cursor-default disabled:hover:bg-transparent"
+      class="flex w-full cursor-pointer items-center gap-2 px-3 py-2 text-left text-sm transition-colors hover:bg-slate-50 disabled:cursor-default disabled:hover:bg-transparent"
       :disabled="!hasDetail"
       @click="expanded = !expanded"
     >
       <span
         class="relative flex h-2 w-2 shrink-0"
-        :class="{ 'animate-pulse': card.status !== 'completed' && card.status !== 'error' }"
+        :class="{ 'animate-pulse': !isTerminal }"
       >
         <span class="absolute inline-flex h-full w-full rounded-full opacity-75" :class="statusDotClass" />
         <span class="relative inline-flex h-2 w-2 rounded-full" :class="statusDotClass" />
