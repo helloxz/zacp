@@ -83,7 +83,7 @@ watch(
     <transition name="fade">
       <button
         v-if="showBackToBottom"
-        class="absolute bottom-3 left-1/2 flex h-8 w-8 -translate-x-1/2 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-500 shadow-sm transition-colors hover:text-slate-800"
+        class="absolute bottom-3 left-1/2 flex h-8 w-8 -translate-x-1/2 items-center justify-center rounded-full border border-divider bg-surface-raised text-ink-muted shadow-sm transition-colors hover:text-ink"
         :aria-label="t('chat.backToBottom')"
         @click="scrollToBottom(true)"
       >

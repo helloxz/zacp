@@ -66,12 +66,12 @@ async function onCreateProject() {
 
 <template>
   <!-- 固定宽度侧栏（300px，列表常驻展示，不再支持折叠） -->
-  <aside class="flex w-[300px] flex-col border-r border-slate-200 bg-slate-50">
+  <aside class="flex w-[300px] flex-col border-r border-divider bg-surface">
     <div class="flex items-center gap-1 p-3">
       <!-- 新建项目：Tailwind 实现的次级按钮（点击打开与 WelcomeHero 共享的项目弹窗） -->
       <button
         type="button"
-        class="flex cursor-pointer flex-1 items-center justify-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 shadow-sm transition-colors hover:border-slate-300 hover:bg-slate-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-300"
+        class="flex cursor-pointer flex-1 items-center justify-center gap-1.5 rounded-lg border border-divider bg-surface-raised px-3 py-2 text-sm font-medium text-ink-secondary shadow-sm transition-colors hover:border-divider hover:bg-surface-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-divider"
         @click="onNewProject"
       >
         <AddOutline class="h-4 w-4 shrink-0" />
@@ -95,7 +95,7 @@ async function onCreateProject() {
   >
     <div class="space-y-2 py-2">
       <DirectoryPicker v-model="projectPath" @submit="onCreateProject" />
-      <p class="text-xs text-slate-400">{{ t('shell.newProjectHint') }}</p>
+      <p class="text-xs text-ink-muted">{{ t('shell.newProjectHint') }}</p>
     </div>
   </n-modal>
 </template>

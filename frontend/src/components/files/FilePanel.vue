@@ -11,7 +11,7 @@ const tab = ref('info')
 </script>
 
 <template>
-  <aside class="flex h-full w-80 shrink-0 flex-col border-l border-gray-200 bg-white">
+  <aside class="flex h-full w-80 shrink-0 flex-col border-l border-divider bg-surface-raised">
     <n-tabs
       v-model:value="tab"
       type="line"

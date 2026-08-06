@@ -18,22 +18,22 @@ function onNameChange() {
 <template>
   <div class="flex flex-col gap-6">
     <div>
-      <h3 class="text-base font-semibold text-slate-800">
+      <h3 class="text-base font-semibold text-ink">
         {{ t('settings.system.title') }}
       </h3>
-      <p class="mt-1 text-sm text-slate-500">{{ t('settings.system.subtitle') }}</p>
+      <p class="mt-1 text-sm text-ink-muted">{{ t('settings.system.subtitle') }}</p>
     </div>
 
     <!-- 语言：复用 LocaleSwitch（vue-i18n + Naive locale 联动） -->
     <section class="flex flex-col gap-2">
-      <h4 class="text-sm font-medium text-slate-700">{{ t('common.language') }}</h4>
+      <h4 class="text-sm font-medium text-ink-secondary">{{ t('common.language') }}</h4>
       <LocaleSwitch />
-      <p class="text-xs text-slate-400">{{ t('settings.system.languageHint') }}</p>
+      <p class="text-xs text-ink-muted">{{ t('settings.system.languageHint') }}</p>
     </section>
 
     <!-- 显示名：本地保存，影响左下用户区 -->
     <section class="flex flex-col gap-2">
-      <h4 class="text-sm font-medium text-slate-700">
+      <h4 class="text-sm font-medium text-ink-secondary">
         {{ t('settings.system.displayNameLabel') }}
       </h4>
       <n-input
@@ -41,7 +41,7 @@ function onNameChange() {
         :placeholder="t('settings.system.displayNamePlaceholder')"
         @change="onNameChange"
       />
-      <p class="text-xs text-slate-400">
+      <p class="text-xs text-ink-muted">
         {{ t('settings.system.displayNameHint') }}
       </p>
     </section>

@@ -10,12 +10,35 @@ const DISPLAY_NAME_KEY = 'zacp.displayName'
 /** 未设置显示名时的默认值（人名不做 i18n） */
 const DEFAULT_DISPLAY_NAME = 'User'
 
+/** 本地存储 key：主题模式（仅本机；与 index.html 防闪白脚本保持一致） */
+const THEME_MODE_KEY = 'zacp.themeMode'
+/** 主题模式：仅两态（浅色/深色），默认浅色保持现状 */
+export type ThemeMode = 'light' | 'dark'
+
 function readStoredDisplayName(): string {
   if (typeof localStorage === 'undefined') {
     return DEFAULT_DISPLAY_NAME
   }
   const stored = localStorage.getItem(DISPLAY_NAME_KEY)?.trim()
   return stored || DEFAULT_DISPLAY_NAME
+}
+
+function readStoredThemeMode(): ThemeMode {
+  if (typeof localStorage === 'undefined') {
+    return 'light'
+  }
+  return localStorage.getItem(THEME_MODE_KEY) === 'dark' ? 'dark' : 'light'
+}
+
+/**
+ * 把主题副作用同步到 document：
+ * - `.dark` class：驱动 Tailwind 的 dark: variant 与语义色 token 的暗色覆盖；
+ * - `data-theme` 属性：驱动 incremark markdown 渲染的暗色样式（[data-theme="dark"]）。
+ */
+function applyThemeClass(mode: ThemeMode) {
+  const root = document.documentElement
+  root.classList.toggle('dark', mode === 'dark')
+  root.setAttribute('data-theme', mode)
 }
 
 /**
@@ -53,6 +76,23 @@ export const useAppStore = defineStore('app', () => {
     }
   }
 
+  /** 主题模式：仅两态（浅色/深色），持久化到 localStorage */
+  const themeMode = ref<ThemeMode>(readStoredThemeMode())
+
+  const isDark = computed(() => themeMode.value === 'dark')
+
+  // 保持 document 状态与 store 一致（index.html 防闪白脚本已处理首帧，这里兜底）
+  applyThemeClass(themeMode.value)
+
+  /** 浅色/深色互切；切完立即同步到 document（Tailwind .dark + incremark data-theme） */
+  function toggleTheme() {
+    themeMode.value = isDark.value ? 'light' : 'dark'
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem(THEME_MODE_KEY, themeMode.value)
+    }
+    applyThemeClass(themeMode.value)
+  }
+
   /** 新建项目弹窗开关（WelcomeHero 与 AppSidebar 共享） */
   const newProjectModalOpen = ref(false)
 
@@ -63,6 +103,9 @@ export const useAppStore = defineStore('app', () => {
     setLocale,
     displayName,
     setDisplayName,
+    themeMode,
+    isDark,
+    toggleTheme,
     newProjectModalOpen,
   }
 })

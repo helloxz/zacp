@@ -181,11 +181,15 @@ const displayPlan = computed<Plan | null>(() => activePlan.value ?? plan.value)
     <!-- 与 AI 内容一致：固定占用整个可用内容宽度（w-full），无 max 宽度限制 -->
     <details
       v-if="!isUser && reasoning"
-      class="w-full rounded-lg bg-amber-50/70 px-3 py-2 text-xs leading-relaxed text-slate-500 ring-1 ring-inset ring-amber-100"
+      class="w-full rounded-lg bg-amber-50/70 px-3 py-2 text-xs leading-relaxed text-slate-500 ring-1 ring-inset ring-amber-100 dark:bg-amber-500/10 dark:text-amber-200/80 dark:ring-amber-500/20"
     >
       <summary
         class="cursor-pointer select-none font-medium"
-        :class="isStreamingPlaceholder ? 'text-amber-600' : 'text-slate-400'"
+        :class="
+          isStreamingPlaceholder
+            ? 'text-amber-600 dark:text-amber-400'
+            : 'text-ink-muted'
+        "
       >
         <!-- 思考中：显示「思考中」+ 弹跳圆点（amber 活跃色）；turn.done 后切回「思考过程」且圆点消失 -->
         {{ isStreamingPlaceholder ? t('chat.reasoningThinking') : t('chat.reasoning') }}
@@ -199,7 +203,7 @@ const displayPlan = computed<Plan | null>(() => activePlan.value ?? plan.value)
     <!-- user：右对齐气泡 -->
     <div
       v-if="isUser"
-      class="max-w-[85%] whitespace-pre-wrap rounded-2xl rounded-br-md bg-sky-50 px-3.5 py-2.5 text-sm leading-relaxed text-slate-900 ring-1 ring-inset ring-sky-100"
+      class="max-w-[85%] whitespace-pre-wrap rounded-2xl rounded-br-md bg-sky-50 px-3.5 py-2.5 text-sm leading-relaxed text-slate-900 ring-1 ring-inset ring-sky-100 dark:bg-sky-500/15 dark:text-sky-50 dark:ring-sky-500/30"
     >
       {{ message.content }}
     </div>
@@ -216,14 +220,14 @@ const displayPlan = computed<Plan | null>(() => activePlan.value ?? plan.value)
         <!-- 流式占位：content 为空且 turn 未结束时显示加载动画 -->
         <div
           v-if="!block.content && !isFinished"
-          class="flex w-full min-w-0 items-center gap-1.5 rounded-xl border border-slate-200/80 bg-white px-4 py-3.5 shadow-sm"
+          class="flex w-full min-w-0 items-center gap-1.5 rounded-xl border border-divider bg-surface-raised px-4 py-3.5 shadow-sm"
           aria-label="loading"
         >
           <span v-for="i in 3" :key="i" class="loading-dot" />
         </div>
         <IncremarkContent
           v-else-if="block.content"
-          class="w-full min-w-0 rounded-xl border border-slate-200/80 bg-white px-4 py-3 text-sm leading-relaxed shadow-sm"
+          class="w-full min-w-0 rounded-xl border border-divider bg-surface-raised px-4 py-3 text-sm leading-relaxed shadow-sm"
           :content="block.content"
           :is-finished="isFinished"
           :incremark-options="{ htmlTree: true }"
@@ -246,7 +250,7 @@ const displayPlan = computed<Plan | null>(() => activePlan.value ?? plan.value)
     <!-- 流式初始态：streamBlocks 尚无内容时显示加载动画（首个文本块到达后由 IncremarkContent 接管） -->
     <div
       v-if="isStreamingPlaceholder && !blocks.length"
-      class="flex w-full min-w-0 items-center gap-1.5 rounded-xl border border-slate-200/80 bg-white px-4 py-3.5 shadow-sm"
+      class="flex w-full min-w-0 items-center gap-1.5 rounded-xl border border-divider bg-surface-raised px-4 py-3.5 shadow-sm"
       aria-label="loading"
     >
       <span v-for="i in 3" :key="i" class="loading-dot" />
@@ -275,6 +279,13 @@ const displayPlan = computed<Plan | null>(() => activePlan.value ?? plan.value)
   width: 4px;
   height: 4px;
   background-color: #d97706; /* amber-600 */
+}
+/* 暗色下 loading 圆点提亮一档（.dark 由 stores/app applyThemeClass 控制，scoped 内用 html.dark 选择器） */
+html.dark .loading-dot {
+  background-color: #cbd5e1; /* slate-300 */
+}
+html.dark .loading-dot-sm {
+  background-color: #f59e0b; /* amber-500 */
 }
 @keyframes loading-dot-bounce {
   0%,

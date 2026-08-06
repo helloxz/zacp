@@ -10,6 +10,7 @@ import {
 } from '@vicons/ionicons5'
 import { NIcon, useMessage } from 'naive-ui'
 import { useSessionStore } from '@/stores/session'
+import { useAppStore } from '@/stores/app'
 import type { ChatSession, Workspace } from '@/types/models'
 import SessionListItem from '@/components/shell/SessionListItem.vue'
 
@@ -17,14 +18,19 @@ const { t } = useI18n()
 const route = useRoute()
 const router = useRouter()
 const sessionStore = useSessionStore()
+const appStore = useAppStore()
 const message = useMessage()
 
-/** tooltip 白底浅字主题（默认深色底，项目行内视觉过重） */
-const tooltipTheme = {
-  color: '#ffffff',
-  textColor: '#334155',
-  boxShadow: '0 2px 10px rgba(15, 23, 42, 0.1)',
-}
+/** tooltip 主题：浅色下用白底浅字（默认深色底，项目行内视觉过重）；暗色下跟随 Naive 主题 */
+const tooltipTheme = computed(() =>
+  appStore.isDark
+    ? {}
+    : {
+        color: '#ffffff',
+        textColor: '#334155',
+        boxShadow: '0 2px 10px rgba(15, 23, 42, 0.1)',
+      },
+)
 
 /**
  * 两级结构：按 workspace 分组（数据来自后端预加载的 session.workspace；
@@ -201,7 +207,7 @@ async function onRemoveWorkspace(ws: Workspace) {
       >
         <!-- 项目头：整行可点击，切换该项目会话列表的展开/折叠 -->
         <div
-          class="group/header flex cursor-pointer items-center justify-between rounded px-1 py-1.5 transition-colors hover:bg-slate-200/50"
+          class="group/header flex cursor-pointer items-center justify-between rounded px-1 py-1.5 transition-colors hover:bg-surface-hover"
           role="button"
           tabindex="0"
           @click="toggleWorkspace(group.workspace.id)"
@@ -212,12 +218,12 @@ async function onRemoveWorkspace(ws: Workspace) {
             class="flex min-w-0 flex-1 items-center gap-1.5"
             :title="group.workspace.path"
           >
-            <n-icon :size="15" class="shrink-0 text-slate-400">
+            <n-icon :size="15" class="shrink-0 text-ink-muted">
               <FolderOpenOutline v-if="expandedIds.has(group.workspace.id)" />
               <FolderOutline v-else />
             </n-icon>
             <span
-              class="min-w-0 truncate text-sm font-semibold text-slate-600 transition-colors group-hover/header:text-slate-800"
+              class="min-w-0 truncate text-sm font-semibold text-ink-secondary transition-colors group-hover/header:text-ink"
             >
               {{ projectName(group.workspace) }}
             </span>
@@ -245,7 +251,7 @@ async function onRemoveWorkspace(ws: Workspace) {
                     <n-button
                       text
                       size="small"
-                      class="text-slate-400 hover:text-red-500"
+                      class="text-ink-muted hover:text-red-500"
                       :aria-label="t('shell.removeProject')"
                     >
                       <template #icon>
@@ -269,7 +275,7 @@ async function onRemoveWorkspace(ws: Workspace) {
                 <n-button
                   text
                   size="small"
-                  class="text-slate-400 hover:text-slate-700"
+                  class="text-ink-muted hover:text-ink-secondary"
                   :aria-label="t('shell.newSession')"
                   @click="onNewSessionInWorkspace(group.workspace.id)"
                 >
@@ -294,7 +300,7 @@ async function onRemoveWorkspace(ws: Workspace) {
             v-if="canLoadMore(group)"
             text
             size="small"
-            class="w-full justify-center text-xs text-slate-400 hover:text-slate-600"
+            class="w-full justify-center text-xs text-ink-muted hover:text-ink-secondary"
             @click="loadMore(group.workspace.id)"
           >
             {{ t('shell.loadMoreSessions') }}

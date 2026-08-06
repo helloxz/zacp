@@ -86,6 +86,8 @@ export default {
   settings: {
     title: 'Settings',
     close: 'Close',
+    switchToDark: 'Switch to dark mode',
+    switchToLight: 'Switch to light mode',
     agent: {
       title: 'Agents',
       desc: 'Manage the connected ACP agents; enabled ones show up when creating a session',

@@ -16,7 +16,7 @@ function statusDotClass(status: string): string {
     case 'in_progress':
       return 'bg-blue-500 animate-pulse'
     default:
-      return 'bg-slate-200'
+      return 'bg-divider'
   }
 }
 
@@ -27,11 +27,11 @@ function isCompleted(step: PlanStep): boolean {
 </script>
 
 <template>
-  <div class="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
+  <div class="overflow-hidden rounded-lg border border-divider bg-surface-raised shadow-sm">
     <!-- 标题行：执行计划（TODO 列表） -->
-    <div class="flex items-center gap-2 border-b border-slate-100 px-3 py-2">
-      <n-icon class="shrink-0 text-slate-400"><ListOutline /></n-icon>
-      <span class="text-sm font-medium text-slate-700">{{ t('plan.title') }}</span>
+    <div class="flex items-center gap-2 border-b border-divider-subtle px-3 py-2">
+      <n-icon class="shrink-0 text-ink-muted"><ListOutline /></n-icon>
+      <span class="text-sm font-medium text-ink-secondary">{{ t('plan.title') }}</span>
     </div>
     <!-- 条目列表：按 agent 下发顺序渲染；ACP 整体替换语义，此处直接消费完整列表 -->
     <ol v-if="plan.entries.length" class="px-3 py-2">
@@ -50,16 +50,16 @@ function isCompleted(step: PlanStep): boolean {
           </n-icon>
         </span>
         <span
-          class="min-w-0 flex-1 leading-relaxed text-slate-700"
-          :class="{ 'text-slate-400 line-through': isCompleted(step) }"
+          class="min-w-0 flex-1 leading-relaxed text-ink-secondary"
+          :class="{ 'text-ink-muted line-through': isCompleted(step) }"
         >{{ step.content }}</span>
         <span
           v-if="step.status === 'in_progress'"
-          class="shrink-0 text-xs text-blue-500"
+          class="shrink-0 text-xs text-blue-500 dark:text-blue-400"
         >{{ t('plan.inProgress') }}</span>
       </li>
     </ol>
     <!-- 空计划兜底：agent 发过 plan 事件但无条目时避免空白卡片 -->
-    <div v-else class="px-3 py-2 text-sm text-slate-400">{{ t('plan.empty') }}</div>
+    <div v-else class="px-3 py-2 text-sm text-ink-muted">{{ t('plan.empty') }}</div>
   </div>
 </template>

@@ -115,7 +115,7 @@ async function onDelete() {
 <template>
   <div
     class="group flex w-full cursor-pointer items-center gap-1 rounded-lg px-2.5 py-2 transition-colors"
-    :class="isActive ? 'bg-slate-200/70' : 'hover:bg-slate-200/50'"
+    :class="isActive ? 'bg-surface-active' : 'hover:bg-surface-hover'"
     role="button"
     tabindex="0"
     @click="onSelect"
@@ -132,12 +132,12 @@ async function onDelete() {
         />
         <span
           class="truncate text-sm"
-          :class="isActive ? 'font-medium text-slate-900' : 'text-slate-700'"
+          :class="isActive ? 'font-medium text-ink' : 'text-ink-secondary'"
         >
           {{ title }}
         </span>
       </div>
-      <span class="flex items-center gap-1.5 text-xs text-slate-400">
+      <span class="flex items-center gap-1.5 text-xs text-ink-muted">
         <span class="truncate">{{ agentName }}</span>
         <span aria-hidden="true">·</span>
         <span class="shrink-0">{{ relativeTime }}</span>

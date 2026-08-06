@@ -119,28 +119,28 @@ onMounted(() => {
         </template>
       </n-button>
       <div
-        class="flex min-w-0 flex-1 items-center gap-0.5 overflow-x-auto whitespace-nowrap text-xs text-slate-500"
+        class="flex min-w-0 flex-1 items-center gap-0.5 overflow-x-auto whitespace-nowrap text-xs text-ink-muted"
       >
         <template v-for="(c, i) in crumbs" :key="c.path">
           <button
-            class="shrink-0 rounded px-1 py-0.5 hover:bg-slate-100 hover:text-slate-800"
-            :class="{ 'font-medium text-slate-800': i === crumbs.length - 1 }"
+            class="shrink-0 rounded px-1 py-0.5 hover:bg-surface-hover hover:text-ink"
+            :class="{ 'font-medium text-ink': i === crumbs.length - 1 }"
             @click="load(c.path)"
           >
             {{ c.label }}
           </button>
-          <span v-if="i < crumbs.length - 1" class="text-slate-300">/</span>
+          <span v-if="i < crumbs.length - 1" class="text-divider">/</span>
         </template>
       </div>
     </div>
 
     <!-- 子文件夹列表 -->
     <n-spin :show="loading">
-      <div class="max-h-56 overflow-y-auto rounded border border-slate-200 bg-white">
+      <div class="max-h-56 overflow-y-auto rounded border border-divider bg-surface-raised">
         <!-- 加载失败：展示错误 + 重试（重试回到失败的那个目录，而非默认目录） -->
         <div
           v-if="error"
-          class="flex items-center justify-between gap-2 px-3 py-2 text-xs text-red-500"
+          class="flex items-center justify-between gap-2 px-3 py-2 text-xs text-red-500 dark:text-red-400"
         >
           <span class="min-w-0 truncate">{{ error }}</span>
           <n-button size="tiny" quaternary type="error" @click="load(lastRequestedPath)">
@@ -148,7 +148,7 @@ onMounted(() => {
           </n-button>
         </div>
         <!-- 空目录 -->
-        <div v-else-if="entries.length === 0" class="px-3 py-6 text-center text-xs text-slate-400">
+        <div v-else-if="entries.length === 0" class="px-3 py-6 text-center text-xs text-ink-muted">
           {{ t('dirPicker.empty') }}
         </div>
         <!-- 文件夹列表：单击进入 -->
@@ -156,7 +156,7 @@ onMounted(() => {
           <button
             v-for="entry in entries"
             :key="entry.path"
-            class="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm hover:bg-slate-50"
+            class="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm hover:bg-surface-hover"
             @click="enterDir(entry)"
           >
             <n-icon class="shrink-0 text-amber-500"><FolderOpenOutline /></n-icon>

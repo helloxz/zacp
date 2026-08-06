@@ -97,6 +97,8 @@ export default {
   settings: {
     title: '设置',
     close: '关闭',
+    switchToDark: '切换到深色',
+    switchToLight: '切换到浅色',
     agent: {
       title: '智能体',
       desc: '管理已接入的 ACP 智能体，启用后可在新建会话中选择',

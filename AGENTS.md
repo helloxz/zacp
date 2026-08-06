@@ -26,14 +26,14 @@ Go SDK：https://github.com/coder/acp-go-sdk（模块路径 `github.com/coder/ac
 | WebSocket | **`github.com/coder/websocket`** | 浏览器会话主通道（流式输出、权限、取消）；实现放在 `internal/ws` |
 | 配置 | **TOML + Viper** | 运行时配置 **`~/.zacp/config.toml`**；库 **`github.com/spf13/viper`**；加载在 `internal/config` |
 | 数据库 | **SQLite3 + GORM + 纯 Go 驱动** | ORM：`gorm.io/gorm`；驱动：`github.com/glebarez/sqlite`（底层 `modernc.org/sqlite`，**无 CGO**）；持久化在 `internal/store` |
-| ACP | `github.com/coder/acp-go-sdk` `v0.13.5` | Client 侧连接、会话、Prompt、SessionUpdate |
+| ACP | `github.com/coder/acp-go-sdk` | Client 侧连接、会话、Prompt、SessionUpdate |
 | 前端 | **Vue 3 + Naive UI + Tailwind CSS** | 代码在 `frontend/`；构建建议 Vite；**包管理与脚本一律用 Bun**；实时通道用浏览器原生 `WebSocket` |
-| 部署 | 根目录 `Dockerfile`、`scripts/` | 镜像与运维脚本 |
+| 部署 | 根目录`scripts/` | 运维脚本 |
 
 **实时通信选型（已定）：**
 
 - **选用 WebSocket**，不用 SSE 作为会话主通道（连续对话 + 权限回传 + 取消需要双向）。
-- **Go 库固定为 `github.com/coder/websocket`**（原 `nhooyr/websocket`）。不要引入 `gorilla/websocket`、`gobwas/ws`、Socket.IO 等替代实现，除非有充分理由并先更新本文档。
+- **Go 库固定为 `github.com/coder/websocket`**（原 `nhooyr/websocket`）。不要使用Socket.IO 等替代实现，除非有充分理由并先更新本文档。
 - Gin 侧在 handler 内 `websocket.Accept` 升级连接；升级后勿再写 `c.JSON`。
 - REST 仍用于健康检查、agent 列表、配置等非实时接口；会话实时交互走 WS。
 
@@ -41,65 +41,22 @@ Go SDK：https://github.com/coder/acp-go-sdk（模块路径 `github.com/coder/ac
 
 - **主配置格式：TOML**。不要改用 YAML/JSON/INI 作为主配置，除非先更新本文档。
 - **配置库：`github.com/spf13/viper`**（读 TOML、默认值、环境变量覆盖、可选写回）。
-- **运行时路径：`$ZACP_DATA/config.toml`，默认 `ZACP_DATA=~/.zacp`**（见 §3.1、§4.1）。
 - 实现集中在 `backend/internal/config`：对外强类型 `Config`；业务层 **不要** 散落 `viper.Get*`。
 - 密钥、Token **不进** TOML；用环境变量（或本机 `.env`，gitignore）注入；Agent 子进程继承环境。
 
 **数据存储选型（已定）：**
 
-- **SQLite3** 作为默认（也是当前唯一规划的）嵌入式数据库；不要默认上 Postgres/MySQL，除非规模需要并先更新本文档。
+- **SQLite3** 作为默认（也是当前唯一规划的）嵌入式数据库；
 - **ORM：GORM**（`gorm.io/gorm`）。
 - **驱动：纯 Go**——通过 **`github.com/glebarez/sqlite`** 使用 **`modernc.org/sqlite`**，**禁止**默认依赖需要 CGO 的 `mattn/go-sqlite3`（除非有充分理由并更新本文档）。
-- **数据文件目录：`$ZACP_DATA/data/`**（默认 `~/.zacp/data/`），主库文件建议 `zacp.db`；必须启用 **WAL**，并支持 **版本化 schema 迁移**（见 §4.2）。
+- **数据文件目录：`$ZACP_DATA/data/`**（默认 `~/.zacp/data/`）。
 - 实现集中在 `backend/internal/store`（打开 DB、PRAGMA、迁移、仓储）；业务通过 store/repository 访问，不在 handler 里直接拼 SQL。
 
-**本仓库角色定位：**
-
-- 后端实现 **ACP Client**（`acp.Client` / `acp.NewClientSideConnection`），**不要**默认把 zacp 做成 ACP Agent 服务端，除非有明确需求。
-- 典型流程：`Initialize` → `NewSession`（或 `LoadSession` / `ResumeSession`）→ `Prompt`，并通过 `SessionUpdate` 将流式更新推给 Web UI。
-- **职责分离**：TOML 管「如何启动哪些 Agent 二进制」；SQLite 管「运行时数据」（会话、消息历史、审计等）。二者不要混成全塞进配置文件。
-
-**前端选型（已定）：**
-
-- **框架：Vue 3**（Composition API + `<script setup>` 优先）。
-- **组件库：Naive UI**（`naive-ui`）。业务组件优先用 Naive，避免再引入第二套重量级 UI 库（如 Element Plus、Ant Design Vue），除非有充分理由并先更新本文档。
-- **样式：Tailwind CSS**。布局、间距、响应式以 utility class 为主；与 Naive 主题冲突时，组件外观跟 Naive，页面骨架/间距用 Tailwind。
-- **构建**：推荐 **Vite + TypeScript**（脚手架时锁定；未锁定前按此方向）。
-- **包管理 / 安装 / 运行：一律使用 [Bun](https://bun.sh)**（`bun install`、`bun run dev`、`bun run build` 等）。**禁止**以 npm / pnpm / yarn 作为本项目前端的标准工具链（勿提交 `package-lock.json` / `pnpm-lock.yaml` / `yarn.lock`；锁文件用 **`bun.lock`** 或 Bun 当前默认 lockfile）。
-- **实时通信**：浏览器原生 `WebSocket`，与后端 `coder/websocket` 对齐；不引入 socket.io 客户端。
-- 所有前端代码仅在 `frontend/`，见 §7 前端约定。
 
 ---
 
 ## 3. 目录结构（必须遵守）
 
-### 3.1 运行时用户目录（`$ZACP_DATA`，默认 `~/.zacp`）
-
-**状态与配置不放在 git 仓库内，而放在用户主目录下的 `.zacp`：**
-
-```text
-$ZACP_DATA/                      # 默认: ~/.zacp
-├── config.toml                  # 主配置（Viper 读取；勿提交到 git）
-├── data/
-│   ├── zacp.db                  # SQLite 主库
-│   ├── zacp.db-wal              # WAL（启用 journal_mode=WAL 后出现）
-│   └── zacp.db-shm
-└── logs/                        # 可选：日志文件
-```
-
-| 变量 / 路径 | 说明 |
-|-------------|------|
-| `ZACP_DATA` | 根目录，**默认 `~/.zacp`**（即 `$HOME/.zacp`）；可用环境变量或启动 flag 覆盖 |
-| `$ZACP_DATA/config.toml` | 运行时 TOML 配置 |
-| `$ZACP_DATA/data/` | SQLite 等持久化数据；目录权限建议 `0700`，库文件 `0600` |
-| `ZACP_CONFIG` | 可选：直接指定配置文件路径（覆盖默认的 `$ZACP_DATA/config.toml`） |
-
-约定：
-
-- **不要**用进程 cwd 下的 `.zacp` 作为默认（避免 `cd` 后「数据消失」的错觉）。
-- **Agent 会话工作区 cwd**（代码仓库路径）与 **`$ZACP_DATA`（zacp 自身状态）分离**；前者配在 `[[agents]]` / `session.default_cwd`，后者只服务配置与数据库。
-- 首次启动：若 `$ZACP_DATA` 不存在则创建；若无 `config.toml`，可从仓库内 `backend/configs/config.example.toml`（或 embed 样例）复制生成。
-- 目录名统一为 **`.zacp`**，不要使用 `.zcap` 等其它拼写。
 
 ### 3.2 仓库源码目录
 
@@ -155,7 +112,6 @@ zacp/
 | Go 业务与依赖 | **仅** `backend/` |
 | Web UI 源码 | **仅** `frontend/`（Vue 3 + Naive UI + Tailwind） |
 | 可执行脚本 | `scripts/` 或根目录（根目录仅放极少数全局脚本） |
-| Docker / 部署 | 根目录 `Dockerfile` |
 | 配置样例（入库） | `backend/configs/config.example.toml` |
 | 运行时配置 / 数据库 | **`$ZACP_DATA`**（默认 `~/.zacp`），**不入库** |
 
@@ -213,33 +169,6 @@ cmd/server  →  api (router/handlers)  →  service  →  acp/manager|client|pr
 3. 环境变量（Viper `AutomaticEnv` / 显式 `BindEnv`，建议前缀 `ZACP_`）  
 4. 命令行 flag（若使用）  
 
-### 结构约定（示意，字段可演进）
-
-```toml
-[server]
-addr = ":8680"
-mode = "debug"   # debug | release
-
-[session]
-default_cwd = "."          # Agent 工作区，不是 ZACP_DATA
-auto_approve = false       # 生产默认 false；开发可 true
-idle_timeout = "30m"       # 空闲回收超时；0 禁用（agent 闲置超时后自动停止释放内存）
-
-[database]
-# 相对路径相对于 $ZACP_DATA；默认 data/zacp.db
-path = "data/zacp.db"
-
-# 多 Agent：每个二进制 / ACP 入口一条
-[[agents]]
-id = "reasonix"
-name = "Reasonix"
-enabled = true
-transport = "stdio"    # 当前以 stdio 为主；后续可扩展
-command = "reasonix"   # 或绝对路径
-args = ["--acp"]
-cwd = ""               # 空则用 session.default_cwd
-# 不要在此写 API Key；子进程继承系统环境变量即可
-```
 
 ### Viper 使用约定
 
@@ -285,14 +214,6 @@ cwd = ""               # 空则用 session.default_cwd
 ### 备份注意
 
 - WAL 模式下会有 `zacp.db-wal` / `zacp.db-shm`；热备份应使用 SQLite backup API 或先 checkpoint，**不要**只拷贝单个 `.db` 文件当作完整热备。
-
-### 存什么 / 不存什么
-
-| 适合进 SQLite | 适合留在 TOML / 环境 |
-|---------------|----------------------|
-| 会话、消息、事件摘要、审计 | Agent 二进制 command/args 列表 |
-| 用户偏好、UI 状态（若需要） | API Key、Token |
-| 迁移版本元数据 | `$ZACP_DATA` 本身的路径策略 |
 
 ---
 
@@ -340,22 +261,6 @@ bun run build
 
 ---
 
-## 6. 依赖与版本
-
-当前 / 规划直接依赖（见 `backend/go.mod`，未加入的以实现时 `go get` 为准）：
-
-- `github.com/gin-gonic/gin` — HTTP
-- `github.com/coder/acp-go-sdk` — ACP
-- `github.com/coder/websocket` — WebSocket（规划）
-- `github.com/spf13/viper` — 配置（规划）
-- `gorm.io/gorm` + `github.com/glebarez/sqlite` — ORM + 纯 Go SQLite（规划）
-
-要求：
-
-- 新增依赖需有明确用途；优先标准库与已有依赖。
-- 升级 `acp-go-sdk` 时注意协议版本与 API 变更，并跑通至少一条 agent 连接路径。
-- 数据库驱动保持 **无 CGO** 的 pure Go 路径，便于交叉编译与容器构建。
-- 不要随意改 `go` 版本字段，除非与运行环境对齐并验证构建。
 
 ---
 
@@ -380,6 +285,7 @@ bun run build
 - **前端列表**：长会话/多消息考虑虚拟列表或分页（需要时再上）；流式更新尽量 **追加/局部 patch**，避免每次 token 都重建整棵树。
 - **并发**：Go 里共享 session/连接加锁或用 channel 约定所有权；避免泄露 goroutine。
 - 先保证正确与清晰，再对瓶颈做针对性优化；**禁止**无 profiling/依据的「炫技式」过早优化。
+- 前端修改时，如果涉及样式的地方，记得同时考虑亮色和暗色两种模式需要兼容。
 
 **注释（关键路径必须写好中文注释）**
 
@@ -476,44 +382,5 @@ bun run build
 - 架构、重大设计写入 `docs/`。
 - 用户可见的使用说明更新 `README.md`；**Agent 协作约定**更新本文件 `AGENTS.md`。
 - 提交信息简洁说明「改了什么、为什么」；一次提交聚焦单一意图。
-- 完成功能前：确保 `go build ./...`（或至少 `./cmd/server`）通过；有测试则跑 `go test ./...`。
+- 完成功能前：确保 `go build ./...`（或至少 `./cmd/server`）通过；有测试则跑 `go test ./...`，测试完毕后记得清理之前产生的测试文件。
 
----
-
-## 11. 当前状态
-
-已完成：
-
-- monorepo 目录骨架
-- Gin + acp-go-sdk 依赖安装
-- reasonix `--acp` 最小 demo（终端 REPL + `POST /api/v1/chat`）
-- 选型文档：WebSocket（`coder/websocket`）、配置（TOML + Viper + **`~/.zacp`**）、数据库（SQLite + GORM + 纯 Go 驱动 + WAL + 迁移）
-- 前端选型：**Vue 3 + Naive UI + Tailwind CSS**；包管理/运行 **一律 Bun**
-- 编码约束：可维护性 / 复用拆分 / 适度性能
-- **Agent 生命周期**：启动时仅预加载配置中第一个（最顶部）enabled 的 agent；其余按需启动（前端切 agent 建会话时经 `service` 自动拉起）；`session.idle_timeout` 空闲回收（默认 30m，0 禁用），回收后经 unknown-session 自动恢复
-- **并发模型（方案 B「展示并发、执行串行」）**：同 agent 的 prompt 经 `manager.promptGate`（FIFO 可取消排队门闩）串行执行，后续 prompt 排队、排队中不向 agent 发任何内容；排队中的 prompt 可经 `Cancel` 撤销（`queuedCancels` 按会话记取消函数，返回 `ErrPromptCancelled`，ws bridge 广播 `turn.done(stopReason="cancelled")` 复位前端「排队中」，不报错不落库）；跨 agent 天然并行（门闩按 agent 连接隔离）。配套改动：① hub `Client` 单绑定改**订阅集合** `SubscribeSession`/`IsSubscribed`（一条 WS 连接同时跟踪多会话，广播按订阅匹配，不再覆盖丢失）；② `client.Event` 增加 `SessionID`（来自 SDK 通知 `SessionId`），`SetupEventCallback` 的 onEvent 按事件自身 sessionId 分发、且仅在 `promptStartedHook`（门闩获取成功后）调用——排队期间不覆盖执行中会话的回调；③ 权限路由改 per-agent 映射 `activeSessionByAgent`（跨 agent 并行不串台）；④ 所有广播（event/turn.done/permission/error/configOptions/slashCommands/sessionInfo）携带 `sessionId`，前端 store 流式状态**按会话隔离**（`statusBySession`：idle/queued/streaming + `streamBlocksBySession`/`activeToolCardsBySession`/`activePlanBySession`/`streamMsgIdBySession` + `runningSessionIds` 集合），WS 事件经 `dbIdByAcpSession`（ACP id → DB id 反向索引）路由，`turn.done`/`error` 在索引未命中时回退「唯一运行中会话」（recoverSession 换新 ACP id 的自愈链）；⑤ 前端发送后置 queued、收到 `turn.started`（后端门闩获取成功即广播，立即执行毫秒级切换、真排队持续到轮到自己）转 streaming，event/permission.request 兜底切换；Composer 按 `status` 显示发送/停止按钮 + 「排队中」文案
-- **available_commands_update 竞态修复**：reasonix 等 agent 在 `session/new` 响应同一时刻同步推送 `available_commands_update`；`SessionService` 通过 `SetOnAgentReady` 注入回调（`cmd/server` 组装时传入 `EventBridge.EnsureSessionUpdateHandlers`），在 `StartAgent` 之后、ACP `session/new` 之前注册「按通知 sessionId 分发」的处理器，否则新进程首个会话的通告会被 SDK read loop 吞掉导致 `/slash-commands` 为空（REST 侧在 handler 里提前注册无效，因为 agent 未启动时 `GetBridge` 必失败）
-- **/ 命令静态兜底**：ACP 可用命令依赖 agent `available_commands_update` 通告（协议为 MAY，agent 可不通告）；`providers.DefaultSlashCommands` 按 agent id 内置静态命令集（当前仅 grok 10 条：`/init /model /effort /auto /always-approve /skills /session-info /plan /view-plan /usage`，描述为英文、可随 grok CLI 语义调整），`providers.MergeSlashCommands`（通告优先、同名去重）在 REST `GetSlashCommands` 与 WS `applyAvailableCommands` 广播处统一合并；DB 只存 agent 通告原样，静态命令不入库；其它 agent 无内置命令，保持「仅 agent 通告」现状；选中后命令作为普通用户消息经 `session/prompt` 发出，语义由 agent 解析
-- **构建 / 版本**：`scripts/build.sh` 一键产出单二进制（前端产物 + 配置示例经 `backend/internal/web` embed 打包，`dist/` 以 `.gitkeep` 占位保证裸 `go build` 可编译）；版本号单一来源 `frontend/package.json` 的 `version`，构建时 `-ldflags` 注入 `internal/version`，驱动 `--version`、`GET /api/v1/version` 与前端设置页显示；`--version` 不初始化任何资源；未 embed 前端时 NoRoute 跳过，`/api/*` 404 保持 JSON、静态资源正常提供、其余路径 SPA fallback 到首页
-- **设置页智能体管理**：`GET /api/v1/agents/manage`（配置 `[[agents]]` + 内置目录合并去重，含 installed/enabled/source）+ `PUT /api/v1/agents/:agentId`（`{"enabled":bool}`：开启未安装项返回 `agent_not_installed`，写回 config.toml 后运行时热更新，无需重启）；写回为**增量编辑**（仅更新/追加 `[[agents]]` 块，保留用户手写注释与其它段，原子写），实现于 `internal/config`（`ReadAgents`/`SetAgentEnabled`）；installed 检测 `providers.IsInstalled`（LookPath + 路径分支，跨平台尽力而为）；内置目录见 `providers.BuiltinAgents`（reasonix `--acp`、omp `acp`、qodercn 二进制 `qoderclicn --acp`、grok `agent stdio`）；前端 `AgentSettings.vue` 列表 + `n-switch` 开关，未安装项禁用带提示
-- **Agent 启动超时（硬编码 30s）**：`service.CreateSession` 将「启动 agent + ACP 握手 + 首次 session/new」整段包入 `context.WithTimeout`（包级常量 `agentStartTimeout = 30 * time.Second`，不读配置、不可动态调整）；agent 命令/参数配置错误导致进程挂起（如进入非 ACP 模式）时 30s 内必返回明确错误（`start agent 'x' timed out after 30s`），manager 在 Initialize 失败路径 kill 子进程防僵尸
-- **/new 空态切 tab 代际机制**：`NewSessionPane.vue` 引入 `draftGen` 请求代际号——`createDraftFor` 不再被 `draftCreating` 拦截，切 tab 立即放行新请求；旧请求返回时发现代际过期则只释放已建草稿、不写状态、不弹错误；`draftCreating` 语义改为「有请求在途」，仅最新代际负责清遮罩；加载遮罩文案附带 agent 名
-- **发布打包 / CI**：`scripts/pack.sh` 负责发布打包（`build.sh` 不动）——多平台矩阵编译 + linux 平台 `upx --best` + 发布包（**Linux 为 `.tar.gz`**：tar 是所有发行版基础工具、避免目标机未装 unzip；**macOS/Windows 为 `.zip`**；均为顶层目录、仅含二进制；`config.example.toml` 已 embed 进二进制，不随包单独分发）；UPX 仅 linux（macOS 被 UPX 官方 4.2.0+ 禁用、Windows 按约定不压）；`.github/workflows/release.yml` 在 Release 创建（或手动 workflow_dispatch）时校验 tag 版本与 `package.json` 一致（不一致即失败）→ `go test ./...` → `pack.sh --all` → 上传 zip + tar.gz 到 Release 附件；`install.sh` 按平台下载对应格式（linux 下 tar.gz、darwin 下 zip）
-
----
-
-## 12. 给 Agent 的简短检查清单
-
-在动手改代码前确认：
-
-1. 改动是否落在正确目录（backend / frontend / scripts）？
-2. 运行时状态是否写在 **`$ZACP_DATA`（默认 `~/.zacp`）**，而不是仓库目录或随意 cwd？
-3. 是否把 Agent 差异关在 `providers`，而不是污染通用 manager？
-4. 子进程 / 连接 / DB 是否有生命周期与错误处理（含 WAL、迁移失败即退出）？
-5. 是否引入了不必要的依赖或破坏了 `go.mod`（SQLite 是否仍为无 CGO 路径）？前端是否坚持 Vue3 + Naive + Tailwind，未乱加第二套 UI 库？前端命令是否用的 **Bun**（而非 npm/pnpm/yarn）？
-6. 可复用逻辑是否已抽取？热路径是否有明显浪费？**关键逻辑是否有清晰中文注释**？
-7. 是否更新了必要的 README / `config.example.toml` / 本 AGENTS.md？
-
----
-
-*文档语言：中文。若与代码不一致，以代码与 `go.mod` 为准，并应及时回写本文档。*

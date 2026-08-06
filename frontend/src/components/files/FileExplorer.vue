@@ -28,6 +28,7 @@ import {
 import { fetchFiles, fileRawUrl, uploadFiles } from '@/api'
 import type { FileEntry } from '@/types/models'
 import { useSessionStore } from '@/stores/session'
+import { useAppStore } from '@/stores/app'
 import { copyText } from '@/utils/clipboard'
 
 /** 文件树节点：key 用相对路径（后端约定 `/` 分隔），raw 存原始条目 */
@@ -40,6 +41,18 @@ const MAX_IMAGE_BYTES = 5 * 1024 * 1024
 
 const message = useMessage()
 const sessionStore = useSessionStore()
+const appStore = useAppStore()
+
+/** 项目名 tooltip 主题：浅色白底浅字；暗色下跟随 Naive 主题（默认深色底） */
+const wsTooltipTheme = computed(() =>
+  appStore.isDark
+    ? {}
+    : {
+        color: '#fff',
+        textColor: '#333',
+        boxShadow: '0 2px 8px rgba(0, 0, 0, 0.12)',
+      },
+)
 
 /** 当前 workspace：优先当前会话所属项目，其次默认项目 */
 const activeWs = computed(() => {
@@ -414,14 +427,10 @@ async function onSelect(keys: Array<string | number>) {
         <n-tooltip
           class="min-w-0 flex-1"
           placement="left"
-          :theme-overrides="{
-            color: '#fff',
-            textColor: '#333',
-            boxShadow: '0 2px 8px rgba(0, 0, 0, 0.12)',
-          }"
+          :theme-overrides="wsTooltipTheme"
         >
           <template #trigger>
-            <span class="block w-full truncate text-xs font-medium text-gray-600">
+            <span class="block w-full truncate text-xs font-medium text-ink-secondary">
               {{ activeWs?.name || '项目文件' }}
             </span>
           </template>
@@ -467,7 +476,7 @@ async function onSelect(keys: Array<string | number>) {
       <!-- 拖拽悬停提示：目录节点高亮 + 上传目标说明 -->
       <div
         v-if="dragActive"
-        class="pointer-events-none absolute inset-x-1 bottom-1 top-8 z-10 flex items-center justify-center rounded border-2 border-dashed border-blue-400 bg-blue-50/70 text-sm text-blue-600"
+        class="pointer-events-none absolute inset-x-1 bottom-1 top-8 z-10 flex items-center justify-center rounded border-2 border-dashed border-blue-400 bg-blue-50/70 text-sm text-blue-600 dark:border-blue-500/50 dark:bg-blue-500/15 dark:text-blue-400"
       >
         <span>
           {{
@@ -487,7 +496,7 @@ async function onSelect(keys: Array<string | number>) {
           :height="6"
           :processing="uploadProgress < 1"
         />
-        <div class="mt-1 truncate text-xs text-gray-400">正在上传 {{ uploadingName }}…</div>
+        <div class="mt-1 truncate text-xs text-ink-muted">正在上传 {{ uploadingName }}…</div>
       </div>
     </template>
 

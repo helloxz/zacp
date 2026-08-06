@@ -102,8 +102,8 @@ onMounted(() => {
           {{ avatarText }}
         </div>
         <div class="min-w-0 flex-1">
-          <div class="truncate text-sm font-medium text-gray-800">{{ agentName }}</div>
-          <div class="truncate text-xs text-gray-400">{{ session.agentId }}</div>
+          <div class="truncate text-sm font-medium text-ink">{{ agentName }}</div>
+          <div class="truncate text-xs text-ink-muted">{{ session.agentId }}</div>
         </div>
         <n-tag size="small" :bordered="false" :type="statusMap[session.status].type">
           {{ statusMap[session.status].text }}
@@ -111,32 +111,29 @@ onMounted(() => {
       </div>
 
       <!-- 工作区卡片：展示完整路径，超出单行宽度时省略号，悬浮可看全文 -->
-      <div class="flex items-start gap-2 rounded-lg bg-gray-50 px-2.5 py-2">
-        <n-icon :component="FolderOutline" class="mt-0.5 shrink-0 text-base text-gray-400" />
+      <div class="flex items-start gap-2 rounded-lg bg-surface-hover px-2.5 py-2">
+        <n-icon :component="FolderOutline" class="mt-0.5 shrink-0 text-base text-ink-muted" />
         <div class="min-w-0 flex-1">
-          <div class="text-xs text-gray-400">工作区</div>
-          <div
-            class="truncate text-xs leading-5 text-gray-700"
-            :title="workspaceLabel"
-          >
+          <div class="text-xs text-ink-muted">工作区</div>
+          <div class="truncate text-xs leading-5 text-ink-secondary" :title="workspaceLabel">
             {{ workspaceLabel || '-' }}
           </div>
         </div>
       </div>
 
       <!-- 时间区：完整时间（年月日 + 分钟），不再用相对时间 -->
-      <div class="divide-y divide-gray-100 rounded-lg border border-gray-100">
+      <div class="divide-y divide-divider-subtle rounded-lg border border-divider-subtle">
         <div class="flex items-center gap-2 px-2.5 py-2">
-          <n-icon :component="TimeOutline" class="shrink-0 text-base text-gray-400" />
-          <span class="w-10 shrink-0 text-xs text-gray-400">创建</span>
-          <span class="truncate text-xs text-gray-600">
+          <n-icon :component="TimeOutline" class="shrink-0 text-base text-ink-muted" />
+          <span class="w-10 shrink-0 text-xs text-ink-muted">创建</span>
+          <span class="truncate text-xs text-ink-secondary">
             {{ formatDateTime(session.createdAt) }}
           </span>
         </div>
         <div class="flex items-center gap-2 px-2.5 py-2">
-          <n-icon :component="TimeOutline" class="shrink-0 text-base text-gray-400" />
-          <span class="w-10 shrink-0 text-xs text-gray-400">更新</span>
-          <span class="truncate text-xs text-gray-600">
+          <n-icon :component="TimeOutline" class="shrink-0 text-base text-ink-muted" />
+          <span class="w-10 shrink-0 text-xs text-ink-muted">更新</span>
+          <span class="truncate text-xs text-ink-secondary">
             {{ formatDateTime(session.updatedAt) }}
           </span>
         </div>

@@ -1,13 +1,93 @@
 @import 'tailwindcss';
 
+/* 让 dark: variant 跟随 .dark class 切换（默认跟随系统 prefers-color-scheme，改为 class 策略） */
+@custom-variant dark (&:where(.dark, .dark *));
+
 /*
- * 主题色 token：与 config/theme.ts 中 Naive UI primaryColor 保持一致（sky 蓝）。
- * 业务代码统一使用 bg-primary / text-primary / ring-primary 等，不要硬编码色值。
+ * 主题色 token：
+ * - primary 系列：与 config/theme.ts 中 Naive UI primaryColor 保持一致（sky 蓝），业务代码统一
+ *   bg-primary / text-primary / ring-primary 等，不要硬编码色值。
+ * - 语义色系列：页面骨架只写角色名（bg-surface / text-ink / border-divider…），
+ *   具体色值在下方 :root（浅色）与 .dark（暗色）两套中切换，换肤零成本。
+ *   映射关系（与现有 slate 色阶一一对应，保证浅色观感不变）：
+ *     surface=slate-50  surface-raised=white  surface-hover=slate-100
+ *     surface-active=slate-200/70  divider=slate-200  divider-subtle=slate-100
+ *     ink=slate-900  ink-secondary=slate-700  ink-muted=slate-500
  */
 @theme {
   --color-primary: #0ea5e9; /* sky-500 */
   --color-primary-hover: #38bdf8; /* sky-400 */
   --color-primary-active: #0284c7; /* sky-600 */
+
+  --color-surface: #f8fafc; /* slate-50 */
+  --color-surface-raised: #ffffff;
+  --color-surface-hover: #f1f5f9; /* slate-100 */
+  --color-surface-active: rgba(226, 232, 240, 0.7); /* slate-200/70 */
+  --color-divider: #e2e8f0; /* slate-200 */
+  --color-divider-subtle: #f1f5f9; /* slate-100 */
+  --color-ink: #0f172a; /* slate-900 */
+  --color-ink-secondary: #334155; /* slate-700 */
+  --color-ink-muted: #64748b; /* slate-500 */
+  --color-scrollbar-thumb: #cbd5e1; /* slate-300 */
+  --color-scrollbar-thumb-hover: #94a3b8; /* slate-400 */
+}
+
+/* 暗色模式色板：与 Naive darkTheme 底色体系对齐（slate-900/800 底 + slate-100/300/400 文字）。
+   hover/active 用 slate-400 半透明叠层而非实色 slate-700，暗底上更柔和且层次清晰 */
+.dark {
+  --color-surface: #0f172a; /* slate-900 */
+  --color-surface-raised: #1e293b; /* slate-800 */
+  --color-surface-hover: rgba(148, 163, 184, 0.12); /* slate-400/12 */
+  --color-surface-active: rgba(148, 163, 184, 0.2); /* slate-400/20 */
+  --color-divider: #334155; /* slate-700 */
+  --color-divider-subtle: rgba(148, 163, 184, 0.15); /* slate-400/15 */
+  --color-ink: #f1f5f9; /* slate-100 */
+  --color-ink-secondary: #cbd5e1; /* slate-300 */
+  --color-ink-muted: #94a3b8; /* slate-400 */
+  --color-scrollbar-thumb: #334155; /* slate-700 */
+  --color-scrollbar-thumb-hover: #475569; /* slate-600 */
+}
+
+/*
+ * color-scheme：让浏览器原生控件（滚动条、select、表单等）跟随主题，
+ * 否则暗色下原生滚动条会按浅色默认渲染成白灰色（本次优化的根因）。
+ */
+html {
+  color-scheme: light;
+}
+html.dark {
+  color-scheme: dark;
+}
+
+/*
+ * 滚动条统一细化 + 随主题切换：
+ * - WebKit（Chrome/Edge/Safari）：8px 宽、thumb 圆角并内缩 2px，hover 提亮；
+ * - Firefox：scrollbar-width: thin + scrollbar-color（thumb / track）。
+ * 色值用 token，浅暗两套自动切换，避免与页面背景脱离的「白灰粗条」。
+ */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background-color: var(--color-scrollbar-thumb);
+  border-radius: 9999px;
+  /* 透明 border + content-box 让 thumb 视觉上比轨道细 4px，更精致 */
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background-color: var(--color-scrollbar-thumb-hover);
+}
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-scrollbar-thumb) transparent;
 }
 
 /*
@@ -22,7 +102,7 @@ body,
 }
 
 body {
-  @apply bg-slate-50 text-slate-900 antialiased;
+  @apply bg-surface text-ink antialiased;
   font-family:
     'Inter',
     ui-sans-serif,

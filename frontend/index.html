@@ -5,6 +5,20 @@
     <link rel="icon" type="image/png" href="/favicon.png" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>zacp</title>
+    <script>
+      // 防闪白：Vue 挂载前按本地偏好设置主题（key 与 stores/app.ts 保持一致）
+      // Tailwind 依赖 .dark class，incremark markdown 依赖 data-theme 属性，二者都要同步
+      ;(function () {
+        try {
+          var dark = localStorage.getItem('zacp.themeMode') === 'dark'
+          var root = document.documentElement
+          root.classList.toggle('dark', dark)
+          root.setAttribute('data-theme', dark ? 'dark' : 'light')
+        } catch (e) {
+          /* localStorage 不可用时保持默认浅色 */
+        }
+      })()
+    </script>
   </head>
   <body>
     <div id="app"></div>

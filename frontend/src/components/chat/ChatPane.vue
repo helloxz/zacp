@@ -20,13 +20,22 @@ const agentStore = useAgentStore()
 const sessionStore = useSessionStore()
 const appStore = useAppStore()
 
-/** 右侧面板折叠按钮主题：纯灰图标、无 hover 背景（不用 quaternary/primary） */
-const toggleBtnTheme = computed(() => ({
-  textColor: '#94a3b8', // slate-400：收起态
-  textColorHover: '#475569', // slate-600：hover 仅加深灰色，不出现背景
-  textColorPressed: '#475569',
-  textColorFocus: '#475569',
-}))
+/** 右侧面板折叠按钮主题：纯灰图标、无 hover 背景（不用 quaternary/primary）；暗色下换亮一档 */
+const toggleBtnTheme = computed(() =>
+  appStore.isDark
+    ? {
+        textColor: '#64748b', // slate-500
+        textColorHover: '#94a3b8', // slate-400
+        textColorPressed: '#94a3b8',
+        textColorFocus: '#94a3b8',
+      }
+    : {
+        textColor: '#94a3b8', // slate-400：收起态
+        textColorHover: '#475569', // slate-600：hover 仅加深灰色，不出现背景
+        textColorPressed: '#475569',
+        textColorFocus: '#475569',
+      },
+)
 
 /** 右侧文件面板折叠状态（状态在 AppShell，这里只展示按钮并转发切换事件） */
 defineProps<{ rightOpen: boolean }>()
@@ -106,13 +115,13 @@ function onNewProjectFromHero() {
   <template v-if="routeName === 'session' && current">
     <div class="flex min-h-0 flex-1 flex-col">
       <!-- 会话头部：Agent 标签（左）+ 标题 + 右侧面板开关（最右） -->
-      <div class="flex items-center gap-2 border-b border-slate-200 px-4 py-2.5">
+      <div class="flex items-center gap-2 border-b border-divider px-4 py-2.5">
         <span
-          class="shrink-0 rounded bg-slate-100 px-1.5 py-0.5 text-xs text-slate-500"
+          class="shrink-0 rounded bg-surface-hover px-1.5 py-0.5 text-xs text-ink-muted"
         >
           {{ agentNameOf(current.agentId) }}
         </span>
-        <span class="min-w-0 flex-1 truncate text-sm font-medium text-slate-800">
+        <span class="min-w-0 flex-1 truncate text-sm font-medium text-ink">
           {{ current.title || t('chat.newChatTitle') }}
         </span>
         <!-- 右侧面板（信息|文件|Git）展开/收起：箭头随状态指向收起方向，灰色系无 hover 背景 -->
@@ -138,7 +147,7 @@ function onNewProjectFromHero() {
       <!-- 发送/流式错误条（可关闭） -->
       <div
         v-if="sessionStore.streamError"
-        class="mx-4 mb-2 flex items-center justify-between rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600 ring-1 ring-inset ring-red-100"
+        class="mx-4 mb-2 flex items-center justify-between rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600 ring-1 ring-inset ring-red-100 dark:bg-red-950/40 dark:text-red-400 dark:ring-red-900/50"
       >
         <span class="truncate">
           {{ t('chat.errorTitle') }}: {{ sessionStore.streamError }}
@@ -169,7 +178,7 @@ function onNewProjectFromHero() {
   <!-- session 态但会话对象尚未解析（转正补列表前的瞬时窗口/会话不存在）：加载占位，避免误入欢迎页 -->
   <div
     v-else-if="routeName === 'session'"
-    class="flex min-h-0 flex-1 items-center justify-center text-sm text-slate-400"
+    class="flex min-h-0 flex-1 items-center justify-center text-sm text-ink-muted"
   >
     {{ t('chat.loadingSession') }}
   </div>

@@ -101,11 +101,11 @@ const hasDetail = computed(() => hasValue(props.card.input) || hasValue(props.ca
 </script>
 
 <template>
-  <div class="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
+  <div class="overflow-hidden rounded-lg border border-divider bg-surface-raised shadow-sm">
     <!-- 标题行：整行可点击，切换详情展开/折叠（无详情时禁用点击） -->
     <button
       type="button"
-      class="flex w-full cursor-pointer items-center gap-2 px-3 py-2 text-left text-sm transition-colors hover:bg-slate-50 disabled:cursor-default disabled:hover:bg-transparent"
+      class="flex w-full cursor-pointer items-center gap-2 px-3 py-2 text-left text-sm transition-colors hover:bg-surface-hover disabled:cursor-default disabled:hover:bg-transparent"
       :disabled="!hasDetail"
       @click="expanded = !expanded"
     >
@@ -116,15 +116,15 @@ const hasDetail = computed(() => hasValue(props.card.input) || hasValue(props.ca
         <span class="absolute inline-flex h-full w-full rounded-full opacity-75" :class="statusDotClass" />
         <span class="relative inline-flex h-2 w-2 rounded-full" :class="statusDotClass" />
       </span>
-      <n-icon class="shrink-0 text-slate-400"><HammerOutline /></n-icon>
-      <span class="min-w-0 flex-1 truncate font-medium text-slate-700">
+      <n-icon class="shrink-0 text-ink-muted"><HammerOutline /></n-icon>
+      <span class="min-w-0 flex-1 truncate font-medium text-ink-secondary">
         {{ card.title || t('tool.unknown') }}
       </span>
-      <span class="shrink-0 text-xs text-slate-400">{{ statusText }}</span>
+      <span class="shrink-0 text-xs text-ink-muted">{{ statusText }}</span>
       <!-- 展开指示箭头：展开时旋转 180° -->
       <n-icon
         v-if="hasDetail"
-        class="shrink-0 text-slate-400 transition-transform duration-200"
+        class="shrink-0 text-ink-muted transition-transform duration-200"
         :class="expanded ? 'rotate-180' : ''"
       >
         <ChevronDownOutline />
@@ -132,17 +132,17 @@ const hasDetail = computed(() => hasValue(props.card.input) || hasValue(props.ca
     </button>
 
     <!-- 详情区：参数 + 结果（JSON 格式化，max-h 内滚动防大输出撑爆布局） -->
-    <div v-show="expanded" class="border-t border-slate-100 px-3 py-2.5">
+    <div v-show="expanded" class="border-t border-divider-subtle px-3 py-2.5">
       <div v-if="details?.input" class="mb-2.5">
-        <div class="mb-1 text-xs font-medium text-slate-400">{{ t('tool.input') }}</div>
+        <div class="mb-1 text-xs font-medium text-ink-muted">{{ t('tool.input') }}</div>
         <pre
-          class="max-h-64 overflow-auto whitespace-pre-wrap break-all rounded-md bg-slate-50 p-2.5 font-mono text-xs leading-relaxed text-slate-600"
+          class="max-h-64 overflow-auto whitespace-pre-wrap break-all rounded-md bg-surface-hover p-2.5 font-mono text-xs leading-relaxed text-ink-secondary"
         >{{ details.input }}</pre>
       </div>
       <div v-if="details?.output">
-        <div class="mb-1 text-xs font-medium text-slate-400">{{ t('tool.output') }}</div>
+        <div class="mb-1 text-xs font-medium text-ink-muted">{{ t('tool.output') }}</div>
         <pre
-          class="max-h-64 overflow-auto whitespace-pre-wrap break-all rounded-md bg-slate-50 p-2.5 font-mono text-xs leading-relaxed text-slate-600"
+          class="max-h-64 overflow-auto whitespace-pre-wrap break-all rounded-md bg-surface-hover p-2.5 font-mono text-xs leading-relaxed text-ink-secondary"
         >{{ details.output }}</pre>
       </div>
     </div>

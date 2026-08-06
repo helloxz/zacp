@@ -33,7 +33,7 @@ onMounted(() => {
 
 <template>
   <!-- 壳层骨架：左固定侧栏 + 中对话主区 + 右文件信息栏；整页内部滚动，避免 body 双滚动条（设计文档 §3） -->
-  <div class="flex h-screen overflow-hidden bg-white">
+  <div class="flex h-screen overflow-hidden bg-surface-raised">
     <AppSidebar class="shrink-0" @open-settings="openSettings" />
     <main class="flex min-w-0 flex-1 flex-col">
       <ChatPane

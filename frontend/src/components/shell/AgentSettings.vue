@@ -43,10 +43,10 @@ function retry() {
   <div class="flex flex-col gap-5">
     <div class="flex items-center justify-between gap-3">
       <div class="min-w-0">
-        <h3 class="text-base font-semibold text-slate-800">
+        <h3 class="text-base font-semibold text-ink">
           {{ t('settings.agent.title') }}
         </h3>
-        <p class="mt-1 text-sm text-slate-500">{{ t('settings.agent.desc') }}</p>
+        <p class="mt-1 text-sm text-ink-muted">{{ t('settings.agent.desc') }}</p>
       </div>
       <n-tag
         v-if="!store.loading && store.list.length"
@@ -62,9 +62,9 @@ function retry() {
     <!-- 加载失败：显示错误与重试 -->
     <div
       v-if="store.error && !store.loading"
-      class="flex flex-col items-center gap-3 rounded-xl border border-dashed border-rose-200 bg-rose-50/60 px-6 py-8 text-center"
+      class="flex flex-col items-center gap-3 rounded-xl border border-dashed border-rose-200 bg-rose-50/60 px-6 py-8 text-center dark:border-rose-900/50 dark:bg-rose-950/30"
     >
-      <p class="text-sm text-rose-500">{{ store.error }}</p>
+      <p class="text-sm text-rose-500 dark:text-rose-400">{{ store.error }}</p>
       <n-button size="small" type="primary" tertiary @click="retry">
         {{ t('dirPicker.retry') }}
       </n-button>
@@ -77,17 +77,17 @@ function retry() {
           <div
             v-for="agent in store.list"
             :key="agent.agentId"
-            class="flex items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white px-4 py-3 transition-colors hover:border-indigo-200 hover:bg-indigo-50/40"
+            class="flex items-center justify-between gap-3 rounded-xl border border-divider bg-surface-raised px-4 py-3 transition-colors hover:border-indigo-300 hover:bg-indigo-50/40 dark:hover:border-indigo-500/50 dark:hover:bg-indigo-500/10"
           >
             <div class="flex min-w-0 items-center gap-3">
               <div
-                class="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-indigo-50 text-indigo-500"
+                class="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-indigo-50 text-indigo-500 dark:bg-indigo-500/15 dark:text-indigo-400"
               >
                 <n-icon :size="18"><CubeOutline /></n-icon>
               </div>
               <div class="min-w-0">
                 <div class="flex items-center gap-2">
-                  <span class="truncate text-sm font-medium text-slate-800">
+                  <span class="truncate text-sm font-medium text-ink">
                     {{ agent.name }}
                   </span>
                   <n-tag
@@ -110,14 +110,14 @@ function retry() {
                     }}
                   </n-tag>
                 </div>
-                <p class="mt-0.5 truncate text-xs text-slate-400">
+                <p class="mt-0.5 truncate text-xs text-ink-muted">
                   {{ agent.command }}
                 </p>
               </div>
             </div>
 
             <div class="flex shrink-0 items-center gap-3">
-              <span class="hidden text-xs text-slate-400 sm:inline">
+              <span class="hidden text-xs text-ink-muted sm:inline">
                 {{ agent.agentId }}
               </span>
               <!-- 未安装：开关禁用，hover 提示先安装 -->
@@ -139,7 +139,7 @@ function retry() {
           <!-- 空态兜底（正常不会出现：内置目录至少 4 项） -->
           <div
             v-if="!store.loading && !store.list.length"
-            class="rounded-xl border border-dashed border-slate-200 py-10 text-center text-sm text-slate-400"
+            class="rounded-xl border border-dashed border-divider py-10 text-center text-sm text-ink-muted"
           >
             {{ t('settings.agent.empty') }}
           </div>

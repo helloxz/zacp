@@ -305,13 +305,13 @@ function onKeydown(e: KeyboardEvent) {
 
 <template>
   <div
-    class="relative w-full rounded-2xl border border-slate-200 bg-white p-3 shadow-sm transition-shadow focus-within:border-slate-300 focus-within:shadow-md"
+    class="relative w-full rounded-2xl border border-divider bg-surface-raised p-3 shadow-sm transition-shadow focus-within:border-divider focus-within:shadow-md"
   >
     <!-- / 命令候选面板：浮于输入框上方，宽度与输入框一致（容器 relative + 左右对齐） -->
     <div
       v-if="slashVisible"
       ref="slashPanelRef"
-      class="absolute bottom-full left-0 right-0 z-20 mb-1.5 overflow-hidden rounded-lg border border-slate-200 bg-white shadow-lg"
+      class="absolute bottom-full left-0 right-0 z-20 mb-1.5 overflow-hidden rounded-lg border border-divider bg-surface-raised shadow-lg"
     >
       <div class="max-h-64 overflow-y-auto py-1">
         <button
@@ -320,13 +320,13 @@ function onKeydown(e: KeyboardEvent) {
           type="button"
           data-slash-item
           class="flex w-full items-baseline gap-2 px-3 py-1.5 text-left"
-          :class="i === slashIndex ? 'bg-slate-100' : ''"
+          :class="i === slashIndex ? 'bg-surface-hover' : ''"
           @mouseenter="slashIndex = i"
           @click="pickSlashCommand(i)"
         >
-          <span class="shrink-0 font-mono text-sm font-medium text-slate-800">/{{ cmd.name }}</span>
-          <span v-if="cmd.description" class="truncate text-xs text-slate-500">{{ cmd.description }}</span>
-          <span v-if="cmd.inputHint" class="ml-auto shrink-0 text-xs text-slate-400">{{ cmd.inputHint }}</span>
+          <span class="shrink-0 font-mono text-sm font-medium text-ink">/{{ cmd.name }}</span>
+          <span v-if="cmd.description" class="truncate text-xs text-ink-muted">{{ cmd.description }}</span>
+          <span v-if="cmd.inputHint" class="ml-auto shrink-0 text-xs text-ink-muted">{{ cmd.inputHint }}</span>
         </button>
       </div>
     </div>
@@ -345,7 +345,7 @@ function onKeydown(e: KeyboardEvent) {
     <!-- 配置项更新失败提示条：显示 agent 真实拒绝原因（如列表过期），3 秒自动消失 -->
     <div
       v-if="configError"
-      class="mt-1.5 rounded bg-red-50 px-2 py-1 text-xs leading-relaxed text-red-500"
+      class="mt-1.5 rounded bg-red-50 px-2 py-1 text-xs leading-relaxed text-red-500 dark:bg-red-950/40 dark:text-red-400"
     >
       {{ t('chat.configUpdateFailed') }}：{{ configError }}
     </div>
@@ -385,14 +385,14 @@ function onKeydown(e: KeyboardEvent) {
             @update:value="(v: boolean) => onConfigChange(opt.id, v ? 'true' : 'false')"
           />
         </template>
-        <span v-else class="text-xs text-slate-400">{{ t('chat.enterHint') }}</span>
+        <span v-else class="text-xs text-ink-muted">{{ t('chat.enterHint') }}</span>
       </div>
 
       <div class="flex shrink-0 items-center gap-2">
         <!-- 排队中：停止按钮 + 状态文案（可取消排队；A 结束后自动开跑） -->
         <span
           v-if="status === 'queued'"
-          class="flex items-center gap-1.5 text-xs text-amber-500"
+          class="flex items-center gap-1.5 text-xs text-amber-500 dark:text-amber-400"
         >
           <n-spin :size="13" />
           {{ t('chat.queued') }}

@@ -233,12 +233,12 @@ onUnmounted(() => {
       <div class="flex w-full max-w-[680px] flex-col items-center gap-6">
         <div class="space-y-4 text-center">
           <h1
-            class="bg-gradient-to-b from-slate-900 to-slate-500 bg-clip-text text-3xl font-semibold tracking-tight text-transparent"
+            class="bg-gradient-to-b from-slate-900 to-slate-500 bg-clip-text text-3xl font-semibold tracking-tight text-transparent dark:from-slate-100 dark:to-slate-400"
           >
             {{ t('chat.welcomeSubtitle') }}
           </h1>
           <!-- 灰色工作区提示：告知用户会话将创建在哪个目录下 -->
-          <p v-if="workspacePath" class="text-sm text-slate-400">
+          <p v-if="workspacePath" class="text-sm text-ink-muted">
             {{ t('chat.newSessionPathHint', { path: workspacePath }) }}
           </p>
         </div>
@@ -255,8 +255,8 @@ onUnmounted(() => {
             :class="[
               'shrink-0 cursor-pointer rounded-t-md border-b-2 px-4 py-1.5 text-sm transition-colors',
               a.agentId === selectedAgentId
-                ? 'border-slate-800 font-medium text-slate-900'
-                : 'border-transparent text-slate-500 hover:text-slate-700',
+                ? 'border-ink font-medium text-ink'
+                : 'border-transparent text-ink-muted hover:text-ink-secondary',
             ]"
             @click="onSwitchAgent(a.agentId)"
           >
@@ -264,7 +264,7 @@ onUnmounted(() => {
               <!-- 运行状态圆点：绿=运行中，灰=未运行（点击后自动启动） -->
               <span
                 class="inline-block h-1.5 w-1.5 rounded-full"
-                :class="a.running ? 'bg-emerald-500' : 'bg-slate-300'"
+                :class="a.running ? 'bg-emerald-500' : 'bg-slate-300 dark:bg-slate-600'"
               ></span>
               {{ a.name }}
             </span>
@@ -273,7 +273,7 @@ onUnmounted(() => {
 
         <!-- 加载态：切换 agent 时以半透明遮罩覆盖输入卡片（内容保留原位，避免整块替换造成的跳动闪烁）；
              草稿创建完成（session/new 启动 agent）后遮罩消失，配置项随之更新 -->
-        <div v-if="sessionStore.streamError" class="flex w-full items-center justify-between rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600 ring-1 ring-inset ring-red-100">
+        <div v-if="sessionStore.streamError" class="flex w-full items-center justify-between rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600 ring-1 ring-inset ring-red-100 dark:bg-red-950/40 dark:text-red-400 dark:ring-red-900/50">
           <span class="truncate">
             {{ t('chat.errorTitle') }}: {{ sessionStore.streamError }}
           </span>
@@ -290,10 +290,10 @@ onUnmounted(() => {
         <div class="relative w-full">
           <div
             v-if="draftCreating"
-            class="absolute inset-0 z-10 flex items-center justify-center rounded-2xl bg-white/70 backdrop-blur-[1px]"
+            class="absolute inset-0 z-10 flex items-center justify-center rounded-2xl bg-surface-raised/70 backdrop-blur-[1px]"
           >
-            <span class="flex items-center gap-2 text-sm text-slate-400">
-              <span class="inline-block h-4 w-4 animate-spin rounded-full border-2 border-slate-300 border-t-slate-600"></span>
+            <span class="flex items-center gap-2 text-sm text-ink-muted">
+              <span class="inline-block h-4 w-4 animate-spin rounded-full border-2 border-slate-300 border-t-slate-600 dark:border-slate-600 dark:border-t-slate-300"></span>
               {{ t('chat.loadingAgent') }}{{ selectedAgentName ? ' ' + selectedAgentName : '' }}
             </span>
           </div>

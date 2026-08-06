@@ -24,9 +24,9 @@ function select(optionId: string) {
     <div v-if="sessionStore.pendingPermission" class="flex flex-col gap-4">
       <!-- 工具调用信息：完整展示详情（长文本换行），内容过多时区域内滚动 -->
       <div
-        class="max-h-48 overflow-y-auto rounded-lg bg-slate-50 px-3 py-2.5 text-sm"
+        class="max-h-48 overflow-y-auto rounded-lg bg-surface-hover px-3 py-2.5 text-sm"
       >
-        <p class="font-medium break-all whitespace-pre-wrap text-slate-800">
+        <p class="font-medium break-all whitespace-pre-wrap text-ink">
           {{
             sessionStore.pendingPermission.toolCall?.title ||
             t('permission.unknownTool')
@@ -34,7 +34,7 @@ function select(optionId: string) {
         </p>
         <p
           v-if="sessionStore.pendingPermission.toolCall?.toolCallId"
-          class="mt-0.5 break-all whitespace-pre-wrap text-xs text-slate-400"
+          class="mt-0.5 break-all whitespace-pre-wrap text-xs text-ink-muted"
         >
           {{ sessionStore.pendingPermission.toolCall?.toolCallId }}
         </p>
@@ -55,7 +55,7 @@ function select(optionId: string) {
         </n-button>
       </div>
 
-      <p class="text-xs text-slate-400">{{ t('permission.hint') }}</p>
+      <p class="text-xs text-ink-muted">{{ t('permission.hint') }}</p>
     </div>
   </n-modal>
 </template>

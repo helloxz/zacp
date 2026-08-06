@@ -24,13 +24,13 @@ const X_URL = 'https://x.com/xiaozblog'
       <img
         src="/favicon.png"
         alt=""
-        class="h-16 w-16 rounded-2xl object-contain shadow-lg shadow-indigo-200"
+        class="h-16 w-16 rounded-2xl object-contain shadow-lg shadow-indigo-200 dark:shadow-indigo-900/40"
       />
       <div>
-        <h3 class="text-lg font-semibold text-slate-800">
+        <h3 class="text-lg font-semibold text-ink">
           {{ t('common.appName') }}
         </h3>
-        <p class="mx-auto mt-1 max-w-xs text-sm leading-relaxed text-slate-500">
+        <p class="mx-auto mt-1 max-w-xs text-sm leading-relaxed text-ink-muted">
           {{ t('settings.about.intro') }}
         </p>
       </div>
@@ -38,7 +38,7 @@ const X_URL = 'https://x.com/xiaozblog'
 
     <!-- 版本号 -->
     <span
-      class="inline-flex items-center gap-1.5 rounded-full bg-slate-100 px-3 py-1 text-xs font-medium text-slate-500"
+      class="inline-flex items-center gap-1.5 rounded-full bg-surface-hover px-3 py-1 text-xs font-medium text-ink-muted"
     >
       {{ t('settings.about.version') }} v{{ appVersion }}
     </span>
@@ -49,7 +49,7 @@ const X_URL = 'https://x.com/xiaozblog'
         :href="GITHUB_URL"
         target="_blank"
         rel="noopener noreferrer"
-        class="flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 shadow-sm transition-colors hover:border-slate-300 hover:bg-slate-50"
+        class="flex items-center gap-2 rounded-lg border border-divider bg-surface-raised px-4 py-2 text-sm font-medium text-ink-secondary shadow-sm transition-colors hover:border-divider hover:bg-surface-hover"
       >
         <n-icon :size="16"><LogoGithub /></n-icon>
         GitHub
@@ -59,7 +59,7 @@ const X_URL = 'https://x.com/xiaozblog'
         target="_blank"
         rel="noopener noreferrer"
         aria-label="X"
-        class="flex items-center justify-center rounded-lg bg-black p-2.5 text-white transition-opacity hover:opacity-80"
+        class="flex items-center justify-center rounded-lg bg-black p-2.5 text-white transition-opacity hover:opacity-80 dark:bg-slate-100 dark:text-slate-900"
       >
         <!-- X 官方 logo：@vicons/ionicons5 无 LogoX，内联 SVG 兜底（按钮仅保留图标） -->
         <svg
