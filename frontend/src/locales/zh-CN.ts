@@ -35,6 +35,7 @@ export default {
     deleteTitle: '删除会话',
     confirmDelete: '确定删除该会话？删除后不可恢复。',
     loadMoreSessions: '查看更多',
+    runningHint: '任务进行中',
   },
   dirPicker: {
     up: '返回上级目录',

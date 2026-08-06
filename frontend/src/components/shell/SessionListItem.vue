@@ -33,6 +33,9 @@ const agentName = computed(() => {
 
 const title = computed(() => props.session.title || t('chat.newChatTitle'))
 
+/** 该会话是否正在等待 Agent 回复（驱动列表项前「任务进行中」呼吸圆点） */
+const isRunning = computed(() => sessionStore.runningSessionId === props.session.id)
+
 const relativeTime = computed(() =>
   formatRelativeTime(props.session.updatedAt, appStore.locale),
 )
@@ -119,12 +122,21 @@ async function onDelete() {
     @keydown.enter="onSelect"
   >
     <div class="flex min-w-0 flex-1 flex-col gap-0.5">
-      <span
-        class="truncate text-sm"
-        :class="isActive ? 'font-medium text-slate-900' : 'text-slate-700'"
-      >
-        {{ title }}
-      </span>
+      <div class="flex min-w-0 items-center gap-1.5">
+        <!-- 任务进行中：蓝色轻呼吸圆点（仅进行中的会话显示，完成后消失） -->
+        <span
+          v-if="isRunning"
+          class="running-dot shrink-0"
+          :title="t('shell.runningHint')"
+          aria-hidden="true"
+        />
+        <span
+          class="truncate text-sm"
+          :class="isActive ? 'font-medium text-slate-900' : 'text-slate-700'"
+        >
+          {{ title }}
+        </span>
+      </div>
       <span class="flex items-center gap-1.5 text-xs text-slate-400">
         <span class="truncate">{{ agentName }}</span>
         <span aria-hidden="true">·</span>
@@ -193,3 +205,33 @@ async function onDelete() {
     @positive-click="onDelete"
   />
 </template>
+
+<style scoped>
+/* 任务进行中呼吸圆点：蓝色轻闪烁（opacity 0.35↔1，周期 2.4s），比 Tailwind
+   animate-pulse 的强脉冲更柔和；仅装饰，无信息承载（配合 aria-hidden） */
+.running-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 9999px;
+  background: #3b82f6; /* blue-500 */
+  animation: running-dot-breathe 2.4s ease-in-out infinite;
+}
+
+@keyframes running-dot-breathe {
+  0%,
+  100% {
+    opacity: 0.35;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+/* 动画偏好减弱：降级为静态蓝点，避免闪烁干扰 */
+@media (prefers-reduced-motion: reduce) {
+  .running-dot {
+    animation: none;
+    opacity: 1;
+  }
+}
+</style>

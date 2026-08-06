@@ -80,6 +80,16 @@ export const useSessionStore = defineStore('session', () => {
   const loadingError = ref<string | null>(null)
   /** 是否正在等待 Agent 回复（驱动 Composer 停止按钮 / 消息流式态） */
   const streaming = ref(false)
+  /**
+   * 正在等待回复的会话 DB id（侧栏「任务进行中」呼吸圆点数据源）。
+   *
+   * 单例 WS 连接天然绑定最近一次 prompt 的会话（见 useAcpSocket），
+   * 同一时刻最多一个会话在跑，因此用单值而非 Set：prompt 时直接覆盖赋值
+   * 即可正确处理「prompt A 后又 prompt B、A 被抢占」的场景（A 的 turn.done
+   * 不会再投递到本连接，若不清旧值圆点会一直亮着）。
+   * 刷新/重连后为 null（后端 turn 仍在跑也看不到流式内容，属可接受盲区）。
+   */
+  const runningSessionId = ref<number | null>(null)
   /** 流式发送错误（ChatPane 错误条展示） */
   const streamError = ref<string | null>(null)
   /** 待处理的权限请求（非空时 PermissionModal 显示） */
@@ -593,6 +603,8 @@ export const useSessionStore = defineStore('session', () => {
           // 流式结束：实时工具卡片/计划清空（历史由 assistant 消息 events 渲染）
           activeToolCards.value = []
           activePlan.value = null
+          // 本轮结束：清除侧栏「任务进行中」圆点（turn.done 只投递给绑定会话，清空即清当前）
+          runningSessionId.value = null
           // 回复完成提示音：仅当本轮确在流式（过滤用户取消、历史迟到 turn.done 等场景）
           if (streaming.value) {
             playSuccessTone()
@@ -612,6 +624,8 @@ export const useSessionStore = defineStore('session', () => {
         case 'error': {
           streaming.value = false
           streamMsgId = -1
+          // 出错同样结束本轮：清除侧栏「任务进行中」圆点
+          runningSessionId.value = null
           streamError.value = msg.message ?? msg.code ?? 'unknown error'
           break
         }
@@ -689,10 +703,14 @@ export const useSessionStore = defineStore('session', () => {
     })
     if (!sent) {
       // 连接未就绪：提示并回退？P2 简化：置错并结束流式
+      runningSessionId.value = null
       streaming.value = false
       streamMsgId = -1
       streamBlocks.value = []
       streamError.value = 'websocket not connected'
+    } else {
+      // 发送成功即视为「任务进行中」，点亮侧栏圆点（覆盖赋值处理抢占）
+      runningSessionId.value = sessionId
     }
   }
 
@@ -709,6 +727,8 @@ export const useSessionStore = defineStore('session', () => {
     streaming.value = false
     streamMsgId = -1
     streamBlocks.value = []
+    // 取消后 agent 停止、事件流结束：清除侧栏「任务进行中」圆点
+    runningSessionId.value = null
   }
 
   function clearStreamError() {
@@ -726,6 +746,7 @@ export const useSessionStore = defineStore('session', () => {
     loading,
     loadingError,
     streaming,
+    runningSessionId,
     streamError,
     pendingPermission,
     activeToolCards,

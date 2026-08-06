@@ -26,6 +26,7 @@ export default {
     deleteTitle: 'Delete session',
     confirmDelete: 'Delete this session? This cannot be undone.',
     loadMoreSessions: 'Load more',
+    runningHint: 'Task in progress',
   },
   dirPicker: {
     up: 'Go to parent directory',
