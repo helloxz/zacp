@@ -909,7 +909,11 @@ func (c *AgentConnection) Start(ctx context.Context) error {
 		ProtocolVersion: acp.ProtocolVersionNumber,
 		ClientCapabilities: acp.ClientCapabilities{
 			Fs:       acp.FileSystemCapabilities{ReadTextFile: true, WriteTextFile: true},
-			Terminal: true,
+			// 注意：不要声明 Terminal 能力 —— terminal 尚未真正实现（CreateTerminal 等
+			// 目前是 stub）。声明后 omp（pi-coding-agent）的 bash 工具会走 ACP 远程终端
+			// 协议，拿不到输出与 exit code，导致 "missing exit status" 并崩溃退出。
+			// 待 terminal 完整实现后再开启。
+			Terminal: false,
 		},
 		ClientInfo: &acp.Implementation{
 			Name:    "zacp",
