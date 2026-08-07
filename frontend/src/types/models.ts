@@ -60,6 +60,32 @@ export interface FileEntry {
   mimeType?: string
 }
 
+/** GET /api/v1/workspaces/:id/git/status 返回的 Git 状态摘要 */
+export interface GitStatus {
+  gitInstalled: boolean
+  isRepository: boolean
+  summary: GitSummary
+  files: GitChange[]
+  truncated: boolean
+  hiddenCount: number
+}
+
+export interface GitSummary {
+  changed: number
+  staged: number
+  unstaged: number
+  untracked: number
+  conflicted: number
+}
+
+export interface GitChange {
+  path: string
+  originalPath?: string
+  status: 'modified' | 'added' | 'deleted' | 'renamed' | 'copied' | 'untracked' | 'conflicted' | 'changed'
+  indexStatus: string
+  worktreeStatus: string
+}
+
 /**
  * 目录浏览条目（GET /api/v1/fs/directories → `{ path, parent, entries }`，仅文件夹）。
  * path 为绝对路径，可直接作为「创建项目」路径或继续浏览的入参。
@@ -109,6 +135,7 @@ export interface ChatMessage {
   reasoning?: string
   /** 完整事件 JSON（工具调用等），P0-P1 未消费，P3 渲染工具卡片用 */
   events?: string
+
   createdAt: string
 }
 

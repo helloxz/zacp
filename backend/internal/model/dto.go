@@ -40,9 +40,9 @@ type SessionModesDTO struct {
 
 // CreateSessionResult 创建会话业务结果（DB 会话 + ACP 配置）。
 type CreateSessionResult struct {
-	Session       *Session           `json:"session"`
-	ConfigOptions []ConfigOptionDTO  `json:"configOptions,omitempty"`
-	Modes         *SessionModesDTO   `json:"modes,omitempty"`
+	Session       *Session          `json:"session"`
+	ConfigOptions []ConfigOptionDTO `json:"configOptions,omitempty"`
+	Modes         *SessionModesDTO  `json:"modes,omitempty"`
 }
 
 // PermissionOptionDTO 权限选项（推给前端卡片按钮）。
@@ -65,6 +65,35 @@ type FileEntryDTO struct {
 type FileListDTO struct {
 	Path    string         `json:"path"` // 当前目录的相对路径（空 = 工作区根）
 	Entries []FileEntryDTO `json:"entries"`
+}
+
+// GitStatusDTO 工作区 Git 状态摘要与变更文件列表。
+// GitInstalled=false 或 IsRepository=false 时，Files 保持为空切片，供前端展示对应空态。
+type GitStatusDTO struct {
+	GitInstalled bool           `json:"gitInstalled"`
+	IsRepository bool           `json:"isRepository"`
+	Summary      GitSummaryDTO  `json:"summary"`
+	Files        []GitChangeDTO `json:"files"`
+	Truncated    bool           `json:"truncated"`
+	HiddenCount  int            `json:"hiddenCount"`
+}
+
+// GitSummaryDTO Git 状态汇总；计数包含被 UI 隐藏的路径，HiddenCount 用于解释差异。
+type GitSummaryDTO struct {
+	Changed    int `json:"changed"`
+	Staged     int `json:"staged"`
+	Unstaged   int `json:"unstaged"`
+	Untracked  int `json:"untracked"`
+	Conflicted int `json:"conflicted"`
+}
+
+// GitChangeDTO 单个 Git 变更条目，Path 始终相对于当前 workspace。
+type GitChangeDTO struct {
+	Path           string `json:"path"`
+	OriginalPath   string `json:"originalPath,omitempty"`
+	Status         string `json:"status"`
+	IndexStatus    string `json:"indexStatus"`
+	WorktreeStatus string `json:"worktreeStatus"`
 }
 
 // DirectoryEntryDTO 目录浏览条目（新建项目弹窗用，仅文件夹）。

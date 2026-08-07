@@ -15,13 +15,14 @@ import (
 )
 
 // ---------------------------------------------------------------------------
-// FileService：工作区文件浏览与上传
+// FileService：工作区文件浏览、上传与重命名
 //
 // 安全模型（重要不变量）：
 // - 所有相对路径先 Clean，拒绝绝对路径与 `..` 逃逸；
 // - 拼接后 EvalSymlinks 解析真实路径，最终必须仍落在工作区根之内，
 //   防止通过符号链接把读写引到工作区外（路径穿越 / symlink 逃逸）。
-// ---------------------------------------------------------------------------
+// - 重命名保留源目录项语义：校验真实目标在工作区内，但 Rename 使用词法路径，
+//   避免把工作区内的符号链接重命名成其指向的真实文件。
 
 // 文件操作相关错误（handler 层映射为统一错误结构）。
 var (
@@ -31,8 +32,10 @@ var (
 	ErrNotDirectory = errors.New("target is not a directory")
 	// ErrFileExists 目标文件已存在（拒绝覆盖，防误覆盖源码）。
 	ErrFileExists = errors.New("file already exists")
-	// ErrInvalidFileName 文件名非法（空、`.`、`..`、含路径分隔符）。
+	// ErrInvalidFileName 文件名非法（空、`.`、`..`、含路径分隔符或 NUL）。
 	ErrInvalidFileName = errors.New("invalid file name")
+	// ErrCannotRenameRoot 不允许重命名工作区根目录。
+	ErrCannotRenameRoot = errors.New("cannot rename workspace root")
 	// ErrFileTooLarge 单文件超过大小上限（图片 5MB / 其他 20MB）。
 	ErrFileTooLarge = errors.New("file too large")
 	// ErrPathNotFound 目标路径不存在。
@@ -329,6 +332,116 @@ func (s *FileService) UploadFiles(workspaceID uint, relDir string, files []Uploa
 	return results, nil
 }
 
+// RenameFile 在工作区内重命名文件或目录，只允许修改 basename，不允许移动到其他目录。
+//
+// 源路径与目标父目录都经过真实路径边界校验；目标使用 Lstat 检查，避免覆盖已有条目。
+// 使用词法源路径执行 os.Rename，确保符号链接条目本身被重命名，而不是其指向目标。
+func (s *FileService) RenameFile(workspaceID uint, relPath, newName string) (*model.FileEntryDTO, error) {
+	ws, err := s.workspaceRepo.GetByID(workspaceID)
+	if err != nil {
+		return nil, fmt.Errorf("load workspace: %w", err)
+	}
+	if err := validateFileName(newName); err != nil {
+		return nil, err
+	}
+
+	root, err := filepath.Abs(ws.Path)
+	if err != nil {
+		return nil, fmt.Errorf("resolve workspace path: %w", err)
+	}
+	realRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return nil, fmt.Errorf("resolve workspace root: %w", err)
+	}
+
+	cleanPath := filepath.Clean(relPath)
+	if cleanPath == "." || cleanPath == "" {
+		return nil, ErrCannotRenameRoot
+	}
+	if filepath.IsAbs(cleanPath) || cleanPath == ".." || strings.HasPrefix(cleanPath, ".."+string(filepath.Separator)) {
+		return nil, ErrPathOutsideWorkspace
+	}
+
+	source := filepath.Join(root, cleanPath)
+	sourceInfo, err := os.Lstat(source)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, ErrPathNotFound
+		}
+		return nil, fmt.Errorf("stat source path: %w", err)
+	}
+	parent := filepath.Dir(source)
+	parentReal, err := filepath.EvalSymlinks(parent)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, ErrPathNotFound
+		}
+		return nil, fmt.Errorf("resolve source directory: %w", err)
+	}
+	if !pathWithin(parentReal, realRoot) {
+		return nil, ErrPathOutsideWorkspace
+	}
+	sourceReal, err := filepath.EvalSymlinks(source)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, ErrPathNotFound
+		}
+		return nil, fmt.Errorf("resolve source path: %w", err)
+	}
+	if !pathWithin(sourceReal, realRoot) {
+		return nil, ErrPathOutsideWorkspace
+	}
+
+	oldName := filepath.Base(cleanPath)
+	if oldName == newName {
+		return fileEntryFromInfo(filepath.ToSlash(cleanRel(cleanPath)), sourceInfo), nil
+	}
+
+	destination := filepath.Join(parent, newName)
+	if _, err := os.Lstat(destination); err == nil {
+		return nil, fmt.Errorf("%w: %s", ErrFileExists, newName)
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return nil, fmt.Errorf("check destination path: %w", err)
+	}
+	if err := os.Rename(source, destination); err != nil {
+		return nil, fmt.Errorf("rename %s to %s: %w", cleanPath, newName, err)
+	}
+
+	info, err := os.Lstat(destination)
+	if err != nil {
+		return nil, fmt.Errorf("stat renamed path: %w", err)
+	}
+	parentRel := filepath.ToSlash(filepath.Dir(cleanPath))
+	if parentRel == "." {
+		parentRel = ""
+	}
+	return fileEntryFromInfo(pathJoin(parentRel, newName), info), nil
+}
+
+func validateFileName(name string) error {
+	if name == "" || name == "." || name == ".." || strings.ContainsAny(name, `/\\`) || strings.IndexByte(name, 0) >= 0 {
+		return ErrInvalidFileName
+	}
+	return nil
+}
+
+func pathWithin(path, root string) bool {
+	return path == root || strings.HasPrefix(path, root+string(filepath.Separator))
+}
+
+func fileEntryFromInfo(relPath string, info os.FileInfo) *model.FileEntryDTO {
+	entry := &model.FileEntryDTO{
+		Name:  filepath.Base(relPath),
+		Path:  relPath,
+		IsDir: info.IsDir(),
+	}
+	if !info.IsDir() {
+		entry.Size = info.Size()
+		entry.MimeType = mime.TypeByExtension(strings.ToLower(filepath.Ext(info.Name())))
+	}
+	return entry
+}
+
 // ResolveFile 解析工作区内文件的真实绝对路径（供 raw 下载/预览）。
 // 返回的路径已经过 symlink 逃逸校验，可安全交给静态文件服务。
 func (s *FileService) ResolveFile(workspaceID uint, rel string) (string, error) {
@@ -375,4 +488,3 @@ func pathJoin(base, name string) string {
 	}
 	return base + "/" + name
 }
-

@@ -1,10 +1,11 @@
 <script setup lang="ts">
 /**
  * FilePanel — 右侧信息栏：信息 | 文件 | Git 三个 Tab。
- * 目前实现「信息」（SessionInfo）与「文件」（FileExplorer），「Git」留空占位。
+ * 目前实现「信息」（SessionInfo）、「文件」（FileExplorer）与按需加载的「Git」（GitPanel）。
  */
 import { ref } from 'vue'
 import FileExplorer from '@/components/files/FileExplorer.vue'
+import GitPanel from '@/components/files/GitPanel.vue'
 import SessionInfo from '@/components/files/SessionInfo.vue'
 
 const tab = ref('info')
@@ -27,10 +28,8 @@ const tab = ref('info')
         <FileExplorer />
       </n-tab-pane>
 
-      <n-tab-pane class="min-h-0 flex-1" name="git" tab="Git">
-        <div class="flex h-full items-center justify-center">
-          <n-empty size="small" description="Git Tab 待开发" />
-        </div>
+      <n-tab-pane class="min-h-0 flex-1" name="git" tab="Git" display-directive="if">
+        <GitPanel />
       </n-tab-pane>
     </n-tabs>
   </aside>

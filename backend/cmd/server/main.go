@@ -201,12 +201,14 @@ Examples:
 		wsHandler.RebindSession(oldID, newID)
 	}
 	fileSvc := service.NewFileService(workspaceRepo, cfg.Session.DefaultCwd)
+	gitSvc := service.NewGitService(workspaceRepo)
 
 	// 创建 Handler
 	workspaceHandler := handlers.NewWorkspaceHandler(workspaceSvc)
 	sessionHandler := handlers.NewSessionHandler(sessionSvc, eventBridge)
 	chatHandler := &handlers.ChatHandler{Mgr: mgr}
 	fileHandler := handlers.NewFileHandler(fileSvc)
+	gitHandler := handlers.NewGitHandler(gitSvc)
 	agentManageHandler := &handlers.AgentManageHandler{
 		Mgr:        mgr,
 		ConfigPath: agentCfgPath,
@@ -218,7 +220,7 @@ Examples:
 		gin.SetMode(cfg.Server.Mode)
 	}
 
-	engine := router.New(workspaceHandler, sessionHandler, chatHandler, fileHandler, agentManageHandler, wsHandler, eventBridge)
+	engine := router.New(workspaceHandler, sessionHandler, chatHandler, fileHandler, gitHandler, agentManageHandler, wsHandler, eventBridge)
 
 	// Graceful shutdown on signal.
 	go func() {

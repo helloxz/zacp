@@ -18,6 +18,7 @@ func New(
 	sessionHandler *handlers.SessionHandler,
 	chatHandler *handlers.ChatHandler,
 	fileHandler *handlers.FileHandler,
+	gitHandler *handlers.GitHandler,
 	agentManageHandler *handlers.AgentManageHandler,
 	wsHandler *ws.Handler,
 	eventBridge *ws.EventBridge,
@@ -43,10 +44,12 @@ func New(
 		v1.GET("/workspaces/:id", workspaceHandler.GetWorkspace)
 		v1.DELETE("/workspaces/:id", workspaceHandler.DeleteWorkspace)
 
-		// 工作区文件：浏览 / 上传 / 原始内容（图片预览、下载）
+		// 工作区文件：浏览 / 上传 / 重命名 / 原始内容（图片预览、下载）
 		v1.GET("/workspaces/:id/files", fileHandler.ListFiles)
 		v1.POST("/workspaces/:id/files/upload", fileHandler.Upload)
+		v1.PATCH("/workspaces/:id/files/rename", fileHandler.RenameFile)
 		v1.GET("/workspaces/:id/files/raw", fileHandler.RawFile)
+		v1.GET("/workspaces/:id/git/status", gitHandler.Status)
 
 		// 目录浏览（新建项目弹窗用）：列出任意绝对路径下的子文件夹，与 workspace 无关
 		v1.GET("/fs/directories", fileHandler.ListDirectories)

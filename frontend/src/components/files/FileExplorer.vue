@@ -8,7 +8,7 @@
  * - 图片自动压缩转 webp（等比不裁剪，>5MB 降采样兜底），非图片原样直传
  * - 点击图片文件 → 直接调用 Naive UI n-image 原生预览（全屏遮罩+缩放工具条，
  *   走后端 raw 接口，天然受 workspace 边界保护）
- * - 右键节点 → 「复制名称」右键菜单（无 https 环境下用 execCommand 回退复制）
+ * - 右键节点 → 「重命名 / 复制名称」菜单（无 https 环境下复制回退）
  *
  * 数据根 = 当前会话所属 workspace；无会话时用默认 workspace。
  */
@@ -25,7 +25,7 @@ import {
   ImageOutline,
   RefreshOutline,
 } from '@vicons/ionicons5'
-import { fetchFiles, fileRawUrl, uploadFiles } from '@/api'
+import { fetchFiles, fileRawUrl, renameFile, uploadFiles } from '@/api'
 import type { FileEntry } from '@/types/models'
 import { useSessionStore } from '@/stores/session'
 import { useAppStore } from '@/stores/app'
@@ -86,14 +86,21 @@ const previewSrc = computed(() =>
 const previewImgRef = ref<{ showPreview: () => void } | null>(null)
 
 // ---------------------------------------------------------------------------
-// 右键菜单（复制名称）
+// 右键菜单（重命名 / 复制名称）
 // ---------------------------------------------------------------------------
 
 const ctxMenuShow = ref(false)
 const ctxMenuX = ref(0)
 const ctxMenuY = ref(0)
 const ctxMenuEntry = ref<FileEntry | null>(null)
-const ctxOptions: DropdownOption[] = [{ key: 'copy-name', label: '复制名称' }]
+const ctxOptions: DropdownOption[] = [
+  { key: 'rename', label: '重命名' },
+  { key: 'copy-name', label: '复制名称' },
+]
+const renameModalVisible = ref(false)
+const renameValue = ref('')
+const renaming = ref(false)
+const renameTarget = ref<{ workspaceId: number; entry: FileEntry } | null>(null)
 
 /** 右键节点：定位目标条目并弹出菜单（路径从节点 DOM 的 data-dir 取，与拖拽同套路） */
 function onContextMenu(e: MouseEvent) {
@@ -110,13 +117,56 @@ function onContextMenu(e: MouseEvent) {
 
 async function onCtxSelect(key: string | number) {
   ctxMenuShow.value = false
-  if (key !== 'copy-name' || !ctxMenuEntry.value) return
-  const name = ctxMenuEntry.value.name
-  const ok = await copyText(name)
+  const entry = ctxMenuEntry.value
+  if (!entry) return
+
+  if (key === 'rename') {
+    renameTarget.value = { workspaceId: workspaceId.value, entry }
+    renameValue.value = entry.name
+    renameModalVisible.value = true
+    return
+  }
+  if (key !== 'copy-name') return
+
+  const ok = await copyText(entry.name)
   if (ok) {
-    message.success(`已复制「${name}」`)
+    message.success(`已复制「${entry.name}」`)
   } else {
     message.error('复制失败，请手动复制名称')
+  }
+}
+
+async function onRenameConfirm() {
+  const target = renameTarget.value
+  if (!target) return
+  const nextName = renameValue.value.trim()
+  if (!nextName) {
+    message.warning('文件名不能为空')
+    return
+  }
+  if (nextName === target.entry.name) {
+    renameModalVisible.value = false
+    return
+  }
+  if (target.workspaceId !== workspaceId.value) {
+    renameModalVisible.value = false
+    renameTarget.value = null
+    message.warning('工作区已切换，请重新选择文件')
+    return
+  }
+
+  renaming.value = true
+  try {
+    await renameFile(target.workspaceId, target.entry.path, nextName)
+    renameModalVisible.value = false
+    message.success(`已重命名为「${nextName}」`)
+    // 重命名目录会使其子节点 key 全部变化，整树刷新可避免旧路径缓存残留。
+    await reloadAll()
+  } catch (err) {
+    message.error(err instanceof Error ? err.message : '重命名失败')
+  } finally {
+    renaming.value = false
+    renameTarget.value = null
   }
 }
 
@@ -512,6 +562,27 @@ async function onSelect(keys: Array<string | number>) {
       @clickoutside="ctxMenuShow = false"
     />
 
+
+    <!-- 重命名弹窗：只提交新名称，后端负责工作区边界与文件名校验 -->
+    <n-modal v-model:show="renameModalVisible" preset="card" title="重命名" style="width: 420px">
+      <n-input
+        v-model:value="renameValue"
+        placeholder="请输入新名称"
+        :disabled="renaming"
+        clearable
+        @keydown.enter.prevent="onRenameConfirm"
+      />
+      <template #footer>
+        <n-space justify="end">
+          <n-button quaternary :disabled="renaming" @click="renameModalVisible = false">
+            取消
+          </n-button>
+          <n-button type="primary" :loading="renaming" @click="onRenameConfirm">
+            确认
+          </n-button>
+        </n-space>
+      </template>
+    </n-modal>
     <!--
       图片预览 anchor：隐藏的 n-image 承载预览源，点击图片文件时程序化调用
       showPreview() 直接进入原生预览（全屏遮罩 + 缩放工具条）。

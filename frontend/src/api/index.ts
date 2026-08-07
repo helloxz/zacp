@@ -27,6 +27,7 @@ import type {
   ConfigOption,
   DirectoryList,
   FileEntry,
+  GitStatus,
   ManageAgent,
   MessagePage,
   VersionInfo,
@@ -95,6 +96,24 @@ export async function fetchFiles(
     { query: { path: path || undefined } },
   )
   return data.entries
+}
+
+/** GET /api/v1/workspaces/:id/git/status — 按需读取当前 workspace 的 Git 状态 */
+export async function fetchGitStatus(workspaceId: number): Promise<GitStatus> {
+  return http.get<GitStatus>(`/api/v1/workspaces/${workspaceId}/git/status`)
+}
+
+/** PATCH /api/v1/workspaces/:id/files/rename — 在原目录内重命名文件或目录 */
+export async function renameFile(
+  workspaceId: number,
+  path: string,
+  name: string,
+): Promise<FileEntry> {
+  const data = await http.patch<{ file: FileEntry }>(
+    `/api/v1/workspaces/${workspaceId}/files/rename`,
+    { body: { path, name } },
+  )
+  return data.file
 }
 
 /** GET /api/v1/workspaces/:id/files/raw?path=... — 文件原始内容 URL（图片预览 / 下载直链） */

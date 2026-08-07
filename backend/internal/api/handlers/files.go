@@ -11,12 +11,17 @@ import (
 	"github.com/helloxz/zacp/internal/service"
 )
 
-// FileHandler 工作区文件浏览 / 上传 / 原始内容读取。
+// FileHandler 工作区文件浏览 / 上传 / 重命名 / 原始内容读取。
 //
 // 所有接口都以 workspace 为安全边界：相对路径由 FileService 统一校验，
 // 保证任何读写都落在 workspace.Path 之内（含 symlink 逃逸防护）。
 type FileHandler struct {
 	svc *service.FileService
+}
+
+type renameFileRequest struct {
+	Path string `json:"path"`
+	Name string `json:"name"`
 }
 
 // NewFileHandler 创建文件处理器。
@@ -41,6 +46,29 @@ func (h *FileHandler) ListFiles(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, result)
+}
+
+// RenameFile PATCH /api/v1/workspaces/:id/files/rename
+//
+// 请求体为 {"path":"src/old.txt","name":"new.txt"}；只允许修改 basename，
+// 不允许借此接口把条目移动到其他目录。
+func (h *FileHandler) RenameFile(c *gin.Context) {
+	id, err := parseWorkspaceID(c)
+	if err != nil {
+		writeError(c, http.StatusBadRequest, "invalid_workspace_id", err.Error())
+		return
+	}
+	var req renameFileRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		writeError(c, http.StatusBadRequest, "invalid_request", err.Error())
+		return
+	}
+	file, err := h.svc.RenameFile(id, req.Path, req.Name)
+	if err != nil {
+		writeFileError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"file": file})
 }
 
 // ListDirectories GET /api/v1/fs/directories?path=<绝对路径>
@@ -149,11 +177,12 @@ func writeError(c *gin.Context, status int, code, message string) {
 	})
 }
 
-// writeFileError 把文件服务错误映射为统一错误结构。
 func writeFileError(c *gin.Context, err error) {
 	switch {
 	case errors.Is(err, service.ErrPathOutsideWorkspace):
 		writeError(c, http.StatusBadRequest, "path_outside_workspace", "路径超出工作区范围")
+	case errors.Is(err, service.ErrCannotRenameRoot):
+		writeError(c, http.StatusBadRequest, "cannot_rename_root", "不能重命名工作区根目录")
 	case errors.Is(err, service.ErrNotDirectory):
 		writeError(c, http.StatusBadRequest, "not_directory", "目标不是目录")
 	case errors.Is(err, service.ErrFileExists):
