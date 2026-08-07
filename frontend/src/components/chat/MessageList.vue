@@ -1,13 +1,16 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { ThemeProvider } from '@incremark/vue'
 import { useSessionStore } from '@/stores/session'
+import { useAppStore } from '@/stores/app'
 import { useChatScroll } from '@/composables/useChatScroll'
 import MessageItem from '@/components/chat/MessageItem.vue'
 import PermissionModal from '@/components/chat/PermissionModal.vue'
 
 const { t } = useI18n()
 const sessionStore = useSessionStore()
+const appStore = useAppStore()
 
 const scroller = ref<HTMLElement | null>(null)
 const {
@@ -58,22 +61,31 @@ watch(
 <template>
   <div ref="scroller" class="relative overflow-y-auto" @scroll="onScroll">
     <div class="content-container flex flex-col gap-4 px-4 py-6">
-      <MessageItem
-        v-for="m in sessionStore.activeMessages"
-        :key="m.id"
-        :message="m"
-      />
-
-      <!-- 实时工具调用卡片已移入 MessageItem 流式占位消息内部（AI 内容上方），
-           与历史工具卡片位置统一，避免 turn 结束后工具条跳动 -->
-
-      <n-text
-        v-if="!sessionStore.activeMessages.length"
-        depth="3"
-        class="self-center py-10 text-sm"
+      <!-- ThemeProvider 把当前主题注入 incremark 渲染上下文：
+           驱动 shiki 代码高亮在 github-light / github-dark 之间切换（CSS 层的
+           data-theme 属性只影响代码块背景/容器色，token 颜色必须靠这个上下文）。
+           只包消息列表（唯一消费方），wrapper 继承原 flex 布局避免间距丢失。 -->
+      <ThemeProvider
+        class="flex w-full min-w-0 flex-col gap-4"
+        :theme="appStore.isDark ? 'dark' : 'default'"
       >
-        {{ t('chat.emptyMessages') }}
-      </n-text>
+        <MessageItem
+          v-for="m in sessionStore.activeMessages"
+          :key="m.id"
+          :message="m"
+        />
+
+        <!-- 实时工具调用卡片已移入 MessageItem 流式占位消息内部（AI 内容上方），
+             与历史工具卡片位置统一，避免 turn 结束后工具条跳动 -->
+
+        <n-text
+          v-if="!sessionStore.activeMessages.length"
+          depth="3"
+          class="self-center py-10 text-sm"
+        >
+          {{ t('chat.emptyMessages') }}
+        </n-text>
+      </ThemeProvider>
     </div>
 
     <!-- 权限请求弹窗（壳层级，挂载在消息列表上即可全局可见） -->
