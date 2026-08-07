@@ -261,6 +261,21 @@ func (c *Client) SubscribeSession(sessionID, agentID string) {
 	}
 }
 
+// RebindSubscription 把本连接对 oldID 的订阅迁移到 newID（ACP 会话恢复/重建后调用）。
+// 若「最近订阅」指针（sessionID）正指向旧 id，也一并更新，避免后续按
+// GetSessionID 的旧语义（如 cancel 兜底）继续用失效 id。
+func (c *Client) RebindSubscription(oldID, newID string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.subscribed[oldID] {
+		delete(c.subscribed, oldID)
+		c.subscribed[newID] = true
+	}
+	if c.sessionID == oldID {
+		c.sessionID = newID
+	}
+}
+
 // IsSubscribed 检查是否订阅了指定会话（广播按会话匹配用）
 func (c *Client) IsSubscribed(sessionID string) bool {
 	c.mu.Lock()

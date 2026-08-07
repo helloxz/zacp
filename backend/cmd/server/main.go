@@ -195,6 +195,11 @@ Examples:
 	// 创建 Service
 	workspaceSvc := service.NewWorkspaceService(workspaceRepo)
 	sessionSvc := service.NewSessionService(workspaceRepo, sessionRepo, messageRepo, mgr, cfg.Session.DefaultCwd)
+	// REST 路径（SendMessage/SetConfigOption）重建 ACP 会话后，同样迁移 WS 订阅
+	//（与 ws bridge 的 prompt 路径一致：前端订阅旧 id 时，重建后的广播不丢失）。
+	sessionSvc.OnSessionRebuilt = func(oldID, newID string) {
+		wsHandler.RebindSession(oldID, newID)
+	}
 	fileSvc := service.NewFileService(workspaceRepo, cfg.Session.DefaultCwd)
 
 	// 创建 Handler

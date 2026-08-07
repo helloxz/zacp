@@ -92,6 +92,29 @@ func (h *Handler) BroadcastToSession(sessionID string, msg ServerMessage) {
 	}
 }
 
+// RebindSession 在 ACP 会话恢复/重建后迁移订阅：旧 session id 失效、
+// 事件广播改走新 id，若订阅不迁移，前端将收不到任何事件（表现为「一直 loading」）。
+// 对被迁移的连接额外发送 session.recovered（带旧/新 id），前端据此更新本地
+// id→DB 会话映射，使后续流式事件能正确路由。
+func (h *Handler) RebindSession(oldID, newID string) {
+	if oldID == "" || newID == "" || oldID == newID {
+		return
+	}
+	h.hub.mu.RLock()
+	defer h.hub.mu.RUnlock()
+
+	for client := range h.hub.clients {
+		if client.IsSubscribed(oldID) {
+			client.RebindSubscription(oldID, newID)
+			client.Send(ServerMessage{
+				Type:         MsgTypeSessionRecovered,
+				OldSessionID: oldID,
+				NewSessionID: newID,
+			})
+		}
+	}
+}
+
 // BroadcastEvent 向指定会话广播事件（携带 sessionId 供前端按会话路由）
 func (h *Handler) BroadcastEvent(sessionID string, event interface{}) {
 	h.BroadcastToSession(sessionID, ServerMessage{

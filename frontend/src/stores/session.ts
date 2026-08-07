@@ -739,6 +739,39 @@ export const useSessionStore = defineStore('session', () => {
           }
           break
         }
+        case 'session.recovered': {
+          // ACP 会话被后端重建（服务端/agent 重启后旧 id 失效；订阅已由后端自动迁移）：
+          // 同步本地 id 映射（旧 ACP id → 新 ACP id），否则后续 event/turn.done 广播
+          // 带新 id，路由时查不到映射被丢弃（表现为一直 loading）。
+          // 无旧 id 映射时说明本端从未索引过该会话，无需处理。
+          const oldId = msg.oldSessionId
+          const newId = msg.newSessionId
+          if (!oldId || !newId) {
+            break
+          }
+          // 依赖旧 id → DB id 映射仍存在（发送 prompt 时 indexAcpSession 建立的）。
+          // 注意这是隐式契约：消息路由对未知 id 直接丢弃，因此任何「清理不再活跃的
+          // 会话映射」的逻辑都不得提前删除旧 id 映射——session.recovered 到达前
+          // 旧 id 的广播（若有）也要靠它路由。
+          const dbId = dbIdByAcpSession.get(oldId)
+          if (dbId === undefined) {
+            break
+          }
+          dbIdByAcpSession.set(newId, dbId)
+          // 同步更新本地缓存的会话对象：cancel 帧与后续 prompt 发送都用最新 acpSessionId
+          //（sentSessions 是发送时快照，不更新的话 cancel 会打到已失效的旧 id）
+          for (const s of sessions.value) {
+            if (s.acpSessionId === oldId) {
+              s.acpSessionId = newId
+            }
+          }
+          for (const [dbSid, s] of sentSessions) {
+            if (s.acpSessionId === oldId) {
+              sentSessions.set(dbSid, { ...s, acpSessionId: newId })
+            }
+          }
+          break
+        }
         case 'turn.done': {
           // 收尾目标：优先按广播 sessionId 路由；解析失败（如执行中 agent 重启、
           // recoverSession 换了新 ACP id，索引尚未更新）时回退「唯一运行中会话」——

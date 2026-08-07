@@ -124,6 +124,11 @@ type SessionService struct {
 	mgr           *manager.Manager
 	// defaultCwd 是 config session.default_cwd；创建会话未指定工作区时的回退路径。
 	defaultCwd string
+
+	// OnSessionRebuilt 可选回调：ACP 会话重建（id 变化）后触发，由组装层注入
+	//（如 ws.Handler.RebindSession），使 REST 路径重建后也能迁移 WS 订阅，
+	// 与 ws bridge 的 prompt 路径行为保持一致（前端订阅旧 id 时广播不丢）。
+	OnSessionRebuilt func(oldID, newID string)
 }
 
 // NewSessionService 创建会话服务
@@ -371,7 +376,20 @@ func (s *SessionService) SendMessage(ctx context.Context, sessionID uint, conten
 	// 发送到 ACP
 	response, err := s.mgr.Prompt(ctx, session.AgentID, session.ACPSessionID, content)
 	if err != nil {
-		return nil, fmt.Errorf("failed to send to agent: %w", err)
+		if manager.IsUnknownSessionErr(err) {
+			// agent 侧会话已失效（后端/agent 重启后 acp_session_id 在 agent 内存中丢失，
+			// 如 omp 的 "Unsupported ACP session"）：自动恢复（优先 session/load 保留
+			// 上下文，失败则重建）后重试一次，用户无感知。与 ws bridge 的 prompt 路径一致。
+			if recErr := s.recoverACPSession(ctx, session); recErr != nil {
+				return nil, fmt.Errorf("session %s lost on agent, recover failed: %w", session.ACPSessionID, recErr)
+			}
+			response, err = s.mgr.Prompt(ctx, session.AgentID, session.ACPSessionID, content)
+			if err != nil {
+				return nil, fmt.Errorf("failed to send to agent: %w", err)
+			}
+		} else {
+			return nil, fmt.Errorf("failed to send to agent: %w", err)
+		}
 	}
 
 	// 将事件序列化为 JSON 字符串
@@ -558,10 +576,18 @@ func (s *SessionService) recoverACPSession(ctx context.Context, session *model.S
 		return err
 	}
 	if rebuilt {
+		oldAcpID := session.ACPSessionID
 		if err := s.sessionRepo.UpdateACPSessionID(session.ID, newID); err != nil {
 			return fmt.Errorf("update acp session id: %w", err)
 		}
 		session.ACPSessionID = newID
+		// REST 路径同样迁移 WS 订阅（若前端正连着旧 id），避免广播丢失。
+		if s.OnSessionRebuilt != nil {
+			s.OnSessionRebuilt(oldAcpID, newID)
+		}
+		// 回放用户配置：重建 = 全新 ACP 会话，agent 侧配置回默认值；
+		// 按 DB 存档逐项 set 回去（尽力而为，与 ws bridge 路径一致，共用一个实现）。
+		s.mgr.ReplaySessionConfigOptions(ctx, session.AgentID, newID, session.ConfigOptions)
 	}
 	return nil
 }

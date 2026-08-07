@@ -524,9 +524,13 @@ func (b *EventBridge) HandleCancel(ctx context.Context, sessionID, agentID strin
 
 // recoverSession 处理 ACP session 失效（服务端/agent 重启后 DB 记录仍在但 agent 端丢失）：
 // 委托 manager.RecoverSession：优先 ACP session/load（agent 支持持久化会话时保留对话上下文），
-// 失败则新建 ACP session；重建时更新 DB 记录，返回最终可用的 ACP session id。
+// 失败则新建 ACP session；重建时更新 DB 记录并迁移 WS 订阅（旧 id → 新 id，
+// 否则广播按新 id 匹配不到订阅者、前端一直 loading），返回最终可用的 ACP session id。
 func (b *EventBridge) recoverSession(ctx context.Context, dbSession *model.Session, agentID, oldAcpID string) (string, bool) {
-	cwd := "."
+	// cwd 为空时传 ""，由 manager.RecoverSession 统一按 provider 默认工作区解析
+	//（与创建会话的路径语义一致，均为绝对路径；传 "." 等相对路径会导致
+	//  omp 等按 cwd 定位会话文件的 agent load 永远失败、每次都走重建）。
+	cwd := ""
 	if dbSession.Workspace.Path != "" {
 		cwd = dbSession.Workspace.Path
 	}
@@ -539,6 +543,15 @@ func (b *EventBridge) recoverSession(ctx context.Context, dbSession *model.Sessi
 		if err := b.sessionRepo.UpdateACPSessionID(dbSession.ID, newID); err != nil {
 			b.log.Error("failed to update acp session id in db", "err", err)
 		}
+		// 订阅迁移必须在重试 prompt 之前完成：HandlePrompt 的重试在 recoverSession
+		// 返回后执行，随后的 turn.started/event/turn.done 广播都走新 id，
+		// 只有迁移后的连接才能收到（另有 session.recovered 消息让前端更新映射）。
+		b.handler.RebindSession(oldAcpID, newID)
+		b.log.Info("rebound ws subscriptions", "old", oldAcpID, "new", newID)
+		// 回放用户配置：重建 = 全新 ACP 会话，agent 侧配置回到默认值。
+		//（load 成功时配置随上下文原样恢复，无需回放；此处兜底 load 失败/
+		//  不支持 load 的 agent，按 DB 存档逐项 set 回去，尽力而为。）
+		b.manager.ReplaySessionConfigOptions(ctx, agentID, newID, dbSession.ConfigOptions)
 	}
 	return newID, true
 }

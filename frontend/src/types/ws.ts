@@ -74,5 +74,10 @@ export type WsServerMessage =
   | { type: 'configOptions'; sessionId?: string; configOptions?: ConfigOption[] }
   | { type: 'slashCommands'; sessionId?: string; slashCommands?: AvailableCommand[] }
   | { type: 'sessionInfo'; sessionId?: string; sessionInfo?: { title?: string } }
+  | {
+      type: 'session.recovered'
+      oldSessionId?: string
+      newSessionId?: string
+    }
   | { type: 'error'; sessionId?: string; code?: string; message?: string }
   | { type: 'pong' }

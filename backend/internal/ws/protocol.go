@@ -19,6 +19,7 @@ const (
 	MsgTypeConfigOptions     MessageType = "configOptions"      // 配置项更新（agent 推送，如切模型后出现思维强度选项）
 	MsgTypeSlashCommands     MessageType = "slashCommands"      // 可用 / 命令更新（agent 经 available_commands_update 推送）
 	MsgTypeSessionInfo       MessageType = "sessionInfo"        // 会话信息更新（agent 经 session_info_update 推送，如 AI 总结标题）
+	MsgTypeSessionRecovered  MessageType = "session.recovered"  // ACP 会话恢复/重建完成：旧 id → 新 id（订阅已自动迁移，前端据此更新 id 映射）
 	MsgTypeError             MessageType = "error"              // 错误通知
 	MsgTypePong              MessageType = "pong"               // 心跳响应
 )
@@ -66,6 +67,11 @@ type ServerMessage struct {
 
 	// sessionInfo 消息字段（agent 经 session_info_update 推送的会话信息，如 { title }）
 	SessionInfo interface{} `json:"sessionInfo,omitempty"`
+
+	// session.recovered 消息字段：ACP 会话恢复/重建完成时的旧/新 session id
+	// （旧 id 的订阅已自动迁移到新 id，前端按旧 id 更新本地映射）
+	OldSessionID string `json:"oldSessionId,omitempty"`
+	NewSessionID string `json:"newSessionId,omitempty"`
 
 	// error 消息字段
 	Code    string `json:"code,omitempty"`

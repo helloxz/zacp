@@ -7,6 +7,7 @@ package manager
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -23,6 +24,7 @@ import (
 	acpclient "github.com/zacp/zacp/internal/acp/client"
 	"github.com/zacp/zacp/internal/acp/providers"
 	"github.com/zacp/zacp/internal/config"
+	"github.com/zacp/zacp/internal/model"
 )
 
 // Manager 管理多个 agent 连接和 session。
@@ -456,8 +458,51 @@ func (m *Manager) SetSessionConfigOptionBoolean(ctx context.Context, agentID, se
 	return conn.SetSessionConfigOptionBoolean(ctx, sessionID, configID, value)
 }
 
+// ReplaySessionConfigOptions 在 ACP 会话重建后回放用户配置（model/mode/thinking 等）。
+// 重建 = 全新 ACP 会话，agent 侧配置回到默认值（omp 等把配置存在 session 文件里，
+// load 成功时随上下文原样恢复，无需回放；此处兜底 load 失败/不支持 load 的 agent）。
+// 按 DB 存档的 ConfigOptionDTO 数组逐个 set：select 型用 currentValue（值 id），
+// boolean 型用布尔值；按存档顺序执行（model 切换可能影响 thinking 等选项的可用性）。
+// 逐项尽力而为：单项失败只打 WARN，不阻断会话继续；回放成功后 agent 会经
+// config_options_update 通告新值，由上层落库，DB 与 agent 自动保持一致。
+// 供 ws bridge 与 REST service 两条恢复路径共用。
+func (m *Manager) ReplaySessionConfigOptions(ctx context.Context, agentID, sessionID, configOptionsJSON string) {
+	if configOptionsJSON == "" {
+		return
+	}
+	var options []model.ConfigOptionDTO
+	if err := json.Unmarshal([]byte(configOptionsJSON), &options); err != nil {
+		m.log.Warn("parse stored config options for replay", "err", err)
+		return
+	}
+	for _, opt := range options {
+		switch opt.Type {
+		case "boolean":
+			v, ok := opt.CurrentValue.(bool)
+			if !ok {
+				continue
+			}
+			if err := m.SetSessionConfigOptionBoolean(ctx, agentID, sessionID, opt.ID, v); err != nil {
+				m.log.Warn("replay config option failed",
+					"agent", agentID, "sessionId", sessionID, "configId", opt.ID, "err", err)
+			}
+		default: // select 型
+			v, ok := opt.CurrentValue.(string)
+			if !ok || v == "" {
+				continue
+			}
+			if err := m.SetSessionConfigOption(ctx, agentID, sessionID, opt.ID, v); err != nil {
+				m.log.Warn("replay config option failed",
+					"agent", agentID, "sessionId", sessionID, "configId", opt.ID, "value", v, "err", err)
+			}
+		}
+	}
+}
+
 // LoadSession 恢复已有 session（用于会话恢复）。
-func (m *Manager) LoadSession(ctx context.Context, agentID, sessionID string) error {
+// cwd 必须与创建该 session 时的工作区一致：agent（如 omp）按 cwd 定位
+// 磁盘会话文件，漏传或传错会 load 失败（见 AgentConnection.LoadSession）。
+func (m *Manager) LoadSession(ctx context.Context, agentID, sessionID, cwd string) error {
 	m.mu.Lock()
 	conn, exists := m.agents[agentID]
 	m.mu.Unlock()
@@ -466,7 +511,7 @@ func (m *Manager) LoadSession(ctx context.Context, agentID, sessionID string) er
 		return fmt.Errorf("agent '%s' not started", agentID)
 	}
 
-	return conn.LoadSession(ctx, acp.SessionId(sessionID))
+	return conn.LoadSession(ctx, acp.SessionId(sessionID), cwd)
 }
 
 // uuidLikeRe 匹配 uuid 或 uuid 的十六进制前缀（如 "019fd945" / "019fd945-ff8c-..."），
@@ -518,33 +563,43 @@ func IsUnknownSessionErr(err error) bool {
 }
 
 // RecoverSession 恢复 agent 侧已失效的 ACP session（unknown session 时调用）：
-//  1. 优先 ACP session/load：agent 支持持久化会话时（reasonix 等），可原样恢复对话上下文
+//  1. 优先 ACP session/load：agent 支持持久化会话时（omp/reasonix 等），可原样恢复对话上下文。
+//     cwd 必须与创建时一致（agent 按 cwd 定位磁盘会话文件），空时回退 provider 默认工作区。
 //  2. 失败则 session/new 重建（上下文丢失，但会话可继续使用）
 //
 // 返回最终可用的 ACP session id，以及是否发生了重建（load 成功时 id 不变、rebuilt=false）。
 // 调用方在 rebuilt=true 时需要把新 id 更新到 DB，并（如适用）重新绑定事件回调。
 func (m *Manager) RecoverSession(ctx context.Context, agentID, oldAcpID, cwd string) (string, bool, error) {
+	// conn 与 provider 在同一临界区取得，避免热更新间隙错配
+	//（旧 conn + 新 provider 的 cwd 语义，见 CreateSession 同款注释）。
 	m.mu.Lock()
 	conn, exists := m.agents[agentID]
+	var provider *providers.Provider
+	if cwd == "" {
+		provider, _ = m.registry.Get(agentID)
+	}
 	m.mu.Unlock()
 	if !exists {
 		return "", false, fmt.Errorf("agent '%s' not started", agentID)
 	}
 
-	if err := conn.LoadSession(ctx, acp.SessionId(oldAcpID)); err == nil {
-		m.log.Info("acp session recovered via load", "agent", agentID, "sessionId", oldAcpID)
+	// 空 cwd 时先解析默认工作区再 load：provider 已在锁内取得
+	//（避免与热更新写 registry 产生 data race）。
+	if provider != nil {
+		cwd = provider.ResolveCwd(m.defaultCwd)
+	}
+
+	if err := conn.LoadSession(ctx, acp.SessionId(oldAcpID), cwd); err == nil {
+		m.log.Info("acp session recovered via load", "agent", agentID, "sessionId", oldAcpID, "cwd", cwd)
 		return oldAcpID, false, nil
+	} else {
+		// load 失败不能静默吞掉：原因不同（cwd 不匹配 / agent 不支持 load /
+		// 磁盘会话文件已清理）修复手段不同，打 WARN 便于诊断。
+		m.log.Warn("acp session load failed, will recreate",
+			"agent", agentID, "sessionId", oldAcpID, "cwd", cwd, "err", err)
 	}
 
 	// load 失败：新建 ACP session（沿用 cwd；空时回退 provider 默认工作区）。
-	// provider 须在锁内取得（避免与热更新写 registry 产生 data race）；
-	// conn 已在上方同锁取得，若此时已被热更新停用，下方 CreateSession 会报错返回。
-	m.mu.Lock()
-	provider, _ := m.registry.Get(agentID)
-	m.mu.Unlock()
-	if cwd == "" && provider != nil {
-		cwd = provider.ResolveCwd(m.defaultCwd)
-	}
 	newID, _, err := conn.CreateSession(ctx, cwd)
 	if err != nil {
 		return "", false, fmt.Errorf("recreate acp session: %w", err)
@@ -863,7 +918,11 @@ func (c *AgentConnection) CreateSession(ctx context.Context, cwd string) (acp.Se
 }
 
 // LoadSession 恢复已有 session。
-func (c *AgentConnection) LoadSession(ctx context.Context, sessionID acp.SessionId) error {
+// cwd 必须与创建该 session 时的工作区一致：agent（如 omp）的 session/load 按
+// cwd 定位磁盘会话文件（cwd 映射到 workspace 目录，session 文件存在其下），
+// 漏传/传错会在「找不到会话」与「工作区不匹配」之间摇摆，导致恢复永远失败、
+// 每次都走重建（丢失上下文与用户配置）。空 cwd 由调用方（RecoverSession）先解析。
+func (c *AgentConnection) LoadSession(ctx context.Context, sessionID acp.SessionId, cwd string) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -876,6 +935,11 @@ func (c *AgentConnection) LoadSession(ctx context.Context, sessionID acp.Session
 
 	_, err := c.conn.LoadSession(ctx, acp.LoadSessionRequest{
 		SessionId: sessionID,
+		Cwd:       cwd,
+		// MCP 服务器列表必须是非 nil 空数组：SDK Validate 要求非 nil，
+		// nil 会序列化为 JSON null，omp 等 agent 内部对 null 调用 .length 直接崩溃
+		//（表现为 load 永远失败、每次都走重建丢上下文）。
+		McpServers: []acp.McpServer{},
 	})
 	if err != nil {
 		return fmt.Errorf("load session: %w", err)
@@ -883,10 +947,11 @@ func (c *AgentConnection) LoadSession(ctx context.Context, sessionID acp.Session
 
 	c.currentSession = &SessionState{
 		ID:      sessionID,
+		Cwd:     cwd,
 		Created: time.Now(),
 	}
 
-	c.log.Info("session loaded", "agent", c.provider.ID, "sessionId", sessionID)
+	c.log.Info("session loaded", "agent", c.provider.ID, "sessionId", sessionID, "cwd", cwd)
 	return nil
 }
 
