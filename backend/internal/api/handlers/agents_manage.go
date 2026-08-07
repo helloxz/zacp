@@ -6,9 +6,9 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/zacp/zacp/internal/acp/manager"
-	"github.com/zacp/zacp/internal/acp/providers"
-	"github.com/zacp/zacp/internal/config"
+	"github.com/helloxz/zacp/internal/acp/manager"
+	"github.com/helloxz/zacp/internal/acp/providers"
+	"github.com/helloxz/zacp/internal/config"
 )
 
 // AgentManageHandler 设置页「智能体」管理接口：

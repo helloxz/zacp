@@ -6,7 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/zacp/zacp/internal/web"
+	"github.com/helloxz/zacp/internal/web"
 )
 
 // EnsureHomeDir 确保 $ZACP_DATA 目录存在，返回绝对路径。

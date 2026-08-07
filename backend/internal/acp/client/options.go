@@ -3,7 +3,7 @@ package client
 import (
 	acp "github.com/coder/acp-go-sdk"
 
-	"github.com/zacp/zacp/internal/model"
+	"github.com/helloxz/zacp/internal/model"
 )
 
 // ToConfigOptionDTOs 将 SDK 的 SessionConfigOption 转为对外 DTO（select/boolean 变体展开）。

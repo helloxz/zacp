@@ -21,10 +21,10 @@ import (
 
 	acp "github.com/coder/acp-go-sdk"
 
-	acpclient "github.com/zacp/zacp/internal/acp/client"
-	"github.com/zacp/zacp/internal/acp/providers"
-	"github.com/zacp/zacp/internal/config"
-	"github.com/zacp/zacp/internal/model"
+	acpclient "github.com/helloxz/zacp/internal/acp/client"
+	"github.com/helloxz/zacp/internal/acp/providers"
+	"github.com/helloxz/zacp/internal/config"
+	"github.com/helloxz/zacp/internal/model"
 )
 
 // Manager 管理多个 agent 连接和 session。

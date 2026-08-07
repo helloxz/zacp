@@ -1,4 +1,4 @@
-module github.com/zacp/zacp
+module github.com/helloxz/zacp
 
 go 1.25.7
 

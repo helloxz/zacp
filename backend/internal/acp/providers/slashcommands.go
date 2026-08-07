@@ -3,7 +3,7 @@ package providers
 import (
 	"strings"
 
-	"github.com/zacp/zacp/internal/model"
+	"github.com/helloxz/zacp/internal/model"
 )
 
 // DefaultSlashCommands 返回按 agent id 内置的静态 / 命令列表。

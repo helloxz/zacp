@@ -13,7 +13,7 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 
-	"github.com/zacp/zacp/internal/model"
+	"github.com/helloxz/zacp/internal/model"
 )
 
 // Store 封装数据库连接和仓储。

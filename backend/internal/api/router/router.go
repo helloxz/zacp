@@ -6,10 +6,10 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/zacp/zacp/internal/api/handlers"
-	"github.com/zacp/zacp/internal/api/middleware"
-	"github.com/zacp/zacp/internal/web"
-	"github.com/zacp/zacp/internal/ws"
+	"github.com/helloxz/zacp/internal/api/handlers"
+	"github.com/helloxz/zacp/internal/api/middleware"
+	"github.com/helloxz/zacp/internal/web"
+	"github.com/helloxz/zacp/internal/ws"
 )
 
 // New 构建 Gin 引擎并注册路由。

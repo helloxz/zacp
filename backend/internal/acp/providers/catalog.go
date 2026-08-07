@@ -6,7 +6,7 @@ import (
 	"runtime"
 	"strings"
 
-	"github.com/zacp/zacp/internal/config"
+	"github.com/helloxz/zacp/internal/config"
 )
 
 // BuiltinAgents 是后端内置的固定智能体目录（用户设置页展示的兜底列表）。

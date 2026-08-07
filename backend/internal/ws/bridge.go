@@ -12,11 +12,11 @@ import (
 
 	acp "github.com/coder/acp-go-sdk"
 
-	"github.com/zacp/zacp/internal/acp/client"
-	"github.com/zacp/zacp/internal/acp/manager"
-	"github.com/zacp/zacp/internal/acp/providers"
-	"github.com/zacp/zacp/internal/model"
-	"github.com/zacp/zacp/internal/store"
+	"github.com/helloxz/zacp/internal/acp/client"
+	"github.com/helloxz/zacp/internal/acp/manager"
+	"github.com/helloxz/zacp/internal/acp/providers"
+	"github.com/helloxz/zacp/internal/model"
+	"github.com/helloxz/zacp/internal/store"
 )
 
 // EventBridge 将 ACP 事件桥接到 WebSocket，并负责 WS prompt 流程的消息落库与权限交互。

@@ -10,8 +10,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/zacp/zacp/internal/model"
-	"github.com/zacp/zacp/internal/store"
+	"github.com/helloxz/zacp/internal/model"
+	"github.com/helloxz/zacp/internal/store"
 )
 
 // ---------------------------------------------------------------------------

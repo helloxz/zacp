@@ -21,7 +21,7 @@ Go SDK：https://github.com/coder/acp-go-sdk（模块路径 `github.com/coder/ac
 
 | 层级 | 技术 | 说明 |
 |------|------|------|
-| 后端 | Go（当前 go.mod 为 1.25.x） | 模块名 `github.com/zacp/zacp` |
+| 后端 | Go（当前 go.mod 为 1.25.x） | 模块名 `github.com/helloxz/zacp` |
 | HTTP | Gin `v1.12.x` | REST API、路由、中间件 |
 | WebSocket | **`github.com/coder/websocket`** | 浏览器会话主通道（流式输出、权限、取消）；实现放在 `internal/ws` |
 | 配置 | **TOML + Viper** | 运行时配置 **`~/.zacp/config.toml`**；库 **`github.com/spf13/viper`**；加载在 `internal/config` |

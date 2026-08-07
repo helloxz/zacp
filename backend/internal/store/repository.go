@@ -5,7 +5,7 @@ import (
 
 	"gorm.io/gorm"
 
-	"github.com/zacp/zacp/internal/model"
+	"github.com/helloxz/zacp/internal/model"
 )
 
 // WorkspaceRepository 工作目录数据访问

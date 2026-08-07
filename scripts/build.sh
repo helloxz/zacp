@@ -33,9 +33,9 @@ VERSION="$(bun -e "console.log(JSON.parse(await Bun.file('frontend/package.json'
 COMMIT="$(git rev-parse --short HEAD 2>/dev/null || echo unknown)"
 BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 LDFLAGS="-s -w \
-  -X github.com/zacp/zacp/internal/version.Version=${VERSION} \
-  -X github.com/zacp/zacp/internal/version.Commit=${COMMIT} \
-  -X github.com/zacp/zacp/internal/version.BuildTime=${BUILD_TIME}"
+  -X github.com/helloxz/zacp/internal/version.Version=${VERSION} \
+  -X github.com/helloxz/zacp/internal/version.Commit=${COMMIT} \
+  -X github.com/helloxz/zacp/internal/version.BuildTime=${BUILD_TIME}"
 echo "==> 版本: v${VERSION} (commit ${COMMIT}, built ${BUILD_TIME})"
 
 # 2. 编译前端

@@ -8,7 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 
-	"github.com/zacp/zacp/internal/config"
+	"github.com/helloxz/zacp/internal/config"
 )
 
 // Provider 封装单个 Agent 的启动配置。

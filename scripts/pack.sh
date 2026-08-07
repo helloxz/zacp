@@ -67,9 +67,9 @@ VERSION="${ZACP_VERSION:-$(grep -m1 '"version":' frontend/package.json | sed -E 
 COMMIT="$(git rev-parse --short HEAD 2>/dev/null || echo unknown)"
 BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 LDFLAGS="-s -w \
-  -X github.com/zacp/zacp/internal/version.Version=${VERSION} \
-  -X github.com/zacp/zacp/internal/version.Commit=${COMMIT} \
-  -X github.com/zacp/zacp/internal/version.BuildTime=${BUILD_TIME}"
+  -X github.com/helloxz/zacp/internal/version.Version=${VERSION} \
+  -X github.com/helloxz/zacp/internal/version.Commit=${COMMIT} \
+  -X github.com/helloxz/zacp/internal/version.BuildTime=${BUILD_TIME}"
 echo "==> 版本: v${VERSION} (commit ${COMMIT}, built ${BUILD_TIME})"
 
 # --- 2. 前端构建 + embed 拷贝（与 build.sh 相同约定） ---

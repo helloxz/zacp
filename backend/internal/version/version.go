@@ -1,7 +1,7 @@
 // Package version 提供构建版本信息。
 //
 // Version / Commit / BuildTime 为编译期注入变量：
-// 构建时通过 `-ldflags "-X github.com/zacp/zacp/internal/version.Version=..."` 覆盖，
+// 构建时通过 `-ldflags "-X github.com/helloxz/zacp/internal/version.Version=..."` 覆盖，
 // 未注入时保持默认值（如本地 `go run` 开发）。
 // 版本号单一来源为 frontend/package.json 的 version 字段（见 scripts/build.sh），
 // 后端 --version、GET /api/v1/version、前端设置页显示的版本均来自此包。

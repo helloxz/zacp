@@ -14,15 +14,15 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/zacp/zacp/internal/acp/manager"
-	"github.com/zacp/zacp/internal/acp/providers"
-	"github.com/zacp/zacp/internal/api/handlers"
-	"github.com/zacp/zacp/internal/api/router"
-	"github.com/zacp/zacp/internal/config"
-	"github.com/zacp/zacp/internal/service"
-	"github.com/zacp/zacp/internal/store"
-	"github.com/zacp/zacp/internal/version"
-	"github.com/zacp/zacp/internal/ws"
+	"github.com/helloxz/zacp/internal/acp/manager"
+	"github.com/helloxz/zacp/internal/acp/providers"
+	"github.com/helloxz/zacp/internal/api/handlers"
+	"github.com/helloxz/zacp/internal/api/router"
+	"github.com/helloxz/zacp/internal/config"
+	"github.com/helloxz/zacp/internal/service"
+	"github.com/helloxz/zacp/internal/store"
+	"github.com/helloxz/zacp/internal/version"
+	"github.com/helloxz/zacp/internal/ws"
 )
 
 func main() {

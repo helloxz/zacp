@@ -7,8 +7,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/zacp/zacp/internal/service"
-	"github.com/zacp/zacp/internal/ws"
+	"github.com/helloxz/zacp/internal/service"
+	"github.com/helloxz/zacp/internal/ws"
 )
 
 // SessionHandler 会话 HTTP 处理器

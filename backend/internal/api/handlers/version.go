@@ -5,7 +5,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/zacp/zacp/internal/version"
+	"github.com/helloxz/zacp/internal/version"
 )
 
 // GetVersion 返回服务端构建版本信息（GET /api/v1/version）。

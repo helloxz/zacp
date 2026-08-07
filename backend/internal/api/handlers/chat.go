@@ -5,7 +5,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/zacp/zacp/internal/acp/manager"
+	"github.com/helloxz/zacp/internal/acp/manager"
 )
 
 // ChatHandler 暴露最小化的 chat HTTP 端点（兼容旧 demo）。
