@@ -17,17 +17,17 @@ const tab = ref('info')
       type="line"
       size="small"
       justify-content="space-evenly"
-      class="shrink-0 px-3 pt-1.5"
+      class="min-h-0 flex-1 px-3 pt-1.5"
     >
-      <n-tab-pane name="info" tab="信息">
+      <n-tab-pane class="min-h-0 flex-1" name="info" tab="信息">
         <SessionInfo />
       </n-tab-pane>
 
-      <n-tab-pane name="files" tab="文件">
+      <n-tab-pane class="min-h-0 flex-1" name="files" tab="文件">
         <FileExplorer />
       </n-tab-pane>
 
-      <n-tab-pane name="git" tab="Git">
+      <n-tab-pane class="min-h-0 flex-1" name="git" tab="Git">
         <div class="flex h-full items-center justify-center">
           <n-empty size="small" description="Git Tab 待开发" />
         </div>
