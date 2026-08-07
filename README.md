@@ -55,7 +55,7 @@ irm https://raw.githubusercontent.com/helloxz/zacp/main/install.ps1 | iex
 curl -fsSL https://raw.githubusercontent.com/helloxz/zacp/main/install.ps1 -o "%TEMP%\zacp-install.ps1" && powershell -ExecutionPolicy Bypass -File "%TEMP%\zacp-install.ps1"
 ```
 
-安装脚本会把 bin 目录加入用户 PATH（新开终端生效），并将最新版本复制为 `zacp.exe`，旧版本保留一份用于回滚。升级请用下面的 [一键更新](#一键更新推荐) 命令，不必重跑安装。
+安装脚本会把 bin 目录加入用户 PATH（`irm ... | iex` 方式安装后**当前终端立即可用**；`-File` 方式运行则新终端生效），并将最新版本复制为 `zacp.exe`，旧版本保留一份用于回滚。升级请用下面的 [一键更新](#一键更新推荐) 命令，不必重跑安装。
 
 > 提示：`irm ... | iex` 会直接执行来自网络的脚本，请确认来源可信；首次启动若弹出 Windows 防火墙提示，允许后即可通过 `http://127.0.0.1:8680/` 访问。
 

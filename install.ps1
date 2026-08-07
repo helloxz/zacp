@@ -22,6 +22,11 @@
 #   - PATH: the bin dir is added to the *user* PATH (HKCU\Environment) via
 #     the registry API with ExpandString (preserves %VAR% entries), not setx
 #     (setx truncates at 1024 chars and can corrupt the PATH).
+#     Registry changes only reach NEW processes, so the script additionally
+#     updates $env:Path of the current PowerShell process (under 'irm | iex'
+#     the script shares the caller's process and zacp works immediately) and
+#     broadcasts WM_SETTINGCHANGE so Explorer re-reads the environment
+#     without requiring a logoff/logon.
 #   - TLS 1.2 is forced up front: PowerShell 5.1 on older Windows defaults
 #     to TLS 1.0, which GitHub rejects.
 #   - Output is English: PS 5.1 consoles default to GBK and Chinese output
@@ -64,6 +69,10 @@ try {
 #     as 'if (in-memory) { return } else { exit }'; under powershell -File /
 #     direct execution a real exit code is returned for CI/callers ---
 $script:isInMemory = [string]::IsNullOrEmpty($PSScriptRoot)
+# Dot-sourcing ('. .\install.ps1') also shares the caller's process, so the
+# PATH update below reaches the current terminal; detected via InvocationName
+# ('.') since $PSScriptRoot is non-empty in that case
+$script:isDotSourced = $MyInvocation.InvocationName -eq '.'
 
 # --- Basic env check: irm (Invoke-RestMethod) needs PS 3.0+ and Expand-Archive
 #     needs 5.0+; Win10/11 ship PS 5.1. Fail early with a clear message otherwise ---
@@ -242,14 +251,13 @@ function Install-Zacp {
 
     # --- PATH: add the bin dir to the user PATH by default (registry
     #     read-modify-write, not setx; case-insensitive dedup) ---
-    $pathAdded = $false
+    $norm = $BinDir.TrimEnd('\')
     if (-not $skipPath) {
       # Read/write the raw (unexpanded) user PATH via the registry: .NET's
       # GetEnvironmentVariable expands %VAR% entries and SetEnvironmentVariable
       # rewrites the value as REG_SZ, which would literalize existing
       # %JAVA_HOME%-style entries. DoNotExpandEnvironmentNames + ExpandString
       # keep the original semantics (case-insensitive dedup).
-      $norm = $BinDir.TrimEnd('\')
       $reg = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Environment', $true)
       if (-not $reg) { throw 'error: cannot open HKCU\Environment for writing' }
       try {
@@ -261,11 +269,48 @@ function Install-Zacp {
         } else {
           $newPath = if ([string]::IsNullOrEmpty($userPath)) { $norm } else { $userPath.TrimEnd(';') + ';' + $norm }
           $reg.SetValue('Path', $newPath, $kind)
-          Write-Host "==> Added to user PATH: $BinDir (new terminals will pick it up)"
-          $pathAdded = $true
+          Write-Host "==> Added to user PATH: $BinDir"
         }
       } finally {
         $reg.Dispose()
+      }
+
+      # --- Make zacp usable in THIS PowerShell session right away: under
+      #     'irm | iex' (or dot-sourcing) the script shares the caller's
+      #     process, so updating $env:Path here means no terminal restart;
+      #     under 'powershell -File' this only affects the short-lived
+      #     child process and vanishes with it, which is harmless ---
+      $currentHasBin = @($env:Path -split ';') | Where-Object { $_ -and $_.TrimEnd('\') -ieq $norm }
+      if (-not $currentHasBin) {
+        $env:Path = $norm + ';' + $env:Path
+      }
+
+      # --- Broadcast WM_SETTINGCHANGE so Explorer (and other top-level
+      #     windows) refresh their environment block: terminals spawned
+      #     shortly afterwards pick up the new PATH (no logoff needed).
+      #     Best-effort only: Add-Type needs a local C# compiler, which a
+      #     few stripped-down systems lack; the registry change is already
+      #     persisted either way. 'Zacp.Native.EnvNotify' guards against
+      #     duplicate Add-Type on re-runs (same-name redefinition throws) ---
+      try {
+        if (-not ('Zacp.Native.EnvNotify' -as [type])) {
+          $envNotifySource = @'
+[DllImport("user32.dll", SetLastError = true, CharSet = CharSet.Auto)]
+public static extern IntPtr SendMessageTimeout(IntPtr hWnd, uint Msg, UIntPtr wParam, string lParam, uint fuFlags, uint uTimeout, out UIntPtr lpdwResult);
+'@
+          Add-Type -Namespace Zacp.Native -Name EnvNotify -MemberDefinition $envNotifySource
+        }
+        # HWND_BROADCAST=0xffff, WM_SETTINGCHANGE=0x1a, SMTO_ABORTIFHUNG=0x0002
+        $result = [UIntPtr]::Zero
+        $ret = [Zacp.Native.EnvNotify]::SendMessageTimeout(
+          [IntPtr]0xffff, 0x1a, [UIntPtr]::Zero, 'Environment', 0x0002, 5000, [ref]$result)
+        if ($ret -eq [IntPtr]::Zero) {
+          # 0 means the broadcast timed out / failed; rare, and the registry
+          # change is already persisted, so just inform the user
+          Write-Host '==> Note: environment-change broadcast failed (new terminals may need a logoff)'
+        }
+      } catch {
+        Write-Host '==> Note: environment-change notification skipped (harmless)'
       }
     }
 
@@ -275,10 +320,18 @@ function Install-Zacp {
     Write-Host 'edit it as needed (e.g. the command under [[agents]]).'
     Write-Host 'To upgrade later, re-run this script (the previous version is kept for rollback).'
     if (-not $skipPath) {
-      if ($pathAdded) {
-        Write-Host 'Start it (in a new terminal) with: zacp'
+      if ($script:isInMemory -or $script:isDotSourced) {
+        # irm | iex / dot-source: the script runs inside the caller's
+        # process, so the $env:Path update above already made zacp work in
+        # THIS terminal
+        Write-Host 'Start it (available in this terminal right away) with: zacp'
       } else {
-        Write-Host 'Start it with: zacp'
+        # powershell -File: the $env:Path update above only affected the
+        # child process; offer a new terminal or a copy-paste one-liner
+        # that activates the current terminal immediately
+        Write-Host 'Start it (in a new terminal) with: zacp'
+        Write-Host 'Or make this terminal work right away, run:'
+        Write-Host "  `$env:Path = `"$norm;`$env:Path`""
       }
     } else {
       Write-Host "Start it with: & `"$entry`""
