@@ -178,8 +178,19 @@ async function onSwitchAgent(agentId: string) {
  */
 async function onSubmit(payload: ComposerSubmitPayload) {
   const text = payload.text.trim()
-  // 本草稿非空闲时不发送（排队中/流式中由停止按钮接管）
-  if (!text || sessionStore.statusOf(draftSession.value?.id) !== 'idle' || !draftSession.value) {
+  // 本草稿非空闲时不发送（排队中/流式中由停止按钮接管）。
+  // 项目切换守卫：切项目时草稿重建有窗口期（旧草稿未释放、新草稿未创建完），
+  // 期间 draftCreating 遮罩不夺焦点，按 Enter 仍会走到这里——若草稿所属项目
+  // 已与当前路由 ?workspaceId 不符，直接拦截，避免把消息发到上一个项目的草稿
+  // （否则会话转正后工作路径错挂在旧项目）。仅当路由显式指定项目时校验，
+  // 无 ?workspaceId（后端回退默认工作区）时不拦截，保持原有行为。
+  if (
+    !text ||
+    sessionStore.statusOf(draftSession.value?.id) !== 'idle' ||
+    !draftSession.value ||
+    (props.workspaceId != null &&
+      draftSession.value.workspaceId !== props.workspaceId)
+  ) {
     return
   }
   const draft = draftSession.value
@@ -217,6 +228,22 @@ watch(
     }
   },
   { immediate: true },
+)
+
+/**
+ * 项目切换（?workspaceId 变化，如侧栏在另一项目下点「新建对话」）：
+ * 同 /new 路由间跳转时组件实例被 Vue Router 复用，草稿不会自动重建——
+ * 若不处理，发送的会话会沿用旧项目草稿，工作路径错挂在上一项目。
+ * 复用 createDraftFor（内部先释放旧草稿 + draftGen 代际号作废在途请求），
+ * 连续快速切换项目也不会串项目。selectedAgentId 为空（agent 列表未就绪）
+ * 时跳过，由上面的 agents watch 在列表到达后用最新 props.workspaceId 兜底创建。
+ */
+watch(
+  () => props.workspaceId,
+  () => {
+    if (!selectedAgentId.value) return
+    void createDraftFor(selectedAgentId.value)
+  },
 )
 
 /** 草稿创建完成（遮罩消失）后重新聚焦输入框：切 tab 后可直接打字 */

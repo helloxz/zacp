@@ -17,6 +17,7 @@ const {
   showBackToBottom,
   onScroll,
   scrollToBottom,
+  snapToBottom,
   followIfAtBottom,
 } = useChatScroll(scroller)
 
@@ -54,6 +55,24 @@ watch(
     }
     pendingSnapToBottom = true
     void nextTick(() => scrollToBottom())
+  },
+)
+
+/**
+ * 发送消息后强制贴底：turn 状态进入 queued 只发生在 sendViaWs 里（用户主动发送），
+ * 此时上翻历史的「暂停跟随」不再适用——发送是明确的「回到最新」意图，
+ * 否则滚动条会停留在上方，用户看不到自己刚发的消息与 AI 开始回复。
+ * 等 nextTick 让新消息渲染完再滚，行为与上方 messageTick 的贴底逻辑一致；
+ * 贴底后 atBottom=true，后续流式 token 追加由 followIfAtBottom 自然持续跟随。
+ * prev !== 'queued' 排除重复触发：排队中再次发送会被 Composer 停用拦截，
+ * 不存在 queued→queued 的连续发送路径，此条件仅作防御。
+ */
+watch(
+  () => sessionStore.statusOf(sessionStore.currentId),
+  (status, prev) => {
+    if (status === 'queued' && prev !== 'queued') {
+      void nextTick(() => snapToBottom())
+    }
   },
 )
 </script>

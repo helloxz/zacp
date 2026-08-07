@@ -34,6 +34,17 @@ export function useChatScroll(scroller: Ref<HTMLElement | null>) {
     el.scrollTo({ top: el.scrollHeight, behavior: smooth ? 'smooth' : 'auto' })
   }
 
+  /**
+   * 无条件贴底并复位跟随状态（发送新消息/切换会话用）。
+   * 与「上翻暂停跟随」策略相反：发送是用户明确的「回到最新」主动意图，
+   * 不延续历史阅读位置；贴底后 atBottom=true，后续流式追加由 followIfAtBottom 自然持续跟随。
+   */
+  function snapToBottom() {
+    atBottom.value = true
+    showBackToBottom.value = false
+    scrollToBottom()
+  }
+
   /** 内容变化后调用：贴底则跟随，否则保持用户位置 */
   function followIfAtBottom() {
     if (atBottom.value) {
@@ -41,5 +52,12 @@ export function useChatScroll(scroller: Ref<HTMLElement | null>) {
     }
   }
 
-  return { atBottom, showBackToBottom, onScroll, scrollToBottom, followIfAtBottom }
+  return {
+    atBottom,
+    showBackToBottom,
+    onScroll,
+    scrollToBottom,
+    snapToBottom,
+    followIfAtBottom,
+  }
 }
