@@ -15,7 +15,8 @@ import (
 // 命令语义仍由 agent 侧解析，zacp 只负责展示与转发。
 //
 // 返回 nil 表示该 agent 无内置命令，保持「仅展示 agent 通告」的现状。
-// 命令列表可按 agent 实际 CLI 语义调整；描述为中文，便于前端直接展示。
+// 命令列表可按 agent 实际 CLI 语义调整；description 使用英文展示，
+// 与前端候选面板的展示语言保持一致。
 func DefaultSlashCommands(agentID string) []model.AvailableCommandDTO {
 	switch strings.ToLower(strings.TrimSpace(agentID)) {
 	case "grok":
@@ -31,6 +32,14 @@ func DefaultSlashCommands(agentID string) []model.AvailableCommandDTO {
 			{Name: "view-plan", Description: "View the current plan"},
 			{Name: "usage", Description: "View usage / quota"},
 		}
+	// case "opencode":
+	// 	return []model.AvailableCommandDTO{
+	// 		{Name: "help", Description: "Show help / available commands"},
+	// 		{Name: "compact", Description: "Compact conversation history"},
+	// 		{Name: "init", Description: "Initialize project (create AGENTS.md)", InputHint: "<optional task>"},
+	// 		{Name: "models", Description: "Switch model", InputHint: "<model name>"},
+	// 		{Name: "thinking", Description: "Toggle / set reasoning effort", InputHint: "<mode>"},
+	// 	}
 	default:
 		return nil
 	}

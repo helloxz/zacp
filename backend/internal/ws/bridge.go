@@ -38,7 +38,8 @@ type EventBridge struct {
 }
 
 // permissionTimeout 前端未响应权限请求的等待上限；超时自动取消，避免阻塞 agent turn。
-const permissionTimeout = 60 * time.Second
+// 5 分钟：给用户足够时间阅读工具调用入参并做安全判断（原 60s 偏短，容易误超时取消）。
+const permissionTimeout = 5 * time.Minute
 
 // NewEventBridge 创建事件桥接器
 func NewEventBridge(handler *Handler, mgr *manager.Manager, sessionRepo *store.SessionRepository, msgRepo *store.MessageRepository, log *slog.Logger) *EventBridge {
