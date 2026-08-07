@@ -49,6 +49,7 @@ export default {
     welcomeSubtitle: '请选择一个 Agent',
     newSessionPathHint: '您将在 {path} 下创建对话',
     loadingAgent: '正在启动智能体…',
+    creatingSession: '正在创建会话…',
     agentNotRunning: '未运行，点击启动',
     loadingSession: '加载会话中…',
     configUpdateFailed: '配置更新失败',

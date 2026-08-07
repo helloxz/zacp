@@ -38,6 +38,17 @@ type Manager struct {
 	mu     sync.Mutex
 	agents map[string]*AgentConnection // agentID -> connection
 
+	// starting 记录进行中的 agent 启动（StartAgent 并发去重与等待）。
+	// 启动中的 agent 不在 agents 里，读者（ListAgents/GetAgentStatus/acquireAgent
+	// 等）语义与「未启动」一致，无需适配。entry 的删除与 done 关闭只由
+	// 发起者（第一个拿到占位的调用）完成；cancelStartingLocked 只取消不删除，
+	// 保证等待者一定能等到结果，不会因 entry 被提前删掉而永久阻塞。
+	starting map[string]*startEntry
+
+	// closed 标记 Close 已调用：回填时若已关闭则回收刚启动的进程、不再写入
+	// agents（防止 Close 清空 map 后发起者把连接写回，泄漏进程）。
+	closed bool
+
 	// promptStartedHook 由外部（EventBridge）注入：agent 连接每次真正开始执行
 	// prompt（排队门闩获取成功）时回调，用于按会话注册事件回调——排队期间
 	// 不注册，执行中会话的回调不会被后到的 prompt 覆盖（见 ws.EventBridge）。
@@ -76,6 +87,7 @@ func New(log *slog.Logger, cfg Config) *Manager {
 		defaultCwd:  cfg.DefaultCwd,
 		idleTimeout: cfg.IdleTimeout,
 		agents:      make(map[string]*AgentConnection),
+		starting:    make(map[string]*startEntry),
 	}
 
 	// 启用空闲回收：后台定时扫描（固定 5 分钟间隔；扫描只依赖 lastUsed
@@ -248,31 +260,62 @@ func (g *promptGate) release() {
 	g.passLockLocked()
 }
 
-// StartAgent 启动指定 agent 进程（如果未启动）。
-func (m *Manager) StartAgent(ctx context.Context, agentID string) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
+// startEntry 记录一次进行中的 agent 启动：并发调用 StartAgent 时，发起者
+//（第一个拿到占位的调用）在锁外执行握手，其余调用者等待 done 关闭后读取
+// err；Close/StopAgent 通过 cancel 提前中止握手。只有发起者会写 err、删
+// entry、close(done)——cancel 只取消握手，不做任何 map 操作。
+type startEntry struct {
+	done   chan struct{}
+	err    error
+	cancel context.CancelFunc
+	// stopped 由 cancelStartingLocked 置位：握手可能恰好在取消生效前完成
+	//（Initialize 已返回），回填时据此回收进程，避免「StopAgent 返回成功但
+	// 进程仍在跑」的竞态。
+	stopped bool
+}
 
+// StartAgent 启动指定 agent 进程（如果未启动）。
+//
+// 并发语义：同一 agent 同时只允许一次真实启动——后到的调用者等待进行中的
+// 启动结果（成功返回 nil，失败返回同一错误），各自的 ctx 可独立超时退出。
+//
+// 关键设计：握手（进程拉起 + ACP Initialize）在 m.mu 之外执行。慢握手不再
+// 独占全局锁，其它 agent 的 GetAgentStatus / CreateSession / ListAgents 等
+// 读者操作不会被阻塞（修复「切到握手挂起的 agent 时全局卡顿」的根因）。
+func (m *Manager) StartAgent(ctx context.Context, agentID string) error {
+	// 第一步（锁内）：查注册、查已启动、占位。锁内路径都很短，不阻塞读者。
+	m.mu.Lock()
 	provider, ok := m.registry.Get(agentID)
 	if !ok {
+		m.mu.Unlock()
 		return fmt.Errorf("agent '%s' not found", agentID)
 	}
-
-	// 检查是否已启动
 	if conn, exists := m.agents[agentID]; exists {
 		conn.mu.Lock()
 		running := conn.started
 		conn.mu.Unlock()
 		if running {
+			m.mu.Unlock()
 			return nil // 已启动
 		}
 	}
-
-	// 创建新连接
+	// 已有启动在进行：锁外等待结果（等待期间绝不持 m.mu）。
+	if entry, exists := m.starting[agentID]; exists {
+		m.mu.Unlock()
+		select {
+		case <-entry.done:
+			return entry.err
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	startCtx, cancel := context.WithCancel(ctx)
+	entry := &startEntry{done: make(chan struct{}), cancel: cancel}
+	m.starting[agentID] = entry
+	// 创建连接并注入「prompt 开始执行」钩子（同旧实现，锁内完成）：排队门闩
+	// 获取成功（真正执行）时才注册该会话的事件回调；排队期间不注册，执行中
+	// 会话的回调不被覆盖。锁内快照 hook，避免热重载期间的竞态。
 	conn := NewAgentConnection(m.log, provider, m.autoApprove)
-	// 注入「prompt 开始执行」钩子：排队门闩获取成功（真正执行）时才注册
-	// 该会话的事件回调；排队期间不注册，执行中会话的回调不被覆盖。
-	// 锁内快照 hook（StartAgent 持 m.mu 写、此处读，避免热重载期间的竞态）。
 	conn.onPromptStarted = func(sessionID string) {
 		m.mu.Lock()
 		fn := m.promptStartedHook
@@ -281,12 +324,55 @@ func (m *Manager) StartAgent(ctx context.Context, agentID string) error {
 			fn(agentID, sessionID)
 		}
 	}
-	if err := conn.Start(ctx); err != nil {
+	m.mu.Unlock()
+
+	// 第二步（锁外）：执行握手。失败时 conn.Start 内部会 kill 子进程防僵尸。
+	err := conn.Start(startCtx)
+	cancel() // 释放 startCtx 资源（幂等；Close/StopAgent 的 cancel 已含在内）
+
+	// 第三步（锁内）：回填结果并唤醒等待者。
+	m.mu.Lock()
+	if m.starting[agentID] == entry {
+		if err != nil {
+			entry.err = fmt.Errorf("start agent '%s': %w", agentID, err)
+		} else if m.closed || entry.stopped {
+			// manager 已关闭，或启动期间被 StopAgent/SetAgentEnabled(false)
+			// 请求停止（握手恰好在取消生效前完成）：回收刚启动的进程，
+			// 不写回 agents，等待者拿到明确错误而非假成功。
+			_ = conn.Close()
+			entry.err = errors.New("agent start cancelled")
+		} else {
+			m.agents[agentID] = conn
+		}
+		delete(m.starting, agentID)
+	} else {
+		// entry 已不在 map（Close 清空过）：本次启动结果无处安放。
+		// 握手成功时回收进程（防泄漏）；无论成败都给等待者明确错误，
+		// 防止其拿到 nil 假成功（Close 必然 cancel，失败是常态路径）。
+		if err == nil {
+			_ = conn.Close()
+		}
+		entry.err = errors.New("manager closed")
+	}
+	// 无论 entry 是否仍属于自己（Close 清空过 map），done 都必须关闭：
+	// 等待者与 Close 的收尾都依赖它，漏关会让等待者永久阻塞。
+	close(entry.done)
+	m.mu.Unlock()
+
+	if err != nil {
 		return fmt.Errorf("start agent '%s': %w", agentID, err)
 	}
+	return entry.err
+}
 
-	m.agents[agentID] = conn
-	return nil
+// cancelStartingLocked 取消指定 agent 进行中的启动（调用方必须已持 m.mu）。
+// 只取消不删除 entry：删除与 close(done) 由发起者负责，等待者才能收到结果。
+// stopped 置位兜底「握手恰好在取消生效前完成」的窗口，见 startEntry 注释。
+func (m *Manager) cancelStartingLocked(agentID string) {
+	if entry, ok := m.starting[agentID]; ok {
+		entry.stopped = true
+		entry.cancel()
+	}
 }
 
 // EnsureStarted 确保 agent 已启动（幂等）：已运行则 no-op，未启动则按需启动。
@@ -311,6 +397,10 @@ func (m *Manager) EnsureStarted(ctx context.Context, agentID string) error {
 func (m *Manager) StopAgent(agentID string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+
+	// 有进行中的启动则取消：握手 ctx 被取消后 conn.Start 快速失败并回收进程；
+	// 发起者随后自行清理 entry，此处不等待（stop 请求应快速返回）。
+	m.cancelStartingLocked(agentID)
 
 	conn, exists := m.agents[agentID]
 	if !exists {
@@ -344,7 +434,8 @@ func (m *Manager) SetAgentEnabled(cfg config.AgentConfig, enabled bool) error {
 		return nil
 	}
 
-	// 停用：先停进程再移除注册
+	// 停用：先取消进行中的启动，再停进程、移除注册（同上：不等待发起者收尾）
+	m.cancelStartingLocked(cfg.ID)
 	if conn, exists := m.agents[cfg.ID]; exists {
 		if err := conn.Close(); err != nil {
 			return fmt.Errorf("stop agent '%s': %w", cfg.ID, err)
@@ -773,6 +864,15 @@ func (m *Manager) Close() error {
 	reaperDone := m.reaperDone
 	m.reaperDone = nil
 
+	// 取消所有进行中的启动并收集 done：cancel 后 conn.Start 快速失败并杀
+	// 子进程；发起者回填需要 m.mu，因此等待必须放在锁外（见下方）。
+	var startingDone []<-chan struct{}
+	for _, entry := range m.starting {
+		entry.cancel()
+		startingDone = append(startingDone, entry.done)
+	}
+	m.closed = true
+
 	var errs []error
 	for id, conn := range m.agents {
 		if err := conn.Close(); err != nil {
@@ -780,11 +880,17 @@ func (m *Manager) Close() error {
 		}
 	}
 	m.agents = make(map[string]*AgentConnection)
+	m.starting = make(map[string]*startEntry)
 	m.mu.Unlock()
 
 	// 锁已释放，此时等待回收器退出不会死锁
 	if reaperDone != nil {
 		<-reaperDone
+	}
+	// 等所有启动 goroutine 收尾：m.closed 使回填分支回收进程而非写回 map，
+	// 保证 Close 返回后无残留连接与子进程（发起者此时已能拿到 m.mu）。
+	for _, done := range startingDone {
+		<-done
 	}
 
 	if len(errs) > 0 {

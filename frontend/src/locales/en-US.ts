@@ -40,6 +40,7 @@ export default {
     welcomeSubtitle: 'Please pick an agent',
     newSessionPathHint: 'The conversation will be created under {path}',
     loadingAgent: 'Starting the agent…',
+    creatingSession: 'Creating session…',
     agentNotRunning: 'Not running, click to start',
     placeholder: 'Message the agent…',
     enterHint: 'Enter to send · Shift+Enter for a new line',

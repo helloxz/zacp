@@ -80,6 +80,11 @@ const selectedAgentName = computed(
   () => agents.value.find((a) => a.agentId === selectedAgentId.value)?.name ?? '',
 )
 
+/** 当前选中 agent 是否已在运行：遮罩据此区分「正在启动」与「正在创建会话」两种文案 */
+const selectedAgentRunning = computed(
+  () => agents.value.find((a) => a.agentId === selectedAgentId.value)?.running ?? false,
+)
+
 /**
  * 为指定 agent 创建隐式草稿会话，并加载其 configOptions。
  * 切 tab 前先释放旧草稿，避免堆积空 ACP session。
@@ -353,7 +358,9 @@ onUnmounted(() => {
           >
             <span class="flex items-center gap-2 text-sm text-ink-muted">
               <span class="inline-block h-4 w-4 animate-spin rounded-full border-2 border-slate-300 border-t-slate-600 dark:border-slate-600 dark:border-t-slate-300"></span>
-              {{ t('chat.loadingAgent') }}{{ selectedAgentName ? ' ' + selectedAgentName : '' }}
+              {{ selectedAgentRunning
+                ? t('chat.creatingSession') + (selectedAgentName ? ' ' + selectedAgentName : '')
+                : t('chat.loadingAgent') + (selectedAgentName ? ' ' + selectedAgentName : '') }}
             </span>
           </div>
           <Composer
