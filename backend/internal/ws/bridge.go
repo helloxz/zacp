@@ -534,7 +534,7 @@ func (b *EventBridge) recoverSession(ctx context.Context, dbSession *model.Sessi
 	if dbSession.Workspace.Path != "" {
 		cwd = dbSession.Workspace.Path
 	}
-	newID, rebuilt, err := b.manager.RecoverSession(ctx, agentID, oldAcpID, cwd)
+	newID, rebuilt, err := b.manager.RecoverSession(ctx, agentID, oldAcpID, cwd, dbSession.ConfigOptions)
 	if err != nil {
 		b.log.Error("failed to recover acp session", "err", err)
 		return "", false

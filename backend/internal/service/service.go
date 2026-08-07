@@ -571,7 +571,7 @@ func (s *SessionService) recoverACPSession(ctx context.Context, session *model.S
 	if cwd == "" {
 		cwd = s.defaultCwd
 	}
-	newID, rebuilt, err := s.mgr.RecoverSession(ctx, session.AgentID, session.ACPSessionID, cwd)
+	newID, rebuilt, err := s.mgr.RecoverSession(ctx, session.AgentID, session.ACPSessionID, cwd, session.ConfigOptions)
 	if err != nil {
 		return err
 	}

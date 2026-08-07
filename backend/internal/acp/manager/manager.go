@@ -475,6 +475,13 @@ func (m *Manager) ReplaySessionConfigOptions(ctx context.Context, agentID, sessi
 		m.log.Warn("parse stored config options for replay", "err", err)
 		return
 	}
+	m.replayOptions(ctx, agentID, sessionID, options)
+}
+
+// replayOptions 逐项 set 配置（select/boolean 分支），尽力而为：单项失败只打 WARN，
+// 不阻断会话继续。ReplaySessionConfigOptions（重建后全量回放）与
+// reconcileAfterLoad（load 后差异回放）共用。
+func (m *Manager) replayOptions(ctx context.Context, agentID, sessionID string, options []model.ConfigOptionDTO) {
 	for _, opt := range options {
 		switch opt.Type {
 		case "boolean":
@@ -497,6 +504,61 @@ func (m *Manager) ReplaySessionConfigOptions(ctx context.Context, agentID, sessi
 			}
 		}
 	}
+}
+
+// reconcileAfterLoad 在 session/load 成功后核对配置：load 恢复的是「会话文件快照」，
+// 若文件是历史重建产物/损坏快照，其配置可能与用户最后选择（DB 存档）不一致
+//（典型：修复前重建的会话，文件里是重建时的默认模型，DB 里是用户选的模型）。
+// 以 DB 存档为权威：逐项比较 currentValue，不一致的才回放（正常会话零操作）；
+// 回放成功后 agent 会把新值写回会话文件（如 omp 的 model_change），一次性自愈。
+func (m *Manager) reconcileAfterLoad(ctx context.Context, agentID, sessionID string, loaded []acp.SessionConfigOption, storedConfigJSON string) {
+	if storedConfigJSON == "" || len(loaded) == 0 {
+		return
+	}
+	var stored []model.ConfigOptionDTO
+	if err := json.Unmarshal([]byte(storedConfigJSON), &stored); err != nil {
+		m.log.Warn("parse stored config options for reconcile", "err", err)
+		return
+	}
+
+	// load 返回的配置 → id → currentValue 映射
+	loadedVals := make(map[string]any, len(loaded))
+	for _, opt := range loaded {
+		switch {
+		case opt.Select != nil:
+			loadedVals[string(opt.Select.Id)] = string(opt.Select.CurrentValue)
+		case opt.Boolean != nil:
+			loadedVals[string(opt.Boolean.Id)] = opt.Boolean.CurrentValue
+		}
+	}
+
+	// 逐项对账：只比 currentValue；agent 当前没有的选项（版本差异）跳过
+	diff := configDiff(loadedVals, stored)
+	if len(diff) == 0 {
+		return
+	}
+
+	m.log.Info("config mismatch after load, replaying stored config",
+		"agent", agentID, "sessionId", sessionID, "count", len(diff))
+	m.replayOptions(ctx, agentID, sessionID, diff)
+}
+
+// configDiff 比较 load 返回的配置（loadedVals：id → currentValue）与 DB 存档
+//（stored：用户最后选择的配置，权威），返回 currentValue 不一致、需要回放的项。
+// agent 当前没有的选项（版本差异）跳过；一致项不返回。
+func configDiff(loadedVals map[string]any, stored []model.ConfigOptionDTO) []model.ConfigOptionDTO {
+	var diff []model.ConfigOptionDTO
+	for _, opt := range stored {
+		lv, ok := loadedVals[opt.ID]
+		if !ok {
+			continue
+		}
+		if fmt.Sprintf("%v", lv) == fmt.Sprintf("%v", opt.CurrentValue) {
+			continue
+		}
+		diff = append(diff, opt)
+	}
+	return diff
 }
 
 // LoadSession 恢复已有 session（用于会话恢复）。
@@ -569,7 +631,9 @@ func IsUnknownSessionErr(err error) bool {
 //
 // 返回最终可用的 ACP session id，以及是否发生了重建（load 成功时 id 不变、rebuilt=false）。
 // 调用方在 rebuilt=true 时需要把新 id 更新到 DB，并（如适用）重新绑定事件回调。
-func (m *Manager) RecoverSession(ctx context.Context, agentID, oldAcpID, cwd string) (string, bool, error) {
+// storedConfigJSON 是 DB 里该会话的 config_options 存档（用户最后选择的配置，权威），
+// load 成功后据其对账（见 reconcileAfterLoad），修复「文件快照与用户选择不一致」的历史错位。
+func (m *Manager) RecoverSession(ctx context.Context, agentID, oldAcpID, cwd, storedConfigJSON string) (string, bool, error) {
 	// conn 与 provider 在同一临界区取得，避免热更新间隙错配
 	//（旧 conn + 新 provider 的 cwd 语义，见 CreateSession 同款注释）。
 	m.mu.Lock()
@@ -591,6 +655,11 @@ func (m *Manager) RecoverSession(ctx context.Context, agentID, oldAcpID, cwd str
 
 	if err := conn.LoadSession(ctx, acp.SessionId(oldAcpID), cwd); err == nil {
 		m.log.Info("acp session recovered via load", "agent", agentID, "sessionId", oldAcpID, "cwd", cwd)
+		// load 恢复的是会话文件快照；若文件是历史重建产物/损坏快照，其配置可能与
+		// 用户最后选择（DB 存档）不一致（如会话 276 修复前重建后文件里是 gpt-5.5
+		// 而 DB 是 Luna）。以 DB 为权威对账，差异项回放（omp 会把新值写回文件，
+		// 一次性自愈；正常会话对账一致，零操作）。
+		m.reconcileAfterLoad(ctx, agentID, oldAcpID, conn.LoadedConfigOptions(), storedConfigJSON)
 		return oldAcpID, false, nil
 	} else {
 		// load 失败不能静默吞掉：原因不同（cwd 不匹配 / agent 不支持 load /
@@ -772,6 +841,9 @@ type SessionState struct {
 	ID      acp.SessionId
 	Cwd     string
 	Created time.Time
+	// ConfigOptions 是最近一次 session/load 返回的配置快照，供 load 后对账
+	//（见 reconcileAfterLoad：文件快照可能与 DB 存档不一致）。
+	ConfigOptions []acp.SessionConfigOption
 }
 
 // NewAgentConnection 创建 agent 连接（不启动进程）。
@@ -933,7 +1005,7 @@ func (c *AgentConnection) LoadSession(ctx context.Context, sessionID acp.Session
 	// 会话恢复属于活跃操作：先刷新空闲计时再开始耗时操作
 	c.lastUsed = time.Now()
 
-	_, err := c.conn.LoadSession(ctx, acp.LoadSessionRequest{
+	res, err := c.conn.LoadSession(ctx, acp.LoadSessionRequest{
 		SessionId: sessionID,
 		Cwd:       cwd,
 		// MCP 服务器列表必须是非 nil 空数组：SDK Validate 要求非 nil，
@@ -946,13 +1018,24 @@ func (c *AgentConnection) LoadSession(ctx context.Context, sessionID acp.Session
 	}
 
 	c.currentSession = &SessionState{
-		ID:      sessionID,
-		Cwd:     cwd,
-		Created: time.Now(),
+		ID:            sessionID,
+		Cwd:           cwd,
+		Created:       time.Now(),
+		ConfigOptions: res.ConfigOptions,
 	}
 
 	c.log.Info("session loaded", "agent", c.provider.ID, "sessionId", sessionID, "cwd", cwd)
 	return nil
+}
+
+// LoadedConfigOptions 返回最近一次 session/load 恢复的配置快照（锁内读，供对账）。
+func (c *AgentConnection) LoadedConfigOptions() []acp.SessionConfigOption {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.currentSession == nil {
+		return nil
+	}
+	return c.currentSession.ConfigOptions
 }
 
 // PromptResult prompt 执行结果。
