@@ -28,8 +28,9 @@ function isCompleted(step: PlanStep): boolean {
 
 <template>
   <div class="overflow-hidden rounded-lg border border-divider bg-surface-raised shadow-sm">
-    <!-- 标题行：执行计划（TODO 列表） -->
-    <div class="flex items-center gap-2 border-b border-divider-subtle px-3 py-2">
+    <!-- 标题行：执行计划（TODO 列表）；sticky 吸顶固定，任务列表滚动时不随内容滚出视野
+         （背景 surface-raised 不透明，可遮住滚动上来的条目；z-10 保证在条目之上） -->
+    <div class="sticky top-0 z-10 flex items-center gap-2 border-b border-divider-subtle bg-surface-raised px-3 py-2">
       <n-icon class="shrink-0 text-ink-muted"><ListOutline /></n-icon>
       <span class="text-sm font-medium text-ink-secondary">{{ t('plan.title') }}</span>
     </div>
@@ -50,8 +51,9 @@ function isCompleted(step: PlanStep): boolean {
           </n-icon>
         </span>
         <span
-          class="min-w-0 flex-1 leading-relaxed text-ink-secondary"
+          class="min-w-0 flex-1 truncate leading-relaxed text-ink-secondary"
           :class="{ 'text-ink-muted line-through': isCompleted(step) }"
+          :title="step.content"
         >{{ step.content }}</span>
         <span
           v-if="step.status === 'in_progress'"
