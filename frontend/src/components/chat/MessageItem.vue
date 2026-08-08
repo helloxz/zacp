@@ -2,7 +2,7 @@
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { IncremarkContent } from '@incremark/vue'
-import type { ChatMessage } from '@/types/models'
+import type { ChatMessage, ToolDetailsMap } from '@/types/models'
 import type { Plan, WsEvent } from '@/types/ws'
 import type { ToolCard } from '@/stores/session'
 import { useSessionStore } from '@/stores/session'
@@ -89,6 +89,15 @@ const blocks = computed<MessageBlock[]>(() => {
   }
   try {
     const events = JSON.parse(props.message.events) as WsEvent[]
+    // 工具详情快照（v6 起与 events 拆分存储）：解析失败则回退 events 内嵌值
+    let toolDetails: ToolDetailsMap | undefined
+    if (props.message.toolDetails) {
+      try {
+        toolDetails = JSON.parse(props.message.toolDetails) as ToolDetailsMap
+      } catch {
+        toolDetails = undefined
+      }
+    }
     const result: MessageBlock[] = []
     let textBuf = ''
     let cumulativeLen = 0
@@ -110,13 +119,21 @@ const blocks = computed<MessageBlock[]>(() => {
         // 思维/推理：由 reasoning 区块单独渲染，不混入 blocks
       } else if (e.type === 'tool_call' || e.type === 'tool_call_update') {
         if (!e.toolId) continue
+        // 历史详情快照优先（每工具最终一份）；events 内嵌值为旧数据回退
+        const detail = toolDetails?.[e.toolId]
         const existing = toolIndex.get(e.toolId)
         if (existing) {
           // 合并语义：update 未携带的字段保留前值
           if (e.title) existing.card.title = e.title
           if (e.status) existing.card.status = e.status
-          if (e.input != null) existing.card.input = e.input
-          if (e.output != null) existing.card.output = e.output
+          if (detail) {
+            // 快照缺字段时保留前值（防御：拆分语义变化时不会静默清空已有详情）
+            existing.card.input = detail.input ?? existing.card.input
+            existing.card.output = detail.output ?? existing.card.output
+          } else {
+            if (e.input != null) existing.card.input = e.input
+            if (e.output != null) existing.card.output = e.output
+          }
         } else {
           flushText()
           const block: { kind: 'tool'; card: ToolCard; contentSplit: number } = {
@@ -125,8 +142,8 @@ const blocks = computed<MessageBlock[]>(() => {
               toolId: e.toolId,
               title: e.title,
               status: e.status ?? 'running',
-              input: e.input,
-              output: e.output,
+              input: detail?.input ?? e.input,
+              output: detail?.output ?? e.output,
             },
             contentSplit: cumulativeLen,
           }

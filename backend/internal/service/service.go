@@ -16,6 +16,7 @@ import (
 	"github.com/helloxz/zacp/internal/acp/providers"
 	"github.com/helloxz/zacp/internal/model"
 	"github.com/helloxz/zacp/internal/store"
+	"github.com/helloxz/zacp/pkg/eventstore"
 	"gorm.io/gorm"
 )
 
@@ -77,7 +78,7 @@ func (s *WorkspaceService) CreateWorkspace(path string) (*model.Workspace, error
 	}
 
 	workspace := &model.Workspace{
-		Path:     absPath,
+		Path: absPath,
 		// 未显式提供 name 时，默认取路径末尾段作为显示名（如 /data/apps/51job → 51job），
 		// 侧栏只展示项目名而非完整路径（见设计文档「项目列表展示」）。
 		Name:     defaultWorkspaceName(absPath),
@@ -392,20 +393,17 @@ func (s *SessionService) SendMessage(ctx context.Context, sessionID uint, conten
 		}
 	}
 
-	// 将事件序列化为 JSON 字符串
-	eventsJSON := ""
-	if len(response.Events) > 0 {
-		data, _ := json.Marshal(response.Events)
-		eventsJSON = string(data)
-	}
+	// 拆分落库：events 剥离工具详情（瘦身），详情存 tool_details（见 pkg/eventstore）
+	slimEvents, toolDetails := eventstore.SplitToolDetails(response.Events)
 
 	// 保存助手回复
 	assistantMsg := &model.Message{
-		SessionID: sessionID,
-		Role:      "assistant",
-		Content:   response.Reply,
-		Events:    eventsJSON,
-		CreatedAt: time.Now(),
+		SessionID:   sessionID,
+		Role:        "assistant",
+		Content:     response.Reply,
+		Events:      eventstore.Marshal(slimEvents),
+		ToolDetails: eventstore.MarshalDetails(toolDetails),
+		CreatedAt:   time.Now(),
 	}
 	if err := s.msgRepo.Create(assistantMsg); err != nil {
 		return nil, fmt.Errorf("failed to save assistant message: %w", err)

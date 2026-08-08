@@ -486,7 +486,8 @@ ws://localhost:8680/api/v1/ws
 | sessionId | uint | 所属会话 ID |
 | role | string | user / assistant / system |
 | content | string | 消息文本内容 |
-| events | string | 完整事件 JSON（工具调用等） |
+| events | string | 事件时间线 JSON（工具调用等）。**v6 起剥离工具入参/出参**：工具卡详情改由 `toolDetails` 提供；旧的未迁移数据（新前端 + 旧后端组合）仍可从 events 内嵌 input/output 回退 |
+| toolDetails | string | 工具详情 JSON（`toolId → {input, output}`，每工具最终一份）。**v6 新增**：历史消息列表瘦身 ~90% 的来源；为空表示该消息无工具调用（或未迁移，前端回退 events） |
 | createdAt | time | 创建时间 |
 
 ---

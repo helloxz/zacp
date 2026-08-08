@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
-	"reflect"
 	"strings"
 	"sync"
 	"time"
@@ -17,6 +16,7 @@ import (
 	"github.com/helloxz/zacp/internal/acp/providers"
 	"github.com/helloxz/zacp/internal/model"
 	"github.com/helloxz/zacp/internal/store"
+	"github.com/helloxz/zacp/pkg/eventstore"
 )
 
 // EventBridge 将 ACP 事件桥接到 WebSocket，并负责 WS prompt 流程的消息落库与权限交互。
@@ -280,23 +280,6 @@ func (b *EventBridge) applySessionInfo(dbSession *model.Session, title string) {
 	b.log.Info("session title updated by agent", "sessionID", sessionID, "title", title)
 }
 
-// isNilOrEmpty 严格判空：interface 为 nil、nil 指针/切片/map/channel/func、空字符串
-// 都视为「无值」。SDK 的 RawInput/RawOutput 可能是类型化 nil（如 json.RawMessage），
-// 直接 `!= nil` 判不准确，会把 nil 广播成 "input":null，前端据此覆盖掉已有人参。
-func isNilOrEmpty(v any) bool {
-	if v == nil {
-		return true
-	}
-	rv := reflect.ValueOf(v)
-	switch rv.Kind() {
-	case reflect.Ptr, reflect.Interface, reflect.Slice, reflect.Map, reflect.Chan, reflect.Func:
-		return rv.IsNil()
-	case reflect.String:
-		return rv.Len() == 0
-	}
-	return false
-}
-
 // handleEvent 处理 ACP 事件并广播到 WebSocket
 func (b *EventBridge) handleEvent(sessionID string, event client.Event) {
 	// 将 ACP 事件转换为 WebSocket 事件
@@ -307,11 +290,11 @@ func (b *EventBridge) handleEvent(sessionID string, event client.Event) {
 		"status": event.Status,
 		"toolId": event.ToolID,
 	}
-	// 工具调用入参/出参：严格判空后省略字段，避免广播冗余的 null
-	if !isNilOrEmpty(event.Input) {
+	// 工具调用入参/出参：严格判空后省略字段，避免广播冗余的 null（判空逻辑在 pkg/eventstore，落库拆分共用）
+	if !eventstore.IsEmpty(event.Input) {
 		wsEvent["input"] = event.Input
 	}
-	if !isNilOrEmpty(event.Output) {
+	if !eventstore.IsEmpty(event.Output) {
 		wsEvent["output"] = event.Output
 	}
 	// 执行计划（TODO 列表）：整体替换语义，随事件原样透传；nil 时省略
@@ -405,18 +388,6 @@ func deriveTitle(message string) string {
 	return string(r[:24]) + "…"
 }
 
-// marshalEvents 将事件列表序列化为 JSON 字符串（对齐 REST SendMessage 的 events 字段语义）
-func marshalEvents(events []client.Event) string {
-	if len(events) == 0 {
-		return ""
-	}
-	data, err := json.Marshal(events)
-	if err != nil {
-		return ""
-	}
-	return string(data)
-}
-
 // HandlePrompt 处理 WebSocket 的 prompt 消息（每帧一个 goroutine，可并发进入）。
 // 并发语义（方案 B「展示并发、执行串行」）：
 //  1. 同 agent 的 prompt 由 manager.promptGate 串行执行，后续 prompt 进入 FIFO 排队；
@@ -494,13 +465,16 @@ func (b *EventBridge) HandlePrompt(ctx context.Context, sessionID, agentID, mess
 		return err
 	}
 
-	// 落库助手回复
+	// 落库助手回复：events 拆分为「瘦身事件 + 工具详情」两列落库，
+	// 避免 tool_call_update 的重复全量快照撑大历史消息（见 pkg/eventstore）
+	slimEvents, toolDetails := eventstore.SplitToolDetails(result.Events)
 	assistantMsg := &model.Message{
-		SessionID: dbSession.ID,
-		Role:      "assistant",
-		Content:   result.Reply,
-		Events:    marshalEvents(result.Events),
-		CreatedAt: time.Now(),
+		SessionID:   dbSession.ID,
+		Role:        "assistant",
+		Content:     result.Reply,
+		Events:      eventstore.Marshal(slimEvents),
+		ToolDetails: eventstore.MarshalDetails(toolDetails),
+		CreatedAt:   time.Now(),
 	}
 	if err := b.msgRepo.Create(assistantMsg); err != nil {
 		return fmt.Errorf("failed to save assistant message: %w", err)

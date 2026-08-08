@@ -136,6 +136,14 @@ export interface ChatSession {
 /** 消息角色（后端 model.Message.Role） */
 export type MessageRole = 'user' | 'assistant' | 'system'
 
+/** 工具详情映射（messages.toolDetails JSON 解析后；toolId → 最终入参/出参，自后端 v6 起提供） */
+export interface ToolDetailsMap {
+  [toolId: string]: {
+    input?: unknown
+    output?: unknown
+  }
+}
+
 /** 消息（GET /api/v1/sessions/:id/messages → `{ messages, total, limit, offset }`） */
 export interface ChatMessage {
   id: number
@@ -146,6 +154,9 @@ export interface ChatMessage {
   reasoning?: string
   /** 完整事件 JSON（工具调用等），P0-P1 未消费，P3 渲染工具卡片用 */
   events?: string
+  /** 工具详情 JSON（toolId → {input, output}，每工具最终一份）；与 events 互补：
+   *  v6 起 events 已剥离 input/output，展开工具卡详情优先读本字段，缺失时回退 events 内嵌值 */
+  toolDetails?: string
 
   createdAt: string
 }

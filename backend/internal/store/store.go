@@ -156,6 +156,11 @@ func runMigrations(db *gorm.DB) error {
 			Name:    "session_available_commands",
 			Func:    migrateV5,
 		},
+		{
+			Version: 6,
+			Name:    "messages_tool_details",
+			Func:    migrateV6,
+		},
 	}
 
 	// 执行未应用的迁移
