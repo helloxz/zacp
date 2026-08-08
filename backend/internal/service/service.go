@@ -426,6 +426,12 @@ func (s *SessionService) GetMessages(sessionID uint, limit, offset int) ([]model
 	return s.msgRepo.ListBySessionPaginated(sessionID, limit, offset)
 }
 
+// GetMessagesAfter 获取指定消息 ID 之后新增的消息。
+// 用于 turn.done 后的增量同步：服务端已落库本轮消息时，前端无需重新拉取整段历史。
+func (s *SessionService) GetMessagesAfter(sessionID, afterID uint) ([]model.Message, error) {
+	return s.msgRepo.ListBySessionAfterID(sessionID, afterID)
+}
+
 // CountMessages 统计消息数量
 func (s *SessionService) CountMessages(sessionID uint) (int64, error) {
 	return s.msgRepo.CountBySession(sessionID)

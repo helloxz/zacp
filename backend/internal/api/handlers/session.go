@@ -362,7 +362,29 @@ func (h *SessionHandler) GetMessages(c *gin.Context) {
 		})
 		return
 	}
+	if rawAfterID := c.Query("afterId"); rawAfterID != "" {
+		afterID, parseErr := strconv.ParseUint(rawAfterID, 10, 32)
+		if parseErr != nil {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"error": gin.H{"code": "invalid_after_id", "message": "invalid afterId"},
+			})
+			return
+		}
 
+		messages, queryErr := h.svc.GetMessagesAfter(uint(id), uint(afterID))
+		if queryErr != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"error": gin.H{"code": "get_message_updates_failed", "message": queryErr.Error()},
+			})
+			return
+		}
+
+		c.JSON(http.StatusOK, gin.H{
+			"messages": messages,
+			"afterId":  afterID,
+		})
+		return
+	}
 	// 分页参数
 	limit := 50
 	offset := 0

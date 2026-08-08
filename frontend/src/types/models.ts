@@ -169,6 +169,12 @@ export interface MessagePage {
   offset: number
 }
 
+/** 增量消息响应（afterId 模式；仅包含指定消息之后新增的记录） */
+export interface MessageUpdates {
+  messages: ChatMessage[]
+  afterId: number
+}
+
 /** 会话配置项可选值（下拉项，对齐后端 model.ConfigOptionValueDTO） */
 export interface ConfigOptionValue {
   value: string

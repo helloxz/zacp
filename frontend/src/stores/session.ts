@@ -8,6 +8,7 @@ import {
   renameSession as apiRenameSession,
   removeWorkspace as apiRemoveWorkspace,
   fetchConfigOptions,
+  fetchMessageUpdates,
   fetchMessages,
   fetchRecentSessions,
   fetchSlashCommands,
@@ -308,7 +309,7 @@ export const useSessionStore = defineStore('session', () => {
 
   /**
    * 加载某会话消息历史。
-   * force=true 时无视缓存强制拉取（turn.done 后刷新为 DB 版本，替换本地临时消息）。
+   * force=true 时无视缓存强制拉取完整历史，仅供显式重载场景使用。
    */
   async function loadMessages(sessionId: number, force = false) {
     if (!force && messagesById.value[sessionId] !== undefined) {
@@ -316,6 +317,40 @@ export const useSessionStore = defineStore('session', () => {
     }
     const page = await fetchMessages(sessionId, 100, 0)
     messagesById.value[sessionId] = page.messages
+  }
+
+  /** 返回当前缓存中最大的数据库消息 ID；临时乐观消息使用负数 ID，会被忽略。 */
+  function latestPersistedMessageId(sessionId: number): number {
+    let latest = 0
+    for (const message of messagesById.value[sessionId] ?? []) {
+      if (message.id > latest) {
+        latest = message.id
+      }
+    }
+    return latest
+  }
+
+  /**
+   * 拉取指定 ID 之后新增的消息并合并到缓存。
+   * 服务端至少会返回本轮已落库的 user 消息；拿到增量后再移除本地负数占位，
+   * 避免请求失败时先删除用户可见内容。正数 ID 通过 Map 去重，重试不会重复渲染。
+   */
+  async function loadMessageUpdates(sessionId: number, afterId: number) {
+    const page = await fetchMessageUpdates(sessionId, afterId)
+    if (page.messages.length === 0) {
+      return
+    }
+
+    const merged = new Map<number, ChatMessage>()
+    for (const message of messagesById.value[sessionId] ?? []) {
+      if (message.id > 0) {
+        merged.set(message.id, message)
+      }
+    }
+    for (const message of page.messages) {
+      merged.set(message.id, message)
+    }
+    messagesById.value[sessionId] = [...merged.values()]
   }
 
   /**
@@ -622,16 +657,17 @@ export const useSessionStore = defineStore('session', () => {
     runningSessionIds.value.delete(sessionId)
   }
 
-  /** turn.done 收尾：结束流式状态，随后强制刷新为 DB 版本（覆盖本地临时消息） */
+  /** turn 收尾：结束流式状态，随后只同步本轮新增的数据库消息 */
   async function finalizeStream(sessionId: number) {
     endStreamTurn(sessionId)
     void refreshAfterTurn(sessionId)
   }
 
-  /** 流式结束后的数据对齐：强制拉 DB 版本（服务端已落库 user + assistant）+ 刷新配置项 */
+  /** 流式结束后的数据对齐：只拉取本轮之后新增的消息，再刷新会话视图元数据。 */
   async function refreshAfterTurn(sessionId: number) {
+    const afterId = latestPersistedMessageId(sessionId)
     try {
-      await loadMessages(sessionId, true)
+      await loadMessageUpdates(sessionId, afterId)
       // agent 可能在 turn 中经 update 通知更新配置项，刷新以同步最新 currentValue
       await loadConfigOptions(sessionId)
       // 同样刷新 / 命令：agent 可能在 turn 中通告新命令（如 init 后出现新命令）

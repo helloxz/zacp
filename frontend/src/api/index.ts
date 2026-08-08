@@ -31,6 +31,7 @@ import type {
   GitStatus,
   ManageAgent,
   MessagePage,
+  MessageUpdates,
   VersionInfo,
   Workspace,
 } from '@/types/models'
@@ -308,6 +309,17 @@ export async function fetchMessages(
   return http.get<MessagePage>(
     `/api/v1/sessions/${sessionId}/messages`,
     { query: { limit, offset } },
+  )
+}
+
+/** GET /api/v1/sessions/:id/messages?afterId=N — 获取指定消息之后新增的消息 */
+export async function fetchMessageUpdates(
+  sessionId: number,
+  afterId: number,
+): Promise<MessageUpdates> {
+  return http.get<MessageUpdates>(
+    `/api/v1/sessions/${sessionId}/messages`,
+    { query: { afterId } },
   )
 }
 

@@ -283,6 +283,17 @@ func (r *MessageRepository) ListBySessionPaginated(sessionID uint, limit, offset
 	return messages, err
 }
 
+// ListBySessionAfterID 列出指定消息 ID 之后新增的消息。
+// ID 是 messages 表的自增主键，用于 turn 完成后的增量同步；只读取新行，
+// 不重新扫描会话已有历史，返回顺序与消息创建顺序一致。
+func (r *MessageRepository) ListBySessionAfterID(sessionID, afterID uint) ([]model.Message, error) {
+	var messages []model.Message
+	err := r.db.Where("session_id = ? AND id > ?", sessionID, afterID).
+		Order("id ASC").
+		Find(&messages).Error
+	return messages, err
+}
+
 // CountBySession 统计会话消息数量
 func (r *MessageRepository) CountBySession(sessionID uint) (int64, error) {
 	var count int64

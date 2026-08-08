@@ -242,6 +242,30 @@ GET /sessions/:id/messages?limit=50&offset=0
 **查询参数**:
 - `limit`: 每页数量，默认 50
 - `offset`: 偏移量，默认 0
+- `afterId`: 可选；传入时仅返回 `id > afterId` 的新增消息，不执行全量分页统计。
+
+增量同步示例：
+
+```
+GET /sessions/:id/messages?afterId=556
+```
+
+响应：
+
+```json
+{
+  "messages": [
+    {
+      "id": 557,
+      "sessionId": 1,
+      "role": "user",
+      "content": "新增消息",
+      "createdAt": "2025-01-21T10:40:00Z"
+    }
+  ],
+  "afterId": 556
+}
+```
 
 **响应**:
 ```json
