@@ -30,6 +30,7 @@ import type { FileEntry } from '@/types/models'
 import { useSessionStore } from '@/stores/session'
 import { useAppStore } from '@/stores/app'
 import { copyText } from '@/utils/clipboard'
+import FileEditorDrawer from '@/components/files/FileEditorDrawer.vue'
 
 /** 文件树节点：key 用相对路径（后端约定 `/` 分隔），raw 存原始条目 */
 interface FileTreeNode extends TreeOption {
@@ -93,10 +94,17 @@ const ctxMenuShow = ref(false)
 const ctxMenuX = ref(0)
 const ctxMenuY = ref(0)
 const ctxMenuEntry = ref<FileEntry | null>(null)
-const ctxOptions: DropdownOption[] = [
-  { key: 'rename', label: '重命名' },
-  { key: 'copy-name', label: '复制名称' },
-]
+/** 右键菜单：文件多一个「编辑」项（目录不可编辑） */
+const ctxOptions = computed<DropdownOption[]>(() => {
+  const options: DropdownOption[] = [
+    { key: 'rename', label: '重命名' },
+    { key: 'copy-name', label: '复制名称' },
+  ]
+  if (ctxMenuEntry.value && !ctxMenuEntry.value.isDir) {
+    options.unshift({ key: 'edit', label: '编辑' })
+  }
+  return options
+})
 const renameModalVisible = ref(false)
 const renameValue = ref('')
 const renaming = ref(false)
@@ -120,6 +128,11 @@ async function onCtxSelect(key: string | number) {
   const entry = ctxMenuEntry.value
   if (!entry) return
 
+  // 右键【编辑】：与双击行为一致，打开文本编辑器
+  if (key === 'edit') {
+    await openEditor(entry)
+    return
+  }
   if (key === 'rename') {
     renameTarget.value = { workspaceId: workspaceId.value, entry }
     renameValue.value = entry.name
@@ -134,6 +147,29 @@ async function onCtxSelect(key: string | number) {
   } else {
     message.error('复制失败，请手动复制名称')
   }
+}
+
+// ---------------------------------------------------------------------------
+// 文本编辑器（双击文件 / 右键【编辑】打开）
+// ---------------------------------------------------------------------------
+
+const editorEntry = ref<FileEntry | null>(null)
+const editorShow = ref(false)
+/** 编辑器抽屉组件实例：用于查询 dirty 状态并复用其关闭/放弃确认弹窗 */
+const editorRef = ref<InstanceType<typeof FileEditorDrawer> | null>(null)
+
+async function openEditor(entry: FileEntry) {
+  // 编辑器已打开且存在未保存修改时，先确认（保存并继续 / 放弃 / 取消）再切换文件
+  if (editorRef.value?.dirty && !(await editorRef.value.confirmClose())) {
+    return
+  }
+  editorEntry.value = entry
+  editorShow.value = true
+}
+
+/** 编辑器保存成功后刷新整树（节点大小/时间展示随之更新） */
+async function onFileSaved() {
+  await reloadAll()
 }
 
 async function onRenameConfirm() {
@@ -245,8 +281,17 @@ async function reloadAll() {
   await loadRoot()
 }
 
-// workspace 变化 → 重建树（目录不同，缓存作废）
-watch(workspaceId, () => {
+// workspace 变化 → 重建树（目录不同，缓存作废）；同时关闭可能指向旧 workspace 的编辑器
+watch(workspaceId, async () => {
+  // 有未保存修改时先征得用户同意（切换后旧文件无法再保存，故只提供「放弃/取消」）；
+  // 用户取消 → 保持抽屉打开（内容仍可复制），但树照常切换到新 workspace
+  if (editorRef.value?.dirty) {
+    if (await editorRef.value.confirmDiscard()) {
+      editorShow.value = false
+    }
+  } else {
+    editorShow.value = false
+  }
   void reloadAll()
 })
 
@@ -271,11 +316,18 @@ function isImageEntry(e: FileEntry): boolean {
  * 拖拽定位必须靠自定义 data 属性），拖拽时通过 dataset 取目标目录。
  * 注意：naive-ui 回调签名是 (info: { option }) => HTMLAttributes，参数包在对象里。
  */
-function nodeProps({ option }: { option: TreeOption }): Record<string, string> {
+function nodeProps({ option }: { option: TreeOption }): Record<string, unknown> {
   const e = (option as FileTreeNode).raw
   return {
     'data-dir': e.path,
     'data-isdir': e.isDir ? '1' : '0',
+    // naive-ui NTree 没有 dblclick emit，双击只能通过节点 props 绑定原生事件；
+    // 文本文件 → 打开编辑器（图片预览走 onSelect 选中路径，不冲突）
+    onDblclick: () => {
+      if (e && !e.isDir) {
+        void openEditor(e)
+      }
+    },
   }
 }
 
@@ -593,6 +645,15 @@ async function onSelect(keys: Array<string | number>) {
       :src="previewSrc"
       class="pointer-events-none fixed -left-[9999px] top-0"
       style="width: 1px; height: 1px"
+    />
+
+    <!-- 文本编辑器抽屉（双击文件 / 右键【编辑】打开；保存后刷新树） -->
+    <FileEditorDrawer
+      ref="editorRef"
+      v-model:show="editorShow"
+      :workspace-id="workspaceId"
+      :entry="editorEntry"
+      @saved="onFileSaved"
     />
   </div>
 </template>

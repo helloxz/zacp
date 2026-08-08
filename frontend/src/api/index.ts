@@ -26,6 +26,7 @@ import type {
   ChatSession,
   ConfigOption,
   DirectoryList,
+  FileContent,
   FileEntry,
   GitStatus,
   ManageAgent,
@@ -120,6 +121,39 @@ export async function renameFile(
 export function fileRawUrl(workspaceId: number, path: string): string {
   return apiUrl(
     `/api/v1/workspaces/${workspaceId}/files/raw?path=${encodeURIComponent(path)}`,
+  )
+}
+
+/**
+ * GET /api/v1/workspaces/:id/files/content?path=... — 读取文本文件内容（编辑器打开）。
+ *
+ * 目录 / 超过 2MB / 二进制 / 非 UTF-8 文件由后端拒绝并抛对应 ApiError，前端据此提示。
+ */
+export async function fetchFileContent(
+  workspaceId: number,
+  path: string,
+): Promise<FileContent> {
+  return http.get<FileContent>(
+    `/api/v1/workspaces/${workspaceId}/files/content`,
+    { query: { path } },
+  )
+}
+
+/**
+ * PUT /api/v1/workspaces/:id/files/content — 保存文本文件内容。
+ *
+ * 携带 expectedMtime（打开时记录的 mtime）做乐观锁：文件已被他处修改时
+ * 后端返回 409（code: file_modified），前端据此提示重新加载。
+ */
+export async function saveFileContent(
+  workspaceId: number,
+  path: string,
+  content: string,
+  expectedMtime: number,
+): Promise<FileContent> {
+  return http.put<FileContent>(
+    `/api/v1/workspaces/${workspaceId}/files/content`,
+    { body: { path, content, expectedMtime } },
   )
 }
 

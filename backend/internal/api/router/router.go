@@ -49,6 +49,8 @@ func New(
 		v1.POST("/workspaces/:id/files/upload", fileHandler.Upload)
 		v1.PATCH("/workspaces/:id/files/rename", fileHandler.RenameFile)
 		v1.GET("/workspaces/:id/files/raw", fileHandler.RawFile)
+		v1.GET("/workspaces/:id/files/content", fileHandler.ReadFileContent)
+		v1.PUT("/workspaces/:id/files/content", fileHandler.WriteFileContent)
 		v1.GET("/workspaces/:id/git/status", gitHandler.Status)
 
 		// 目录浏览（新建项目弹窗用）：列出任意绝对路径下的子文件夹，与 workspace 无关

@@ -60,6 +60,17 @@ export interface FileEntry {
   mimeType?: string
 }
 
+/**
+ * 文本文件内容（GET/PUT /api/v1/workspaces/:id/files/content，编辑器用）。
+ * mtimeUnixMs 为打开时记录的 mtime（毫秒），保存时回传做乐观锁比对。
+ */
+export interface FileContent {
+  path: string
+  content: string
+  size: number
+  mtimeUnixMs: number
+}
+
 /** GET /api/v1/workspaces/:id/git/status 返回的 Git 状态摘要 */
 export interface GitStatus {
   gitInstalled: boolean

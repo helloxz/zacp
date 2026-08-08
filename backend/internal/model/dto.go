@@ -67,6 +67,16 @@ type FileListDTO struct {
 	Entries []FileEntryDTO `json:"entries"`
 }
 
+// FileContentDTO 文本文件内容（GET/PUT /api/v1/workspaces/:id/files/content）。
+// MtimeUnixMs 为文件修改时间（毫秒），前端打开时记录、保存时回传做乐观锁比对，
+// 防止两个编辑端互相覆盖（mtime 不一致 → 409 拒绝）。
+type FileContentDTO struct {
+	Path        string `json:"path"`
+	Content     string `json:"content"`
+	Size        int64  `json:"size"`
+	MtimeUnixMs int64  `json:"mtimeUnixMs"`
+}
+
 // GitStatusDTO 工作区 Git 状态摘要与变更文件列表。
 // GitInstalled=false 或 IsRepository=false 时，Files 保持为空切片，供前端展示对应空态。
 type GitStatusDTO struct {

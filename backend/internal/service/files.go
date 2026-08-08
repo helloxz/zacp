@@ -1,6 +1,7 @@
 package service
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"io"
@@ -9,6 +10,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/helloxz/zacp/internal/model"
 	"github.com/helloxz/zacp/internal/store"
@@ -38,6 +40,15 @@ var (
 	ErrCannotRenameRoot = errors.New("cannot rename workspace root")
 	// ErrFileTooLarge 单文件超过大小上限（图片 5MB / 其他 20MB）。
 	ErrFileTooLarge = errors.New("file too large")
+	// ErrFileTooLargeForEdit 文件超过文本编辑器可编辑上限（2MB）。
+	// 与 ErrFileTooLarge 分开：上传是 5MB/20MB 分档，编辑统一 2MB，消息文案不同。
+	ErrFileTooLargeForEdit = errors.New("file too large for editing")
+	// ErrBinaryFile 内容含 NUL 字节，判定为二进制文件，拒绝在文本编辑器打开。
+	ErrBinaryFile = errors.New("binary file")
+	// ErrInvalidEncoding 内容不是合法 UTF-8（如 GBK），拒绝读取/写入以免破坏文件。
+	ErrInvalidEncoding = errors.New("invalid utf-8 encoding")
+	// ErrFileModified 保存时 mtime 与打开时不符，文件已被其他端修改（乐观锁冲突）。
+	ErrFileModified = errors.New("file modified by others")
 	// ErrPathNotFound 目标路径不存在。
 	ErrPathNotFound = errors.New("path not found")
 )
@@ -48,6 +59,9 @@ const (
 	MaxOtherSizeBytes = 20 << 20 // 20MB
 	// MaxUploadBodyBytes 单次上传请求体上限（3 张 5MB 图片 + multipart 开销）。
 	MaxUploadBodyBytes = 25 << 20 // 25MB
+	// MaxEditableSizeBytes 编辑器可打开/写入的文件大小上限（2MB）。
+	// 超过该上限的文件拒绝读/写：避免把超大文件整读进内存、拖垮前端编辑器渲染。
+	MaxEditableSizeBytes = 2 << 20 // 2MB
 )
 
 // ignoredDirNames 始终不展示的大目录（无论是否显示隐藏文件）。
@@ -461,6 +475,100 @@ func (s *FileService) ResolveFile(workspaceID uint, rel string) (string, error) 
 		return "", ErrNotDirectory
 	}
 	return path, nil
+}
+
+// ReadTextFile 读取工作区内文本文件内容（供编辑器打开）。
+//
+// 校验链：路径边界（resolveInWorkspace）→ 是文件 → ≤2MB → 非二进制（无 NUL）→ 合法 UTF-8。
+// 返回内容与 mtime（毫秒）：mtime 供前端保存时回传做乐观锁比对（见 WriteTextFile）。
+func (s *FileService) ReadTextFile(workspaceID uint, rel string) (*model.FileContentDTO, error) {
+	ws, err := s.workspaceRepo.GetByID(workspaceID)
+	if err != nil {
+		return nil, fmt.Errorf("load workspace: %w", err)
+	}
+	path, err := s.resolveInWorkspace(ws, rel)
+	if err != nil {
+		return nil, err
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return nil, fmt.Errorf("stat file: %w", err)
+	}
+	if info.IsDir() {
+		return nil, ErrNotDirectory
+	}
+	if info.Size() > MaxEditableSizeBytes {
+		return nil, ErrFileTooLargeForEdit
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("read file: %w", err)
+	}
+	// 二进制检测：含 NUL 字节的文件按二进制处理（图片、压缩包等在文本编辑器打开会乱码）。
+	if bytes.IndexByte(data, 0) >= 0 {
+		return nil, ErrBinaryFile
+	}
+	// 非 UTF-8（如 GBK）拒绝打开，避免编辑器按 UTF-8 解码后保存时把原编码内容破坏掉。
+	if !utf8.Valid(data) {
+		return nil, ErrInvalidEncoding
+	}
+	return &model.FileContentDTO{
+		Path:        filepath.ToSlash(cleanRel(rel)),
+		Content:     string(data),
+		Size:        info.Size(),
+		MtimeUnixMs: info.ModTime().UnixMilli(),
+	}, nil
+}
+
+// WriteTextFile 把编辑后的文本内容写回工作区内文件。
+//
+// 校验链：路径边界 → 是文件 → 内容 ≤2MB → 合法 UTF-8 →（可选）mtime 乐观锁。
+// 乐观锁：前端打开时记录 mtime、保存时回传；不一致说明文件已被他处修改，拒绝覆盖（409）。
+// 写入用 os.WriteFile（O_TRUNC），已存在文件的权限位保持不变。
+func (s *FileService) WriteTextFile(workspaceID uint, rel, content string, expectedMtime *int64) (*model.FileContentDTO, error) {
+	ws, err := s.workspaceRepo.GetByID(workspaceID)
+	if err != nil {
+		return nil, fmt.Errorf("load workspace: %w", err)
+	}
+	path, err := s.resolveInWorkspace(ws, rel)
+	if err != nil {
+		return nil, err
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return nil, fmt.Errorf("stat file: %w", err)
+	}
+	if info.IsDir() {
+		return nil, ErrNotDirectory
+	}
+	if int64(len(content)) > MaxEditableSizeBytes {
+		return nil, ErrFileTooLargeForEdit
+	}
+	// 与读侧镜像校验：写入内容不得含 NUL（否则保存后文件会被判定为二进制而无法再打开），
+	// 且必须是合法 UTF-8（UTF-8 校验放在 NUL 之后，NUL 本身是合法 UTF-8）。
+	if bytes.IndexByte([]byte(content), 0) >= 0 {
+		return nil, ErrBinaryFile
+	}
+	if !utf8.ValidString(content) {
+		return nil, ErrInvalidEncoding
+	}
+	// mtime 乐观锁：仅在客户端显式回传期望值时校验（老客户端不带则不强制）。
+	if expectedMtime != nil && info.ModTime().UnixMilli() != *expectedMtime {
+		return nil, ErrFileModified
+	}
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		return nil, fmt.Errorf("write file: %w", err)
+	}
+	newInfo, err := os.Stat(path)
+	if err != nil {
+		return nil, fmt.Errorf("stat file after write: %w", err)
+	}
+	return &model.FileContentDTO{
+		Path:        filepath.ToSlash(cleanRel(rel)),
+		Content:     content,
+		Size:        newInfo.Size(),
+		MtimeUnixMs: newInfo.ModTime().UnixMilli(),
+	}, nil
 }
 
 // IsImageName 按扩展名判断是否图片（用于上传大小分档）。

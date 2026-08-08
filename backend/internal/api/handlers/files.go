@@ -160,6 +160,56 @@ func (h *FileHandler) RawFile(c *gin.Context) {
 	c.File(path)
 }
 
+// writeFileContentRequest 文本文件保存请求体。
+type writeFileContentRequest struct {
+	Path string `json:"path"`
+	// Content 编辑后的完整文本内容（后端校验 ≤2MB 且为合法 UTF-8）。
+	Content string `json:"content"`
+	// ExpectedMtime 打开时记录的 mtime（毫秒）；可选，携带时后端做乐观锁比对。
+	ExpectedMtime *int64 `json:"expectedMtime,omitempty"`
+}
+
+// ReadFileContent GET /api/v1/workspaces/:id/files/content?path=<相对路径>
+//
+// 返回文本文件内容（Content + MtimeUnixMs），供前端编辑器打开。
+// 目录 / 超过 2MB / 二进制 / 非 UTF-8 的文件分别返回对应错误，由前端提示。
+func (h *FileHandler) ReadFileContent(c *gin.Context) {
+	id, err := parseWorkspaceID(c)
+	if err != nil {
+		writeError(c, http.StatusBadRequest, "invalid_workspace_id", err.Error())
+		return
+	}
+	content, err := h.svc.ReadTextFile(id, c.Query("path"))
+	if err != nil {
+		writeFileError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, content)
+}
+
+// WriteFileContent PUT /api/v1/workspaces/:id/files/content
+//
+// 保存文本文件。携带 expectedMtime 时校验乐观锁：文件已被他处修改则 409，
+// 前端据此提示「文件已变更」并让用户选择重新加载。
+func (h *FileHandler) WriteFileContent(c *gin.Context) {
+	id, err := parseWorkspaceID(c)
+	if err != nil {
+		writeError(c, http.StatusBadRequest, "invalid_workspace_id", err.Error())
+		return
+	}
+	var req writeFileContentRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		writeError(c, http.StatusBadRequest, "invalid_request", err.Error())
+		return
+	}
+	result, err := h.svc.WriteTextFile(id, req.Path, req.Content, req.ExpectedMtime)
+	if err != nil {
+		writeFileError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, result)
+}
+
 // parseWorkspaceID 解析路径参数 :id 为 uint。
 func parseWorkspaceID(c *gin.Context) (uint, error) {
 	raw := c.Param("id")
@@ -184,13 +234,21 @@ func writeFileError(c *gin.Context, err error) {
 	case errors.Is(err, service.ErrCannotRenameRoot):
 		writeError(c, http.StatusBadRequest, "cannot_rename_root", "不能重命名工作区根目录")
 	case errors.Is(err, service.ErrNotDirectory):
-		writeError(c, http.StatusBadRequest, "not_directory", "目标不是目录")
+		writeError(c, http.StatusBadRequest, "not_directory", "路径类型不匹配（目录 / 文件不符）")
 	case errors.Is(err, service.ErrFileExists):
 		writeError(c, http.StatusConflict, "file_exists", "同名文件已存在，拒绝覆盖")
 	case errors.Is(err, service.ErrInvalidFileName):
 		writeError(c, http.StatusBadRequest, "invalid_file_name", "文件名不合法")
 	case errors.Is(err, service.ErrFileTooLarge):
 		writeError(c, http.StatusRequestEntityTooLarge, "file_too_large", "文件超过大小上限（图片 5MB / 其他 20MB）")
+	case errors.Is(err, service.ErrFileTooLargeForEdit):
+		writeError(c, http.StatusRequestEntityTooLarge, "file_too_large", "文件超过 2MB，不支持文本编辑")
+	case errors.Is(err, service.ErrBinaryFile):
+		writeError(c, http.StatusUnsupportedMediaType, "binary_file", "二进制文件不支持文本编辑")
+	case errors.Is(err, service.ErrInvalidEncoding):
+		writeError(c, http.StatusUnsupportedMediaType, "invalid_encoding", "文件不是合法 UTF-8 编码，不支持编辑")
+	case errors.Is(err, service.ErrFileModified):
+		writeError(c, http.StatusConflict, "file_modified", "文件已被其他端修改，请重新加载后再保存")
 	case errors.Is(err, service.ErrPathNotFound):
 		writeError(c, http.StatusNotFound, "path_not_found", "路径不存在")
 	case errors.Is(err, os.ErrPermission):
