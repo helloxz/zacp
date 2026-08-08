@@ -36,6 +36,8 @@ import type {
 
 /** localStorage 键：用户手动重命名的会话 id 集合 */
 const MANUALLY_RENAMED_KEY = 'zacp.manuallyRenamedSessions'
+/** 后端创建会话时使用的默认标题；首条 prompt 后服务端可能改为摘要标题。 */
+const DEFAULT_SESSION_TITLE = '新会话'
 
 /** 实时工具调用卡片（流式 turn 中显示，turn.done 后随历史 events 持久化渲染） */
 export interface ToolCard {
@@ -155,6 +157,12 @@ export const useSessionStore = defineStore('session', () => {
   const dbIdByAcpSession = new Map<string, number>()
   /** 发送过 prompt 的会话快照（cancel 帧需要 acpSessionId；草稿不在 sessions 列表，只能查这里） */
   const sentSessions = new Map<number, ChatSession>()
+  /**
+   * 首轮 prompt 结束后的会话详情同步状态。
+   * 只对默认标题会话登记 pending；成功刷新后置为 done，避免每轮重复 GET。
+   * 按 DB session id 隔离，不能使用全局布尔值（多个会话可并行执行）。
+   */
+  const initialSessionDetailRefresh = new Map<number, 'pending' | 'done'>()
 
   function indexAcpSession(session: ChatSession | null | undefined) {
     if (!session?.acpSessionId) return
@@ -166,12 +174,21 @@ export const useSessionStore = defineStore('session', () => {
       if (dbId === sessionId) dbIdByAcpSession.delete(acpId)
     }
     sentSessions.delete(sessionId)
+    initialSessionDetailRefresh.delete(sessionId)
     delete statusBySession.value[sessionId]
     runningSessionIds.value.delete(sessionId)
     delete streamBlocksBySession.value[sessionId]
     delete activeToolCardsBySession.value[sessionId]
     delete activePlanBySession.value[sessionId]
     delete streamMsgIdBySession.value[sessionId]
+  }
+  /** 首轮 prompt 后若仍是默认标题，安排一次会话详情同步；手动改名会话不参与。 */
+  function markInitialSessionDetailRefresh(session: ChatSession) {
+    if (initialSessionDetailRefresh.has(session.id)) return
+    if (manuallyRenamedIds.value.has(session.id)) return
+    if (session.title === '' || session.title === DEFAULT_SESSION_TITLE) {
+      initialSessionDetailRefresh.set(session.id, 'pending')
+    }
   }
 
   /** 取会话 turn 状态（缺失视为 idle） */
@@ -376,6 +393,7 @@ export const useSessionStore = defineStore('session', () => {
       ]
     }
     indexAcpSession(session)
+    markInitialSessionDetailRefresh(session)
     messagesById.value[session.id] = []
     return { session, configOptions }
   }
@@ -424,6 +442,8 @@ export const useSessionStore = defineStore('session', () => {
     const s = sessions.value.find((x) => x.id === sessionId)
     if (s) s.title = title
     manuallyRenamedIds.value.add(sessionId)
+    // 手动标题不需要再等待首轮摘要刷新，避免后续 turn.done 触发详情 GET。
+    initialSessionDetailRefresh.delete(sessionId)
     persistManuallyRenamed()
   }
 
@@ -663,22 +683,24 @@ export const useSessionStore = defineStore('session', () => {
     void refreshAfterTurn(sessionId)
   }
 
-  /** 流式结束后的数据对齐：只拉取本轮之后新增的消息，再刷新会话视图元数据。 */
+  /** 流式结束后的数据对齐：同步本轮新增消息；会话详情只在首轮默认标题场景刷新一次。 */
   async function refreshAfterTurn(sessionId: number) {
     const afterId = latestPersistedMessageId(sessionId)
     try {
       await loadMessageUpdates(sessionId, afterId)
       // agent 可能在 turn 中经 update 通知更新配置项，刷新以同步最新 currentValue
       await loadConfigOptions(sessionId)
-      // 同样刷新 / 命令：agent 可能在 turn 中通告新命令（如 init 后出现新命令）
-      await loadSlashCommands(sessionId)
-      // 同步会话标题（服务端首条消息生成）与列表排序
-      const fresh = await apiFetchSession(sessionId).catch(() => null)
-      if (fresh) {
-        const idx = sessions.value.findIndex((s) => s.id === sessionId)
-        if (idx >= 0) {
-          sessions.value[idx] = { ...sessions.value[idx], ...fresh }
-          touch(sessionId, fresh.updatedAt)
+      // / 命令首次进入会话时加载，后续依靠 WebSocket 广播更新，不在每轮重复 GET。
+      if (initialSessionDetailRefresh.get(sessionId) === 'pending') {
+        // 首条 prompt 后服务端可能生成摘要标题；成功同步后标记完成，后续轮次不再请求。
+        const fresh = await apiFetchSession(sessionId).catch(() => null)
+        if (fresh) {
+          const idx = sessions.value.findIndex((s) => s.id === sessionId)
+          if (idx >= 0) {
+            sessions.value[idx] = { ...sessions.value[idx], ...fresh }
+            touch(sessionId, fresh.updatedAt)
+          }
+          initialSessionDetailRefresh.set(sessionId, 'done')
         }
       }
     } catch {
@@ -888,6 +910,8 @@ export const useSessionStore = defineStore('session', () => {
     } catch {
       // 刷新失败：沿用本地缓存值
     }
+    // 发送前刷新可能拿到服务端生成的标题；只对仍是默认标题的会话安排首轮收尾同步。
+    markInitialSessionDetailRefresh(session)
     if (!session.acpSessionId) {
       throw new Error('session has no acp session id')
     }
