@@ -22,12 +22,14 @@
 - **浏览器 Web UI**：会话式聊天界面，支持多会话、多 Agent 切换，流式输出实时展示（思考过程、工具调用、执行计划等）；
 - **实时通信**：基于 WebSocket 的流式消息推送与权限回传，交互延迟低；
 - **权限确认**：Agent 请求执行操作（读写文件、执行命令等）时，权限请求会推送到 Web UI 由你亲自确认，而不是服务端无脑自动放行（开发模式可配置自动批准）；
-- **并发与排队**：同一 Agent 的对话串行执行、后续请求自动排队，不同 Agent 之间并行互不干扰；
+- **多Agent并行任务**：支持最多三个任务同时并行。
 - **会话空闲回收**：Agent 空闲超过设定时间（默认 30 分钟）自动停止释放内存，下次使用自动恢复，不占用系统资源；
 - **智能体管理**：设置页可随时启用/禁用某个 Agent，热更新配置，无需重启服务；
 - **会话与消息持久化**：历史会话、消息记录存入本地 SQLite（WAL 模式），重启不丢失；
 - **单二进制发布**：前端页面与默认配置全部内嵌进一个可执行文件，`--version` 查看版本，即下即用；
 - **一键安装与更新**：提供 `install.sh` / `update.sh`（macOS / Linux）与 `install.ps1` / `update.ps1`（Windows）脚本，自动识别操作系统与 CPU 架构（amd64 / arm64），安装、升级、回滚一条命令搞定。
+- **文件浏览器** ：支持文件上传、编辑、重命名等操作
+- **Git面板** ：支持查看 Git 状态
 
 ## 安装
 
@@ -73,6 +75,8 @@ zacp
 
 ### 一键更新（推荐）
 
+**Linux & macOS**
+
 自动检测已安装的 zacp 并升级到最新版本：
 
 ```bash
@@ -85,6 +89,8 @@ curl -fsSL https://raw.githubusercontent.com/helloxz/zacp/main/update.sh | bash
 curl -fsSL https://raw.githubusercontent.com/helloxz/zacp/main/update.sh | sudo bash
 ```
 
+**Windows**
+
 Windows 用户在 PowerShell 中更新（自动检测已安装的 zacp 并升级到最新版本；需先停止正在运行的 `zacp` 进程，更新脚本不会自动结束它）：
 
 ```powershell
@@ -96,8 +102,6 @@ irm https://raw.githubusercontent.com/helloxz/zacp/main/update.ps1 | iex
 ```cmd
 curl -fsSL https://raw.githubusercontent.com/helloxz/zacp/main/update.ps1 -o "%TEMP%\zacp-update.ps1" && powershell -ExecutionPolicy Bypass -File "%TEMP%\zacp-update.ps1"
 ```
-
-更新脚本会保留当前版本与最近一个旧版本用于回滚；不想保留太多时旧版本会按需清理。
 
 
 ## 联系作者
