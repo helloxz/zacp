@@ -68,7 +68,7 @@ func New(
 
 		// 消息管理
 		v1.POST("/sessions/:id/messages", sessionHandler.SendMessage)
-		v1.GET("/sessions/:id/messages", sessionHandler.GetMessages)
+		v1.GET("/sessions/:id/messages", middleware.Gzip(), sessionHandler.GetMessages)
 
 		// 会话配置项（模型/思考强度/mode 等，agent 支持才返回非空）
 		v1.GET("/sessions/:id/config-options", sessionHandler.GetConfigOptions)
@@ -92,7 +92,9 @@ func New(
 	// dev 模式由 vite dev server 独立承担，此处保持 gin 默认 404）。
 	if web.StaticEnabled() {
 		staticFS := web.StaticFS()
-		r.NoRoute(func(c *gin.Context) {
+		r.NoRoute(middleware.GzipIf(func(c *gin.Context) bool {
+			return middleware.StaticAssetPath(c.Request.URL.Path)
+		}), func(c *gin.Context) {
 			p := strings.TrimPrefix(c.Request.URL.Path, "/")
 
 			// API 路径未命中：返回 JSON 404，不能回 HTML（前端依赖错误结构统一解析）

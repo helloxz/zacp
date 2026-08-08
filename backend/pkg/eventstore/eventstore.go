@@ -45,11 +45,16 @@ var toolEventTypes = map[string]bool{
 //     与实时工具卡展示一致——这是列表瘦身 ~90% 的主要来源：update 的重复全量
 //     快照不再落库，每工具只留最终一份）；
 //   - 返回瘦身版事件列表：tool_call 系列事件去掉 Input/Output，其余字段
-//     （type/toolId/title/status）原样保留，前端 deriveBlocks 仍能重建工具卡时间线。
+//     （type/toolId/title/status）原样保留，前端 deriveBlocks 仍能重建工具卡的时间线；
+//   - 事件里的 SessionID 只用于实时 WS 路由，历史消息已由 Message.SessionID 绑定，
+//     因此持久化副本不重复保存该字段。
 func SplitToolDetails(events []client.Event) ([]client.Event, map[string]ToolDetail) {
 	slim := make([]client.Event, 0, len(events))
 	details := make(map[string]ToolDetail)
 	for _, ev := range events {
+		// SessionID 必须只在持久化副本中清空：实时路由在调用本函数前已经
+		// 使用原始 event.SessionID 完成广播；range 变量为值副本，不会改动原切片。
+		ev.SessionID = ""
 		if toolEventTypes[ev.Type] && ev.ToolID != "" {
 			d := details[ev.ToolID]
 			if !IsEmpty(ev.Input) {
