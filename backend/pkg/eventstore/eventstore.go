@@ -1,4 +1,4 @@
-// Package eventstore 提供消息事件列表的落库序列化与工具详情拆分，
+// Package eventstore 提供消息事件列表的落库序列化、文本事件合并与工具详情拆分，
 // 供 WebSocket（internal/ws/bridge）与 REST（internal/service）两条落库路径
 // 以及 v6 迁移（internal/store）共用，保证「events 瘦身 + tool_details 拆分」
 // 的格式单一来源，防止两处实现漂移。
@@ -40,6 +40,43 @@ var toolEventTypes = map[string]bool{
 	"tool_call_update": true,
 }
 
+// compactTextEvents 合并同一消息中相邻的纯文本事件。
+// Agent 流式输出会把一段 thought/message 切成很多小块；历史前端本来就按顺序
+// 拼接这些文本，因此合并不会改变展示内容，只减少重复的 JSON 元数据。工具调用、
+// plan、带额外元数据的文本事件以及跨工具边界的文本事件都不会被合并。
+func compactTextEvents(events []client.Event) []client.Event {
+	compacted := make([]client.Event, 0, len(events))
+	for _, event := range events {
+		if len(compacted) > 0 && canMergeTextEvents(compacted[len(compacted)-1], event) {
+			compacted[len(compacted)-1].Text += event.Text
+			continue
+		}
+		compacted = append(compacted, event)
+	}
+	return compacted
+}
+
+func canMergeTextEvents(previous, current client.Event) bool {
+	if previous.Type != current.Type || previous.SessionID != current.SessionID {
+		return false
+	}
+	if current.Type != "agent_thought" && current.Type != "agent_message" {
+		return false
+	}
+	return isPlainTextEvent(previous) && isPlainTextEvent(current)
+}
+
+func isPlainTextEvent(event client.Event) bool {
+	return event.Text != "" &&
+		event.Title == "" &&
+		event.Status == "" &&
+		event.ToolID == "" &&
+		event.RawKind == "" &&
+		IsEmpty(event.Input) &&
+		IsEmpty(event.Output) &&
+		event.Plan == nil
+}
+
 // SplitToolDetails 拆分事件列表：
 //   - 抽取每个工具最终的 input/output 到 details（update 替换语义：非空才覆盖，
 //     与实时工具卡展示一致——这是列表瘦身 ~90% 的主要来源：update 的重复全量
@@ -47,11 +84,12 @@ var toolEventTypes = map[string]bool{
 //   - 返回瘦身版事件列表：tool_call 系列事件去掉 Input/Output，其余字段
 //     （type/toolId/title/status）原样保留，前端 deriveBlocks 仍能重建工具卡的时间线；
 //   - 事件里的 SessionID 只用于实时 WS 路由，历史消息已由 Message.SessionID 绑定，
-//     因此持久化副本不重复保存该字段。
+//     因此持久化副本不重复保存该字段；相邻纯文本事件在此之前已完成合并。
 func SplitToolDetails(events []client.Event) ([]client.Event, map[string]ToolDetail) {
-	slim := make([]client.Event, 0, len(events))
+	compacted := compactTextEvents(events)
+	slim := make([]client.Event, 0, len(compacted))
 	details := make(map[string]ToolDetail)
-	for _, ev := range events {
+	for _, ev := range compacted {
 		// SessionID 必须只在持久化副本中清空：实时路由在调用本函数前已经
 		// 使用原始 event.SessionID 完成广播；range 变量为值副本，不会改动原切片。
 		ev.SessionID = ""
