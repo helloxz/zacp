@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { onMounted, ref, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import AppSidebar from '@/components/shell/AppSidebar.vue'
 import ChatPane from '@/components/chat/ChatPane.vue'
 import FilePanel from '@/components/files/FilePanel.vue'
@@ -18,8 +19,23 @@ const appStore = useAppStore()
 /**
  * 右侧面板（信息|文件|Git）折叠状态：默认收起（不持久化）。
  * 展开/收起按钮在会话标题栏最右侧（ChatPane 转发切换事件）。
+ *
+ * 关键约束：非会话态（/ 与 /new）一律强制收起——新建对话时不得展示右侧面板，
+ * 且 /new 下没有切换按钮，若残留展开态用户将无法关闭。
+ * watch 默认 pre 刷新（渲染前执行），路由切换不会出现「先展开后收起」的闪帧。
+ * 只收起、不重置：FilePanel 一直挂载在 DOM（w-0 + overflow-hidden），内部状态保留。
  */
 const rightPanelOpen = ref(false)
+const route = useRoute()
+watch(
+  () => route.name,
+  (name) => {
+    if (name !== 'session') {
+      rightPanelOpen.value = false
+    }
+  },
+  { immediate: true },
+)
 
 function openSettings() {
   appStore.settingsOpen = true
