@@ -272,15 +272,23 @@ func (r *MessageRepository) ListBySession(sessionID uint) ([]model.Message, erro
 	return messages, err
 }
 
-// ListBySessionPaginated 分页列出会话消息
+// ListBySessionPaginated 从最新消息开始分页，并将当前窗口按消息 ID 升序返回。
+// offset 以最新端为基准：offset=0 返回最新 limit 条；恢复升序是为了保持聊天 UI 的时间线顺序。
 func (r *MessageRepository) ListBySessionPaginated(sessionID uint, limit, offset int) ([]model.Message, error) {
 	var messages []model.Message
 	err := r.db.Where("session_id = ?", sessionID).
-		Order("created_at ASC").
+		Order("id DESC").
 		Limit(limit).
 		Offset(offset).
 		Find(&messages).Error
-	return messages, err
+	if err != nil {
+		return nil, err
+	}
+
+	for left, right := 0, len(messages)-1; left < right; left, right = left+1, right-1 {
+		messages[left], messages[right] = messages[right], messages[left]
+	}
+	return messages, nil
 }
 
 // ListBySessionAfterID 列出指定消息 ID 之后新增的消息。

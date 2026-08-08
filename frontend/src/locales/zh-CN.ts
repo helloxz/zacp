@@ -92,6 +92,9 @@ export default {
     title: '执行计划',
     inProgress: '进行中',
     empty: '暂无计划条目',
+    buttonActive: '查看执行计划（有未完成任务）',
+    buttonCompleted: '查看执行计划（已全部完成）',
+    buttonEmpty: '查看执行计划（暂无任务）',
   },
   permission: {
     title: '权限请求',

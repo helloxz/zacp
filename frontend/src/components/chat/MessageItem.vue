@@ -3,12 +3,11 @@ import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { IncremarkContent } from '@incremark/vue'
 import type { ChatMessage, ToolDetailsMap } from '@/types/models'
-import type { Plan, WsEvent } from '@/types/ws'
+import type { WsEvent } from '@/types/ws'
 import type { ToolCard } from '@/stores/session'
 import { useSessionStore } from '@/stores/session'
 import { type MessageBlock } from '@/composables/useMessageBlocks'
 import ToolCallCard from '@/components/chat/ToolCallCard.vue'
-import PlanCard from '@/components/chat/PlanCard.vue'
 
 const props = defineProps<{ message: ChatMessage }>()
 
@@ -69,8 +68,6 @@ const isStreamingPlaceholder = computed(
     sessionStore.activeMessages.at(-1)?.id === props.message.id,
 )
 
-/** 本消息会话的实时执行计划（流式占位消息展示用；null=无计划） */
-const activePlan = computed(() => sessionStore.activePlanOf(props.message.sessionId))
 
 /**
  * 消息渲染块：流式期间用 store.streamBlocks（实时维护），
@@ -150,9 +147,6 @@ const blocks = computed<MessageBlock[]>(() => {
           result.push(block)
           toolIndex.set(e.toolId, block)
         }
-      } else if (e.type === 'plan' && e.plan) {
-        flushText()
-        result.push({ kind: 'plan' })
       }
     }
     flushText()
@@ -162,34 +156,6 @@ const blocks = computed<MessageBlock[]>(() => {
   }
 })
 
-/**
- * 历史执行计划：ACP plan 事件为整体替换语义（每次携带完整条目列表），
- * 取 events 中最后一个带 plan 数据的 plan 事件即可，无需按 toolId 合并。
- * 流式期间的实时计划由 store.activePlan 负责（占位消息 events 为空，互斥）。
- */
-const plan = computed<Plan | null>(() => {
-  if (props.message.role !== 'assistant' || !props.message.events) {
-    return null
-  }
-  try {
-    const events = JSON.parse(props.message.events) as WsEvent[]
-    for (let i = events.length - 1; i >= 0; i--) {
-      if (events[i].type === 'plan' && events[i].plan) {
-        return events[i].plan as Plan
-      }
-    }
-    return null
-  } catch {
-    // events 不是合法 JSON：静默跳过计划卡片，不影响文本渲染
-    return null
-  }
-})
-
-/**
- * blocks 中 plan 块的展示数据：流式期间取实时 activePlan；
- * turn.done 后 activePlan 被清空，回退到从 events 恢复的历史 plan。
- */
-const displayPlan = computed<Plan | null>(() => activePlan.value ?? plan.value)
 </script>
 
 <template>
@@ -255,12 +221,6 @@ const displayPlan = computed<Plan | null>(() => activePlan.value ?? plan.value)
         v-else-if="block.kind === 'tool'"
         class="w-full"
         :card="block.card"
-      />
-      <!-- 执行计划块：数据取 displayPlan（流式=activePlan，历史=events 恢复的 plan） -->
-      <PlanCard
-        v-else-if="block.kind === 'plan' && displayPlan"
-        class="w-full"
-        :plan="displayPlan"
       />
     </template>
 

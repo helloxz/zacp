@@ -38,6 +38,8 @@ import type {
 const MANUALLY_RENAMED_KEY = 'zacp.manuallyRenamedSessions'
 /** 后端创建会话时使用的默认标题；首条 prompt 后服务端可能改为摘要标题。 */
 const DEFAULT_SESSION_TITLE = '新会话'
+/** 会话历史与后端首屏消息窗口保持一致；更早消息不参与计划恢复。 */
+const SESSION_HISTORY_LIMIT = 100
 /**
  * 取消确认保险丝：点击停止后，若后端广播 turn.done/error 丢失（如 WS 断线、
  * agent 未响应），cancelling 状态会卡住界面。此处兜底强推收尾。
@@ -116,14 +118,41 @@ export const useSessionStore = defineStore('session', () => {
   const pendingPermission = ref<PendingPermission | null>(null)
   /** 各会话当前 turn 的实时工具调用卡片（流式期间展示；turn.done 清空，历史由消息 events 渲染） */
   const activeToolCardsBySession = ref<Record<number, ToolCard[]>>({})
-  /** 各会话当前 turn 的实时执行计划（plan 事件整体替换；turn.done 清空，历史由消息 events 渲染） */
+  /** 各会话当前 turn 的实时执行计划（plan 事件整体替换；turn.done 清空，历史由 latestPlanOf 从消息 events 恢复） */
   const activePlanBySession = ref<Record<number, Plan | null>>({})
   /**
-   * 各会话当前 turn 的消息块时间线（text/tool/plan 按事件到达顺序交错排列）。
-   * 流式期间由 appendStreamChunk / upsertToolCard 增量构建；
-   * turn.done 后清空，消息切换到历史路径（deriveBlocks 从 events 重建）。
+   * 各会话当前 turn 的消息块时间线（text/tool 按事件到达顺序交错排列）。
+   * 流式期间由 appendStreamChunk / upsertToolCard 增量构建；turn.done 后清空，
+   * 消息切换到历史路径（由消息 events 重建 text/tool）。
    */
   const streamBlocksBySession = ref<Record<number, MessageBlock[]>>({})
+
+
+  /**
+   * 取最新 100 条历史消息中的最后一个执行计划。
+   * 后端分页接口保证 messagesById 按消息 ID 升序；非法事件只跳过当前消息，
+   * 避免旧数据损坏计划恢复并连带阻塞整个会话。
+   */
+  function latestPlanOf(sessionId: number | null | undefined): Plan | null {
+    if (sessionId === null || sessionId === undefined) return null
+    let latest: Plan | null = null
+    for (const message of messagesById.value[sessionId] ?? []) {
+      if (message.role !== 'assistant' || !message.events) continue
+      try {
+        const events = JSON.parse(message.events) as unknown
+        if (!Array.isArray(events)) continue
+        for (const event of events as WsEvent[]) {
+          if (event.type === 'plan' && event.plan) {
+            latest = event.plan
+          }
+        }
+      } catch {
+        // 单条历史消息事件损坏时跳过，不影响其它消息与实时计划。
+      }
+    }
+    return latest
+  }
+
   /** 各会话当前流式 assistant 占位消息 id（-1 表示无占位） */
   const streamMsgIdBySession = ref<Record<number, number>>({})
   /**
@@ -331,14 +360,14 @@ export const useSessionStore = defineStore('session', () => {
   }
 
   /**
-   * 加载某会话消息历史。
-   * force=true 时无视缓存强制拉取完整历史，仅供显式重载场景使用。
+   * 加载某会话最新消息窗口。
+   * force=true 时无视缓存强制拉取最新窗口，仅供显式重载场景使用。
    */
   async function loadMessages(sessionId: number, force = false) {
     if (!force && messagesById.value[sessionId] !== undefined) {
       return
     }
-    const page = await fetchMessages(sessionId, 100, 0)
+    const page = await fetchMessages(sessionId, SESSION_HISTORY_LIMIT, 0)
     messagesById.value[sessionId] = page.messages
   }
 
@@ -354,7 +383,7 @@ export const useSessionStore = defineStore('session', () => {
   }
 
   /**
-   * 拉取指定 ID 之后新增的消息并合并到缓存。
+   * 拉取指定 ID 之后新增的消息并合并到缓存，只保留最新窗口。
    * 服务端至少会返回本轮已落库的 user 消息；拿到增量后再移除本地负数占位，
    * 避免请求失败时先删除用户可见内容。正数 ID 通过 Map 去重，重试不会重复渲染。
    */
@@ -374,6 +403,8 @@ export const useSessionStore = defineStore('session', () => {
       merged.set(message.id, message)
     }
     messagesById.value[sessionId] = [...merged.values()]
+      .sort((a, b) => a.id - b.id)
+      .slice(-SESSION_HISTORY_LIMIT)
   }
 
   /**
@@ -605,19 +636,6 @@ export const useSessionStore = defineStore('session', () => {
     }
   }
 
-  /**
-   * plan 事件 → streamBlocks 维护：PlanCard 挂在 blocks 循环里渲染，
-   * 必须存在 plan 块才会显示（数据本身由 activePlanBySession 承载，块只做位置占位）。
-   * ACP plan 为整体替换语义：一个 turn 内仅保留一个 plan 块，
-   * 首次出现追加，后续替换事件复用原块（位置稳定，不重复插入）。
-   */
-  function upsertPlanBlock(sessionId: number) {
-    const blocks = streamBlocksBySession.value[sessionId] ?? (streamBlocksBySession.value[sessionId] = [])
-    if (blocks.some((b) => b.kind === 'plan')) {
-      return
-    }
-    blocks.push({ kind: 'plan' })
-  }
 
   /** 用户选择权限选项：回传 permission 帧并关闭弹窗 */
   function resolvePermission(optionId: string) {
@@ -750,11 +768,8 @@ export const useSessionStore = defineStore('session', () => {
             // 工具调用：实时卡片（title/status 随 update 演进）
             upsertToolCard(sid, e)
           } else if (e.type === 'plan' && e.plan) {
-            // 执行计划：整体替换语义，直接覆盖实时卡片（不按 toolId 合并）
+            // ACP plan 是整体替换语义：dock 直接覆盖当前 turn 的计划快照。
             activePlanBySession.value[sid] = e.plan
-            // 同步维护 streamBlocks：PlanCard 挂在 blocks 循环里渲染，
-            // 无 plan 块则卡片永不显示（数据由 activePlan 单独承载）
-            upsertPlanBlock(sid)
           }
           break
         }
@@ -1032,6 +1047,7 @@ export const useSessionStore = defineStore('session', () => {
     isStreamingMessage,
     runningSessionIds,
     streamError,
+    latestPlanOf,
     pendingPermission,
     configOptions,
     slashCommands,

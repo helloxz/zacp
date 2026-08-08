@@ -1,20 +1,15 @@
 /**
  * 消息块（blocks）派生逻辑：将 assistant 消息的事件时间线拆分为
- * text / tool / plan 三种块，按时间顺序排列，恢复 AI 文本与工具调用的因果关系。
- *
- * 两条渲染路径：
- *  - 流式：store.streamBlocks 随事件增量构建（store 维护，tool card 引用共享）
- *  - 历史：从 message.events JSON 按序重建（本模块提供 deriveBlocks）
+ * text / tool 两种块，按时间顺序排列，恢复 AI 文本与工具调用的因果关系。
  */
 import type { WsEvent } from '@/types/ws'
 import type { ToolDetailsMap } from '@/types/models'
 import type { ToolCard } from '@/stores/session'
 
-/** 消息渲染块（按时间线排列，取代原先「工具卡统一在上方」的固定布局） */
+/** 消息渲染块（按时间线排列，计划由会话级 dock 独立展示） */
 export type MessageBlock =
   | { kind: 'text'; content: string }
   | { kind: 'tool'; card: ToolCard }
-  | { kind: 'plan' }
 
 /**
  * 从历史消息的 events JSON 派生渲染块（按事件时间线交错排列）。
@@ -22,7 +17,6 @@ export type MessageBlock =
  * 算法：顺序遍历 events，连续 agent_message 文本合并为一个 text block；
  * 遇到 tool_call 时先刷出累积文本，再插入 tool block；
  * 同一 toolId 的多次事件（tool_call + tool_call_update）合并为同一个 tool block（原地更新）。
- * plan 事件作为独立 plan block 插入。
  *
  * 工具卡详情来源（v6 拆分后）：
  *  1. 优先取 toolDetails 快照（toolId → 最终 {input, output}，每工具一份）；
@@ -84,9 +78,6 @@ export function deriveBlocks(events: WsEvent[], toolDetails?: ToolDetailsMap): M
         blocks.push(block)
         toolIndex.set(e.toolId, block)
       }
-    } else if (e.type === 'plan' && e.plan) {
-      flushText()
-      blocks.push({ kind: 'plan' })
     }
   }
 

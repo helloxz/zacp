@@ -81,6 +81,9 @@ export default {
     title: 'Plan',
     inProgress: 'In progress',
     empty: 'No plan entries',
+    buttonActive: 'View plan (tasks in progress)',
+    buttonCompleted: 'View plan (all tasks completed)',
+    buttonEmpty: 'View plan (no tasks)',
   },
   permission: {
     title: 'Permission request',

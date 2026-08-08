@@ -352,7 +352,7 @@ func (h *SessionHandler) SendMessage(c *gin.Context) {
 	c.JSON(http.StatusCreated, gin.H{"message": message})
 }
 
-// GetMessages 获取会话的消息历史
+// GetMessages 获取会话最新消息窗口；分页从最新消息端计算，响应内仍按时间正序排列。
 // GET /api/v1/sessions/:id/messages
 func (h *SessionHandler) GetMessages(c *gin.Context) {
 	id, err := strconv.ParseUint(c.Param("id"), 10, 32)

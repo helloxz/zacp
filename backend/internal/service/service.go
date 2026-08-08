@@ -415,7 +415,7 @@ func (s *SessionService) SendMessage(ctx context.Context, sessionID uint, conten
 	return assistantMsg, nil
 }
 
-// GetMessages 获取会话消息（分页）
+// GetMessages 获取会话消息（分页从最新消息端计算，返回窗口内升序结果）。
 func (s *SessionService) GetMessages(sessionID uint, limit, offset int) ([]model.Message, error) {
 	if limit <= 0 {
 		limit = 50

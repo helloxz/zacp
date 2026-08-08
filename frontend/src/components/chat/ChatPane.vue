@@ -10,6 +10,7 @@ import { useAppStore } from '@/stores/app'
 import WelcomeHero from '@/components/chat/WelcomeHero.vue'
 import NewSessionPane from '@/components/chat/NewSessionPane.vue'
 import MessageList from '@/components/chat/MessageList.vue'
+import PlanDock from '@/components/chat/PlanDock.vue'
 import Composer, {
   type ComposerSubmitPayload,
 } from '@/components/chat/Composer.vue'
@@ -142,7 +143,13 @@ function onNewProjectFromHero() {
         </n-button>
       </div>
 
-      <MessageList class="min-h-0 flex-1" />
+      <div class="relative min-h-0 flex-1">
+        <MessageList class="h-full min-h-0" />
+        <PlanDock
+          :session-id="current.id"
+          class="absolute left-2 top-1/2 z-20 -translate-y-1/2"
+        />
+      </div>
 
       <!-- 发送/流式错误条（可关闭） -->
       <div
