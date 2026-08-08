@@ -177,6 +177,12 @@ func (m *Manager) SetPromptStartedHook(fn func(agentID, sessionID string)) {
 // 调用方（ws bridge）据此广播 turn.done(cancelled) 复位前端「排队中」状态，不报错。
 var ErrPromptCancelled = errors.New("prompt cancelled while queued")
 
+// cancelConfirmTimeout 取消确认兜底超时：发完 ACP session/cancel 后，若该
+// session 的执行中 turn 在此时间内未结束（agent 未响应取消，如工具调用卡死），
+// 则强制 kill 整个 agent 进程（最后手段；进程重启与 session 自动恢复由既有
+// 机制负责）。做成包级变量而非 const，便于单测缩短超时。
+var cancelConfirmTimeout = 20 * time.Second
+
 // IsPromptCancelledErr 判断错误是否为排队撤销。
 func IsPromptCancelledErr(err error) bool {
 	return errors.Is(err, ErrPromptCancelled)
@@ -261,7 +267,7 @@ func (g *promptGate) release() {
 }
 
 // startEntry 记录一次进行中的 agent 启动：并发调用 StartAgent 时，发起者
-//（第一个拿到占位的调用）在锁外执行握手，其余调用者等待 done 关闭后读取
+// （第一个拿到占位的调用）在锁外执行握手，其余调用者等待 done 关闭后读取
 // err；Close/StopAgent 通过 cancel 提前中止握手。只有发起者会写 err、删
 // entry、close(done)——cancel 只取消握手，不做任何 map 操作。
 type startEntry struct {
@@ -599,7 +605,7 @@ func (m *Manager) replayOptions(ctx context.Context, agentID, sessionID string, 
 
 // reconcileAfterLoad 在 session/load 成功后核对配置：load 恢复的是「会话文件快照」，
 // 若文件是历史重建产物/损坏快照，其配置可能与用户最后选择（DB 存档）不一致
-//（典型：修复前重建的会话，文件里是重建时的默认模型，DB 里是用户选的模型）。
+// （典型：修复前重建的会话，文件里是重建时的默认模型，DB 里是用户选的模型）。
 // 以 DB 存档为权威：逐项比较 currentValue，不一致的才回放（正常会话零操作）；
 // 回放成功后 agent 会把新值写回会话文件（如 omp 的 model_change），一次性自愈。
 func (m *Manager) reconcileAfterLoad(ctx context.Context, agentID, sessionID string, loaded []acp.SessionConfigOption, storedConfigJSON string) {
@@ -635,7 +641,7 @@ func (m *Manager) reconcileAfterLoad(ctx context.Context, agentID, sessionID str
 }
 
 // configDiff 比较 load 返回的配置（loadedVals：id → currentValue）与 DB 存档
-//（stored：用户最后选择的配置，权威），返回 currentValue 不一致、需要回放的项。
+// （stored：用户最后选择的配置，权威），返回 currentValue 不一致、需要回放的项。
 // agent 当前没有的选项（版本差异）跳过；一致项不返回。
 func configDiff(loadedVals map[string]any, stored []model.ConfigOptionDTO) []model.ConfigOptionDTO {
 	var diff []model.ConfigOptionDTO
@@ -940,6 +946,18 @@ type AgentConnection struct {
 	// 空闲回收用：lastUsed 为最后一次活跃操作时间，activePrompts 为进行中的 prompt 数
 	lastUsed      time.Time
 	activePrompts int
+
+	// 取消确认（cancel 兜底）：
+	// cancelConfirm 记录「执行中 turn」的完成信号（按会话，同 agent 串行执行，
+	// 同一时刻至多一个）。Prompt 真正执行前注册、返回后关闭；
+	// Cancel 用它等待取消确认，cancelConfirmTimeout 内未确认则强制 kill（见 waitCancelConfirm）。
+	cancelConfirmMu sync.Mutex
+	cancelConfirm   map[acp.SessionId]chan struct{}
+	// forceCancelled 被强制 kill 的会话标记：kill 兜底触发时置位，
+	// Prompt 返回错误时据此把「进程被杀」识别为「已取消」（ErrPromptCancelled），
+	// 避免对已点停止的用户再弹错误。
+	forceCancelledMu sync.Mutex
+	forceCancelled   map[acp.SessionId]bool
 }
 
 // SessionState 单个 session 的状态。
@@ -962,8 +980,10 @@ func NewAgentConnection(log *slog.Logger, provider *providers.Provider, autoAppr
 		provider: provider,
 		bridge:   acpclient.New(log, autoApprove),
 		// 初始视为活跃：刚启动的连接不应被立即回收
-		lastUsed:      time.Now(),
-		queuedCancels: make(map[acp.SessionId]context.CancelFunc),
+		lastUsed:       time.Now(),
+		queuedCancels:  make(map[acp.SessionId]context.CancelFunc),
+		cancelConfirm:  make(map[acp.SessionId]chan struct{}),
+		forceCancelled: make(map[acp.SessionId]bool),
 	}
 }
 
@@ -1014,7 +1034,7 @@ func (c *AgentConnection) Start(ctx context.Context) error {
 	initResp, err := conn.Initialize(ctx, acp.InitializeRequest{
 		ProtocolVersion: acp.ProtocolVersionNumber,
 		ClientCapabilities: acp.ClientCapabilities{
-			Fs:       acp.FileSystemCapabilities{ReadTextFile: true, WriteTextFile: true},
+			Fs: acp.FileSystemCapabilities{ReadTextFile: true, WriteTextFile: true},
 			// 注意：不要声明 Terminal 能力 —— terminal 尚未真正实现（CreateTerminal 等
 			// 目前是 stub）。声明后 omp（pi-coding-agent）的 bash 工具会走 ACP 远程终端
 			// 协议，拿不到输出与 exit code，导致 "missing exit status" 并崩溃退出。
@@ -1207,11 +1227,34 @@ func (c *AgentConnection) Prompt(ctx context.Context, sessionID acp.SessionId, m
 	c.bridge.Reset()
 	start := time.Now()
 
+	// 注册取消确认信号：Cancel 兜底（waitCancelConfirm）据此等待本 turn 结束，
+	// 超时未确认才升级为强制 kill。返回后（defer）关闭并清理。
+	done := make(chan struct{})
+	c.cancelConfirmMu.Lock()
+	c.cancelConfirm[sessionID] = done
+	c.cancelConfirmMu.Unlock()
+	defer func() {
+		c.cancelConfirmMu.Lock()
+		delete(c.cancelConfirm, sessionID)
+		c.cancelConfirmMu.Unlock()
+		close(done)
+	}()
+
 	resp, err := conn.Prompt(ctx, acp.PromptRequest{
 		SessionId: sessionID,
 		Prompt:    []acp.ContentBlock{acp.TextBlock(message)},
 	})
 	if err != nil {
+		// 强制 kill 兜底触发时，进程死亡使 conn.Prompt 返回连接错误：
+		// 识别为「已取消」，复用 ErrPromptCancelled 路径（广播 turn.done(cancelled)），
+		// 不对已点停止的用户报错。读后即删，避免状态滞留。
+		c.forceCancelledMu.Lock()
+		forced := c.forceCancelled[sessionID]
+		delete(c.forceCancelled, sessionID)
+		c.forceCancelledMu.Unlock()
+		if forced {
+			return nil, fmt.Errorf("%w: session %s", ErrPromptCancelled, sessionID)
+		}
 		return nil, fmt.Errorf("prompt: %w", err)
 	}
 
@@ -1225,7 +1268,8 @@ func (c *AgentConnection) Prompt(ctx context.Context, sessionID acp.SessionId, m
 }
 
 // Cancel 取消 prompt：排队中的先撤销排队（不向 agent 发任何内容），
-// 正在执行的发 ACP cancel 中断。两步都做（幂等），任意状态都能取消。
+// 正在执行的发 ACP cancel 中断；若 agent 在 cancelConfirmTimeout 内未响应取消
+// （turn 仍挂起），则升级为强制 kill agent 进程（最后手段）。三步幂等，任意状态都能取消。
 func (c *AgentConnection) Cancel(ctx context.Context, sessionID acp.SessionId) error {
 	// 第一步：撤销排队（若该会话的 prompt 仍在等待门闩）。触发后等待中的
 	// Prompt 会从队列移除并返回 ErrPromptCancelled，不落任何内容。
@@ -1243,7 +1287,57 @@ func (c *AgentConnection) Cancel(ctx context.Context, sessionID acp.SessionId) e
 		return fmt.Errorf("agent not started")
 	}
 
-	return c.conn.Cancel(ctx, acp.CancelNotification{SessionId: sessionID})
+	if err := c.conn.Cancel(ctx, acp.CancelNotification{SessionId: sessionID}); err != nil {
+		return err
+	}
+
+	// 第三步：取消确认兜底（异步）。ACP cancel 是尽力而为的通知，agent 可能
+	// 不响应（卡死的工具调用等），此时 turn 会一直挂起。在后台等待取消确认：
+	// cancelConfirmTimeout 内该会话的 turn 未结束 → 强制 kill 进程。
+	// 必须在 goroutine 中执行：调用方（ws bridge HandleCancel）运行在 WS 消息
+	// 循环里，同步阻塞会卡住后续所有消息（心跳、新 prompt）。
+	c.cancelConfirmMu.Lock()
+	done, ok := c.cancelConfirm[sessionID]
+	c.cancelConfirmMu.Unlock()
+	if ok {
+		go c.waitCancelConfirm(sessionID, done)
+	}
+	return nil
+}
+
+// waitCancelConfirm 等待取消确认，超时未确认则强制 kill agent 进程（最后手段）。
+// 三个退出出口，不泄漏 goroutine：确认到达、兜底 kill 完成、或 turn 恰好结束
+// （done 被关闭，与确认同路）。
+func (c *AgentConnection) waitCancelConfirm(sessionID acp.SessionId, done chan struct{}) {
+	select {
+	case <-done:
+		// agent 已响应取消（或 turn 恰好自然结束）：无需兜底
+		return
+	case <-time.After(cancelConfirmTimeout):
+		c.log.Warn("cancel not confirmed, force killing agent",
+			"agent", c.provider.ID, "sessionId", sessionID,
+			"timeout", cancelConfirmTimeout)
+	}
+
+	// 兜底 kill 前收窄影响面：
+	// 1) 撤销该 agent 所有排队中的 prompt，避免它们持有将死的连接，轮到执行时报错；
+	// 2) 标记本会话「被强制取消」，Prompt 返回错误时转 ErrPromptCancelled（见 Prompt）。
+	c.cancelMu.Lock()
+	for _, qc := range c.queuedCancels {
+		qc()
+	}
+	c.cancelMu.Unlock()
+
+	c.forceCancelledMu.Lock()
+	c.forceCancelled[sessionID] = true
+	c.forceCancelledMu.Unlock()
+
+	// kill 进程：cmd.Wait goroutine 自动清理状态（started=false、conn=nil），
+	// 下次使用按需重启；进程内其它 session 由 RecoverSession 机制自动恢复。
+	// Close 幂等：即使并发被其它路径触发，重复调用无害。
+	if err := c.Close(); err != nil {
+		c.log.Error("force kill agent failed", "agent", c.provider.ID, "err", err)
+	}
 }
 
 // CloseSession 关闭单个 ACP session（释放 agent 端会话资源）。

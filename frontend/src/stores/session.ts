@@ -38,6 +38,12 @@ import type {
 const MANUALLY_RENAMED_KEY = 'zacp.manuallyRenamedSessions'
 /** 后端创建会话时使用的默认标题；首条 prompt 后服务端可能改为摘要标题。 */
 const DEFAULT_SESSION_TITLE = '新会话'
+/**
+ * 取消确认保险丝：点击停止后，若后端广播 turn.done/error 丢失（如 WS 断线、
+ * agent 未响应），cancelling 状态会卡住界面。此处兜底强推收尾。
+ * 后端最坏路径为 20s 超时 kill + 广播，这里留 5s 余量。
+ */
+const CANCEL_FUSE_MS = 25_000
 
 /** 实时工具调用卡片（流式 turn 中显示，turn.done 后随历史 events 持久化渲染） */
 export interface ToolCard {
@@ -57,8 +63,8 @@ export interface PendingPermission {
   options: PermissionOption[]
 }
 
-/** 会话 turn 状态：idle=可发送 / queued=已发送排队中（可取消）/ streaming=流式进行中 */
-export type SessionStreamStatus = 'idle' | 'queued' | 'streaming'
+/** 会话 turn 状态：idle=可发送 / queued=已发送排队中（可取消）/ streaming=流式进行中 / cancelling=已点停止、等待取消确认 */
+export type SessionStreamStatus = 'idle' | 'queued' | 'streaming' | 'cancelling'
 
 /**
  * 会话工作台状态（P2：REST 数据 + WebSocket 流式发送）。
@@ -94,8 +100,8 @@ export const useSessionStore = defineStore('session', () => {
   // 组件经 statusOf / streamBlocksOf 等取当前会话的值。
   // ---------------------------------------------------------------------------
 
-  /** 会话 turn 状态：idle=可发送 / queued=已发送排队中（可取消）/ streaming=流式进行中 */
-  type SessionStreamStatus = 'idle' | 'queued' | 'streaming'
+  /** 会话 turn 状态：idle=可发送 / queued=已发送排队中（可取消）/ streaming=流式进行中 / cancelling=已点停止、等待取消确认 */
+  type SessionStreamStatus = 'idle' | 'queued' | 'streaming' | 'cancelling'
 
   /** 各会话 turn 状态（key: DB session id；缺失视为 idle） */
   const statusBySession = ref<Record<number, SessionStreamStatus>>({})
@@ -968,11 +974,19 @@ export const useSessionStore = defineStore('session', () => {
    * 取消回复（发送 cancel 帧）。
    * 按会话语义：排队中的 prompt 被后端撤销排队（广播 turn.done(cancelled)），
    * 正在执行的 prompt 被 ACP cancel 中断——两者都不影响其它会话的 turn。
-   * 本地立即复位（幂等；后端 turn.done 到达时再走一遍收尾）。
+   *
+   * 取消确认状态机：点击后置 cancelling（停止按钮禁用 + 显示「正在停止…」，
+   * 防止用户重复点击），等后端广播 turn.done/error 复位为 idle。
+   * 若广播丢失（WS 断线 / agent 不响应），由 CANCEL_FUSE_MS 保险丝强推收尾，
+   * 保证界面不会一直卡在 cancelling（后端 20s kill 兜底在此余量内完成）。
    */
   function cancelSend(sessionId?: number) {
     const sid = sessionId ?? currentId.value
     if (sid === null) {
+      return
+    }
+    // 幂等守卫：已在取消确认中，忽略重复点击
+    if (statusOf(sid) === 'cancelling') {
       return
     }
     // 优先用发送时快照（草稿不在 sessions 列表），其次当前列表
@@ -984,7 +998,14 @@ export const useSessionStore = defineStore('session', () => {
         agentId: session.agentId,
       })
     }
-    endStreamTurn(sid)
+    // 不立即 endStreamTurn：保留「正在停止…」提示，等后端 turn.done/error 复位
+    statusBySession.value[sid] = 'cancelling'
+    // 保险丝：广播丢失时兜底复位，避免 cancelling 卡死
+    setTimeout(() => {
+      if (statusBySession.value[sid] === 'cancelling') {
+        endStreamTurn(sid)
+      }
+    }, CANCEL_FUSE_MS)
   }
 
   function clearStreamError() {

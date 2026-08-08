@@ -60,6 +60,7 @@ export default {
     send: '发送',
     stop: '停止',
     queued: '排队中，前一个对话完成后自动开始',
+    stopping: '正在停止…',
     agent: 'Agent',
     workspace: '工作区',
     selectWorkspace: '选择工作区',

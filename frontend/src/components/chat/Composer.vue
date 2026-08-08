@@ -397,11 +397,20 @@ function onKeydown(e: KeyboardEvent) {
           <n-spin :size="13" />
           {{ t('chat.queued') }}
         </span>
+        <!-- 停止确认中：文字提示用户正在停止，避免用户以为卡住而重复点击 -->
+        <span
+          v-else-if="status === 'cancelling'"
+          class="flex items-center gap-1.5 text-xs text-ink-muted"
+        >
+          <n-spin :size="13" />
+          {{ t('chat.stopping') }}
+        </span>
         <n-button
           v-if="status !== 'idle'"
           type="error"
           size="medium"
           circle
+          :disabled="status === 'cancelling'"
           @click="emit('cancel')"
         >
           <template #icon>

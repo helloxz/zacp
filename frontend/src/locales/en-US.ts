@@ -49,6 +49,7 @@ export default {
     send: 'Send',
     stop: 'Stop',
     queued: 'Queued — will start after the previous turn finishes',
+    stopping: 'Stopping…',
     agent: 'Agent',
     workspace: 'Workspace',
     selectWorkspace: 'Select workspace',
