@@ -27,13 +27,13 @@ type EventBridge struct {
 	msgRepo     *store.MessageRepository
 	log         *slog.Logger
 
-	mu sync.Mutex
-	// activeSessionByAgent 各 agent 当前「真正在执行」的会话（ACP session id）。
-	// 由 SetupEventCallback 在排队门闩获取成功（promptStartedHook）时按 agent 更新，
-	// 排队中的 prompt 不会覆盖它。按 agent 而非全局单值：跨 agent 并行时，
-	// 每个 agent 的权限请求路由到各自正在执行的会话，不串台。
-	activeSessionByAgent map[string]string
-	// pendingPermissions 等待前端回传的权限请求（permissionID → 响应通道）
+	// promptOrderTail 让 WS 按收到帧的顺序进入 Manager 全局 FIFO；前置落库耗时
+	// 不会导致后来的请求抢先取得执行槽位。
+	promptOrderMu   sync.Mutex
+	promptOrderTail chan struct{}
+
+	// pendingPermissions 等待前端回传的权限请求（permissionID → 响应通道）。
+	// ACP 请求自身带 sessionId，因此多个 session 可独立挂起，不依赖 Agent 的单一当前会话。
 	pendingPermissions sync.Map
 }
 
@@ -43,24 +43,41 @@ const permissionTimeout = 5 * time.Minute
 
 // NewEventBridge 创建事件桥接器
 func NewEventBridge(handler *Handler, mgr *manager.Manager, sessionRepo *store.SessionRepository, msgRepo *store.MessageRepository, log *slog.Logger) *EventBridge {
+	ready := make(chan struct{})
+	close(ready)
 	return &EventBridge{
-		handler:              handler,
-		manager:              mgr,
-		sessionRepo:          sessionRepo,
-		msgRepo:              msgRepo,
-		log:                  log,
-		activeSessionByAgent: make(map[string]string),
+		handler:         handler,
+		manager:         mgr,
+		sessionRepo:     sessionRepo,
+		msgRepo:         msgRepo,
+		log:             log,
+		promptOrderTail: ready,
 	}
 }
 
-// NewEventBridge 组装完成后，由调用方（cmd/server）注入「prompt 开始执行」钩子：
-// 排队门闩获取成功（真正执行）时才注册该会话的事件回调（SetupEventCallback），
-// 排队期间不注册——执行中会话的回调不被后到的 prompt 覆盖（见 manager.promptGate）。
+// newPromptOrderTicket 返回一个按 WS 帧到达顺序串联的等待票据。
+// release 可安全重复调用：前置准备失败、排队取消和成功入队都走同一收尾路径。
+func (b *EventBridge) newPromptOrderTicket() (<-chan struct{}, func()) {
+	b.promptOrderMu.Lock()
+	wait := b.promptOrderTail
+	next := make(chan struct{})
+	b.promptOrderTail = next
+	b.promptOrderMu.Unlock()
 
-// OnPromptStarted 在 manager 排队门闩获取成功（本会话 prompt 真正开始执行）时调用：
-//  1. 注册该会话的事件回调（SetupEventCallback，见上）；
-//  2. 广播 turn.started——前端据此把「排队中（queued）」切换为「流式（streaming）」。
-//     立即执行的会话几乎瞬间收到（不显示排队中），真正排队的会话在轮到自己时才收到。
+	var once sync.Once
+	release := func() {
+		once.Do(func() { close(next) })
+	}
+	return wait, release
+}
+
+// NewEventBridge 组装完成后，由调用方（cmd/server）注入「prompt 开始执行」钩子：
+// 全局三槽位获取成功（真正执行）时注册该会话的事件处理并广播 turn.started，
+// 排队期间不注册，避免未开始的 session 覆盖正在执行的回调。
+
+// OnPromptStarted 在全局执行槽位获取成功、本会话 prompt 即将发送时调用：
+// 1. 注册按 ACP session id 路由的事件处理器；
+// 2. 广播 turn.started，让前端把「排队中」切换为「流式」。
 func (b *EventBridge) OnPromptStarted(agentID, sessionID string) {
 	if err := b.SetupEventCallback(agentID, sessionID); err != nil {
 		b.log.Warn("setup event callback on prompt started", "agentID", agentID, "sessionID", sessionID, "err", err)
@@ -102,23 +119,17 @@ func (b *EventBridge) EnsureSessionUpdateHandlers(agentID string) error {
 	return nil
 }
 
-// SetupEventCallback 为 Agent 连接设置事件回调（agent 级，幂等；多次调用覆盖注册）。
-// 各 agent 当前「真正在执行」的会话（权限请求按此路由）；调用时机由
-// manager 的 promptStartedHook 保证——排队门闩获取成功后才会调用，因此
-// 排队期间该 agent 的槽位仍指向真正在执行的那个会话，不串台。
+// SetupEventCallback 为 Agent 连接设置按 session 路由的事件/权限处理器。
+// 回调可以在多个 prompt 并发执行时重复设置；事件和权限请求均携带 ACP session id，
+// 不再依赖「每个 Agent 只有一个当前执行 session」的隐含前提。
 func (b *EventBridge) SetupEventCallback(agentID, sessionID string) error {
 	bridge, err := b.manager.GetBridge(agentID)
 	if err != nil {
 		return err
 	}
 
-	b.mu.Lock()
-	b.activeSessionByAgent[agentID] = sessionID
-	b.mu.Unlock()
-
 	// 事件按事件自身携带的 ACP session id 分发（client.Event.SessionID 来自
-	// SDK session/update 通知的 SessionId）——多会话排队/并行时，执行中会话
-	// 的事件始终路由回原会话，不再依赖「注册时的闭包 sessionID」。
+	// SDK session/update 通知的 SessionId），并发 session 不会互相覆盖。
 	bridge.SetOnEvent(func(event client.Event) {
 		b.handleEvent(event.SessionID, event)
 	})
@@ -307,17 +318,14 @@ func (b *EventBridge) handleEvent(sessionID string, event client.Event) {
 }
 
 // HandlePermissionRequest 处理 agent 的权限请求（在 RequestPermission 回调中同步调用）：
-// 按 agentID 查「正在执行的会话」广播 permission.request 给前端弹窗，等待用户选择回传；
+// 权限请求自身带 ACP sessionId，按请求归属广播给前端；每个 permission 独立等待用户选择。
 // 超时（permissionTimeout）自动取消，避免阻塞 agent turn。
 func (b *EventBridge) HandlePermissionRequest(agentID string, req acp.RequestPermissionRequest) (acp.RequestPermissionResponse, error) {
 	permissionID := fmt.Sprintf("perm-%d", time.Now().UnixNano())
 	ch := make(chan acp.RequestPermissionResponse, 1)
 	b.pendingPermissions.Store(permissionID, ch)
 
-	b.mu.Lock()
-	sessionID := b.activeSessionByAgent[agentID]
-	b.mu.Unlock()
-
+	sessionID := string(req.SessionId)
 	// 转成前端友好结构（SDK 类型直接序列化字段不稳定，显式挑字段）
 	toolCall := map[string]interface{}{
 		"toolCallId": string(req.ToolCall.ToolCallId),
@@ -389,13 +397,10 @@ func deriveTitle(message string) string {
 }
 
 // HandlePrompt 处理 WebSocket 的 prompt 消息（每帧一个 goroutine，可并发进入）。
-// 并发语义（方案 B「展示并发、执行串行」）：
-//  1. 同 agent 的 prompt 由 manager.promptGate 串行执行，后续 prompt 进入 FIFO 排队；
-//     排队期间不注册事件回调（promptStartedHook 在真正执行时才注册），
-//     因此执行中会话的流式事件不会串到排队中的会话；
-//  2. 排队中的 prompt 被 Cancel 撤销时返回 ErrPromptCancelled，
-//     此处广播 turn.done(cancelled) 让前端复位「排队中」状态，不报错、不落库；
-//  3. 跨 agent 的 prompt 天然并行（门闩按 agent 连接隔离）。
+// 并发语义：全局最多 3 个 prompt 进入 ACP，更多请求按 FIFO 排队；
+// 不同 session 的事件、回复和权限按 ACP session id 隔离。
+// 排队中的 prompt 被 Cancel 撤销时返回 ErrPromptCancelled，此处广播
+// turn.done(cancelled) 让前端复位「排队中」状态，不报错、不落库。
 //
 // 流程：
 //  1. 按需启动 agent 进程
@@ -403,7 +408,21 @@ func deriveTitle(message string) string {
 //  3. 草稿转正
 //  4. 经 manager.Prompt 排队执行（事件回调由 onStarted 钩子注册）
 //  5. 落库助手回复、touch 会话（驱动侧栏排序），广播 turn.done
+//
+// HandlePrompt 处理一个不要求 WS 到达顺序的 prompt 调用（兼容 REST/测试调用方）。
 func (b *EventBridge) HandlePrompt(ctx context.Context, sessionID, agentID, message string) error {
+	return b.handlePrompt(ctx, sessionID, agentID, message, nil, nil)
+}
+
+// HandlePromptWithOrder 处理 WS prompt：等待前序帧完成入队，再进入 Manager 全局 FIFO。
+func (b *EventBridge) HandlePromptWithOrder(ctx context.Context, sessionID, agentID, message string, wait <-chan struct{}, release func()) error {
+	return b.handlePrompt(ctx, sessionID, agentID, message, wait, release)
+}
+
+func (b *EventBridge) handlePrompt(ctx context.Context, sessionID, agentID, message string, wait <-chan struct{}, release func()) error {
+	if release != nil {
+		defer release()
+	}
 	// 按需启动兜底：服务端重启后仅预启动第一个 agent，用户直接对其它
 	// agent 的旧会话发消息时，这里先确保进程已启动——否则事件回调注册
 	// 的 GetBridge 会返回 "agent not started"，根本走不到 manager.Prompt。
@@ -442,7 +461,14 @@ func (b *EventBridge) HandlePrompt(ctx context.Context, sessionID, agentID, mess
 		_ = b.sessionRepo.UpdateTitle(dbSession.ID, deriveTitle(message))
 	}
 
-	result, err := b.manager.Prompt(ctx, agentID, sessionID, message)
+	if wait != nil {
+		select {
+		case <-wait:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	result, err := b.manager.PromptWithAdmission(ctx, agentID, sessionID, message, release)
 	if err != nil && manager.IsUnknownSessionErr(err) {
 		// ACP session 失效（服务端/agent 重启后 DB 记录仍在、agent 端已丢失）：
 		// 自动恢复并重试一次，前端无感知。事件回调由 onStarted 钩子注册，
@@ -450,7 +476,7 @@ func (b *EventBridge) HandlePrompt(ctx context.Context, sessionID, agentID, mess
 		b.log.Warn("acp session invalid, recovering", "sessionID", sessionID, "err", err)
 		if newID, ok := b.recoverSession(ctx, dbSession, agentID, sessionID); ok {
 			sessionID = newID
-			result, err = b.manager.Prompt(ctx, agentID, sessionID, message)
+			result, err = b.manager.PromptWithAdmission(ctx, agentID, sessionID, message, release)
 		}
 	}
 	if err != nil {

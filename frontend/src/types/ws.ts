@@ -57,8 +57,8 @@ export interface PermissionToolCall {
 
 /** 服务端 → 客户端消息。
  * 除 session.ready/pong 外，广播类消息均携带 sessionId（**ACP session id**）：
- * 同一 WS 连接可同时订阅多个会话（同 agent 排队、跨 agent 并行），
- * 前端按此字段把事件路由到对应 DB 会话的流式槽位，避免串台。 */
+ * 同一 WS 连接可同时订阅多个会话；全局三槽位排队/并行时，前端按 sessionId
+ * 把事件路由到对应 DB 会话的流式槽位，避免串台。 */
 export type WsServerMessage =
   | { type: 'session.ready'; sessionId?: string; agentId?: string }
   | { type: 'event'; sessionId?: string; event: WsEvent }

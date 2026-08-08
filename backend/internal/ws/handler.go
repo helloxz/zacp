@@ -136,9 +136,8 @@ func (h *Handler) BroadcastTurnDone(sessionID, reply, stopReason string) {
 }
 
 // BroadcastTurnStarted 向指定会话广播轮次开始执行消息（携带 sessionId）：
-// 后端排队门闩获取成功、agent 已开始处理本会话 prompt 时发出。
-// 前端据此把「排队中（queued）」切换为「流式（streaming）」——立即执行的
-// 会话几乎瞬间收到（不显示排队中），真正排队的会话在轮到自己时才收到。
+// 全局三槽位获取成功、agent 已开始处理本会话 prompt 时发出；前端据此把
+// 「排队中（queued）」切换为「流式（streaming）」。
 func (h *Handler) BroadcastTurnStarted(sessionID string) {
 	h.BroadcastToSession(sessionID, ServerMessage{
 		Type:      MsgTypeTurnStarted,

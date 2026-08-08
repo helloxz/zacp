@@ -101,7 +101,7 @@ async function onSubmit(payload: ComposerSubmitPayload) {
   try {
     await sessionStore.sendViaWs(session.id, text)
   } catch (e) {
-    sessionStore.streamError = e instanceof Error ? e.message : String(e)
+    sessionStore.setSessionStreamError(session.id, e instanceof Error ? e.message : String(e))
   }
 }
 
@@ -151,18 +151,18 @@ function onNewProjectFromHero() {
         />
       </div>
 
-      <!-- 发送/流式错误条（可关闭） -->
+      <!-- 当前会话发送/流式错误条（按 session 隔离） -->
       <div
-        v-if="sessionStore.streamError"
+        v-if="sessionStore.streamErrorOf(current.id)"
         class="mx-4 mb-2 flex items-center justify-between rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600 ring-1 ring-inset ring-red-100 dark:bg-red-950/40 dark:text-red-400 dark:ring-red-900/50"
       >
         <span class="truncate">
-          {{ t('chat.errorTitle') }}: {{ sessionStore.streamError }}
+          {{ t('chat.errorTitle') }}: {{ sessionStore.streamErrorOf(current.id) }}
         </span>
         <button
           class="ml-3 shrink-0 text-red-400 hover:text-red-600"
           aria-label="close"
-          @click="sessionStore.clearStreamError()"
+          @click="sessionStore.clearSessionStreamError(current.id)"
         >
           ✕
         </button>

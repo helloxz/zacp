@@ -36,7 +36,14 @@ type Manager struct {
 	idleTimeout time.Duration
 
 	mu     sync.Mutex
-	agents map[string]*AgentConnection // agentID -> connection
+	agents map[string]*AgentConnection // agentID -> connection；一个连接可承载多个 ACP session
+
+	// promptGate 是所有 Agent 共享的执行槽位：最多 3 个 prompt 同时进入 ACP，
+	// 其余按到达顺序等待；等待上下文可由 Cancel 撤销。全局而非按 Agent，
+	// 保证不同 Agent 的并发也计入同一个上限。
+	promptGate promptGate
+	promptMu   sync.Mutex
+	prompts    map[promptKey]*promptEntry
 
 	// starting 记录进行中的 agent 启动（StartAgent 并发去重与等待）。
 	// 启动中的 agent 不在 agents 里，读者（ListAgents/GetAgentStatus/acquireAgent
@@ -49,9 +56,8 @@ type Manager struct {
 	// agents（防止 Close 清空 map 后发起者把连接写回，泄漏进程）。
 	closed bool
 
-	// promptStartedHook 由外部（EventBridge）注入：agent 连接每次真正开始执行
-	// prompt（排队门闩获取成功）时回调，用于按会话注册事件回调——排队期间
-	// 不注册，执行中会话的回调不会被后到的 prompt 覆盖（见 ws.EventBridge）。
+	// promptStartedHook 由外部（EventBridge）注入：全局槽位获取成功、prompt
+	// 即将发送到 ACP 时回调，用于注册按 session 路由的事件处理。
 	promptStartedHook func(agentID, sessionID string)
 
 	// 空闲回收器控制通道；idleTimeout <= 0 时不启动
@@ -88,6 +94,8 @@ func New(log *slog.Logger, cfg Config) *Manager {
 		idleTimeout: cfg.IdleTimeout,
 		agents:      make(map[string]*AgentConnection),
 		starting:    make(map[string]*startEntry),
+		promptGate:  newPromptGate(maxConcurrentPrompts),
+		prompts:     make(map[promptKey]*promptEntry),
 	}
 
 	// 启用空闲回收：后台定时扫描（固定 5 分钟间隔；扫描只依赖 lastUsed
@@ -128,8 +136,8 @@ func (m *Manager) GetAgentStatus(agentID string) (*AgentStatus, error) {
 	if conn, exists := m.agents[agentID]; exists {
 		conn.mu.Lock()
 		status.Running = conn.started
-		if conn.currentSession != nil {
-			status.SessionID = string(conn.currentSession.ID)
+		if conn.lastSessionID != "" {
+			status.SessionID = string(conn.lastSessionID)
 		}
 		conn.mu.Unlock()
 	}
@@ -154,8 +162,8 @@ func (m *Manager) ListAgents() []*AgentStatus {
 		if conn, exists := m.agents[id]; exists {
 			conn.mu.Lock()
 			status.Running = conn.started
-			if conn.currentSession != nil {
-				status.SessionID = string(conn.currentSession.ID)
+			if conn.lastSessionID != "" {
+				status.SessionID = string(conn.lastSessionID)
 			}
 			conn.mu.Unlock()
 		}
@@ -172,98 +180,127 @@ func (m *Manager) SetPromptStartedHook(fn func(agentID, sessionID string)) {
 	m.promptStartedHook = fn
 }
 
+// cancelConfirmTimeout 是 ACP cancel 无确认时的 Agent 进程级强杀兜底。
+// 保持为变量，便于测试缩短等待时间。
+var cancelConfirmTimeout = 20 * time.Second
+
 // ErrPromptCancelled 排队中的 prompt 被用户取消（撤销排队）。
 // 与「正在执行的 prompt 被 ACP cancel」不同：撤销排队时 agent 尚未收到任何内容，
 // 调用方（ws bridge）据此广播 turn.done(cancelled) 复位前端「排队中」状态，不报错。
 var ErrPromptCancelled = errors.New("prompt cancelled while queued")
 
-// cancelConfirmTimeout 取消确认兜底超时：发完 ACP session/cancel 后，若该
-// session 的执行中 turn 在此时间内未结束（agent 未响应取消，如工具调用卡死），
-// 则强制 kill 整个 agent 进程（最后手段；进程重启与 session 自动恢复由既有
-// 机制负责）。做成包级变量而非 const，便于单测缩短超时。
-var cancelConfirmTimeout = 20 * time.Second
+// ErrPromptInProgress 表示同一 ACP session 已有一轮 prompt 在执行或排队。
+// 前端本身会禁用输入框，后端仍保留该保护，避免绕过 WebSocket 状态机后串联两轮。
+var ErrPromptInProgress = errors.New("prompt already in progress")
+
+const maxConcurrentPrompts = 3
+
+type promptKey struct {
+	agentID   string
+	sessionID string
+}
+
+type promptEntry struct {
+	cancelled bool
+	started   bool
+	cancel    context.CancelFunc
+}
+
+// promptWaiter 表示等待全局执行槽位的 prompt。
+type promptWaiter struct {
+	ch chan struct{}
+}
+
+// promptGate 是可取消的有界 FIFO 执行门闩。
+// active 表示已获得槽位的 prompt 数；槽位释放时按队列顺序唤醒等待者。
+type promptGate struct {
+	mu       sync.Mutex
+	capacity int
+	active   int
+	queue    []*promptWaiter
+}
+
+func newPromptGate(capacity int) promptGate {
+	if capacity < 1 {
+		capacity = 1
+	}
+	return promptGate{capacity: capacity}
+}
 
 // IsPromptCancelledErr 判断错误是否为排队撤销。
 func IsPromptCancelledErr(err error) bool {
 	return errors.Is(err, ErrPromptCancelled)
 }
 
-// promptGate 可取消排队门闩：同一 AgentConnection 的 prompt 串行执行，
-// 后续 prompt 进入 FIFO 等待队列；等待者可通过 context 取消撤销排队。
-// 锁在持有者之间「传递」：release 唤醒队首（locked 保持 true），队首被取消时
-// 继续唤醒下一个，队列清空才置 locked=false——因此任意时刻只有一人持有。
-type promptGate struct {
-	mu     sync.Mutex
-	locked bool
-	queue  []chan struct{}
+// acquire 获取全局槽位；ctx 取消时从 FIFO 队列撤销，不占用槽位。
+func (g *promptGate) acquire(ctx context.Context) (func(), error) {
+	return g.acquireWithAdmission(ctx, nil)
 }
 
-// acquire 获取门闩；ctx 取消时撤销排队并返回 ctx.Err()（不持有门闩）。
-func (g *promptGate) acquire(ctx context.Context) (func(), error) {
+// acquireWithAdmission 在请求已经登记为 FIFO 队列成员后调用 admitted。
+// 这样后继请求可以及时登记并支持取消，同时槽位分配仍保持先来先得。
+func (g *promptGate) acquireWithAdmission(ctx context.Context, admitted func()) (func(), error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
 	g.mu.Lock()
-	if !g.locked {
-		g.locked = true
+	if g.active < g.capacity {
+		g.active++
 		g.mu.Unlock()
+		if admitted != nil {
+			admitted()
+		}
 		return g.release, nil
 	}
-	ch := make(chan struct{})
-	g.queue = append(g.queue, ch)
+	w := &promptWaiter{ch: make(chan struct{})}
+	g.queue = append(g.queue, w)
 	g.mu.Unlock()
+	if admitted != nil {
+		admitted()
+	}
 
 	select {
-	case <-ch:
-		// 轮到自己：release 已把队首（自己）移出队列并 close，锁已传递，无需再竞争。
-		// 但 ch 与 ctx.Done() 可能同时就绪而被随机选中——若调用方已取消，
-		// 不得把已取消的排队提升为执行者，锁必须继续传给下一个。
-		if ctx.Err() != nil {
-			g.mu.Lock()
-			g.passLockLocked()
-			g.mu.Unlock()
-			return nil, ctx.Err()
+	case <-w.ch:
+		// release 已把槽位计入 active 并移出队列。取消与唤醒同时到达时，
+		// 不能让已取消的 prompt 占用槽位，必须立即转交给下一个等待者。
+		if err := ctx.Err(); err != nil {
+			g.release()
+			return nil, err
 		}
 		return g.release, nil
 	case <-ctx.Done():
-		// 撤销排队：从队列移除自己。若队列中找不到自己，说明 release 已把
-		// 锁传给自己（队首被移出并 close）而自己选择放弃——此时必须继续把锁
-		// 传给下一个等待者（或解锁），否则队列卡死。
 		g.mu.Lock()
 		found := false
-		for i, c := range g.queue {
-			if c == ch {
+		for i, queued := range g.queue {
+			if queued == w {
 				g.queue = append(g.queue[:i], g.queue[i+1:]...)
 				found = true
 				break
 			}
 		}
-		if !found {
-			// 锁已传给自己但放弃：必须把锁传给下一个等待者（pop+close，
-			// 与 release 对称——被唤醒者已在队列之外，其 release 不会重复 close），
-			// 队列为空则解锁。
-			g.passLockLocked()
-		}
 		g.mu.Unlock()
+		if !found {
+			// 槽位已经传给本 waiter，但 ctx 分支赢得了 select；归还槽位。
+			g.release()
+		}
 		return nil, ctx.Err()
 	}
 }
 
-// passLockLocked 在持有 g.mu 的前提下把锁传给下一个等待者（队首 pop+close），
-// 队列为空则解锁。release 与「唤醒后放弃」的取消分支共用。
-func (g *promptGate) passLockLocked() {
-	if len(g.queue) > 0 {
-		ch := g.queue[0]
-		g.queue = g.queue[1:]
-		close(ch)
-	} else {
-		g.locked = false
-	}
-}
-
-// release 释放门闩：把队首移出队列并唤醒（锁随之传递到队首，locked 保持 true）；
-// 队列为空时解锁。队首元素被移出后其 ch 恰好被 close 一次，不会重复 close。
+// release 归还一个槽位，并按 FIFO 顺序唤醒尽可能多的等待者。
 func (g *promptGate) release() {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	g.passLockLocked()
+	if g.active > 0 {
+		g.active--
+	}
+	for g.active < g.capacity && len(g.queue) > 0 {
+		w := g.queue[0]
+		g.queue = g.queue[1:]
+		g.active++
+		close(w.ch)
+	}
 }
 
 // startEntry 记录一次进行中的 agent 启动：并发调用 StartAgent 时，发起者
@@ -318,9 +355,8 @@ func (m *Manager) StartAgent(ctx context.Context, agentID string) error {
 	startCtx, cancel := context.WithCancel(ctx)
 	entry := &startEntry{done: make(chan struct{}), cancel: cancel}
 	m.starting[agentID] = entry
-	// 创建连接并注入「prompt 开始执行」钩子（同旧实现，锁内完成）：排队门闩
-	// 获取成功（真正执行）时才注册该会话的事件回调；排队期间不注册，执行中
-	// 会话的回调不被覆盖。锁内快照 hook，避免热重载期间的竞态。
+	// 创建连接并注入 prompt 开始及 Agent 强杀回调（锁内完成）。全局槽位
+	// 获取成功后才注册会话事件；强杀时撤销该 Agent 仍在全局队列中的 prompt。
 	conn := NewAgentConnection(m.log, provider, m.autoApprove)
 	conn.onPromptStarted = func(sessionID string) {
 		m.mu.Lock()
@@ -329,6 +365,9 @@ func (m *Manager) StartAgent(ctx context.Context, agentID string) error {
 		if fn != nil {
 			fn(agentID, sessionID)
 		}
+	}
+	conn.onAgentForceKilled = func() {
+		m.cancelQueuedPrompts(agentID)
 	}
 	m.mu.Unlock()
 
@@ -756,7 +795,7 @@ func (m *Manager) RecoverSession(ctx context.Context, agentID, oldAcpID, cwd, st
 		// 用户最后选择（DB 存档）不一致（如会话 276 修复前重建后文件里是 gpt-5.5
 		// 而 DB 是 Luna）。以 DB 为权威对账，差异项回放（omp 会把新值写回文件，
 		// 一次性自愈；正常会话对账一致，零操作）。
-		m.reconcileAfterLoad(ctx, agentID, oldAcpID, conn.LoadedConfigOptions(), storedConfigJSON)
+		m.reconcileAfterLoad(ctx, agentID, oldAcpID, conn.LoadedConfigOptions(acp.SessionId(oldAcpID)), storedConfigJSON)
 		return oldAcpID, false, nil
 	} else {
 		// load 失败不能静默吞掉：原因不同（cwd 不匹配 / agent 不支持 load /
@@ -817,30 +856,101 @@ func (m *Manager) releaseAgent(conn *AgentConnection) {
 	conn.mu.Unlock()
 }
 
-// Prompt 向指定 session 发送消息。
+// Prompt 向指定 session 发送消息，并受全局三槽位 FIFO 调度控制。
 func (m *Manager) Prompt(ctx context.Context, agentID, sessionID, message string) (*PromptResult, error) {
-	// 兜底按需启动：空闲回收后用户可能持有旧引用直接发消息，
-	// 此时 agent 进程已停，acquireAgent 会自动重启（已启动时为幂等 no-op）。
+	return m.prompt(ctx, agentID, sessionID, message, nil)
+}
+
+// PromptWithAdmission 与 Prompt 相同；admitted 在请求登记进全局 FIFO 后调用，
+// 供 WebSocket 入口按帧到达顺序放行下一条请求，避免前置落库耗时造成 FIFO 反转。
+func (m *Manager) PromptWithAdmission(ctx context.Context, agentID, sessionID, message string, admitted func()) (*PromptResult, error) {
+	return m.prompt(ctx, agentID, sessionID, message, admitted)
+}
+
+func (m *Manager) prompt(ctx context.Context, agentID, sessionID, message string, admitted func()) (*PromptResult, error) {
+	key := promptKey{agentID: agentID, sessionID: sessionID}
+	qctx, qcancel := context.WithCancel(ctx)
+	entry := &promptEntry{cancel: qcancel}
+
+	m.promptMu.Lock()
+	if _, exists := m.prompts[key]; exists {
+		m.promptMu.Unlock()
+		qcancel()
+		return nil, fmt.Errorf("%w: session %s", ErrPromptInProgress, sessionID)
+	}
+	m.prompts[key] = entry
+	m.promptMu.Unlock()
+	defer func() {
+		m.promptMu.Lock()
+		delete(m.prompts, key)
+		m.promptMu.Unlock()
+		qcancel()
+	}()
+
+	release, err := m.promptGate.acquireWithAdmission(qctx, admitted)
+	if err != nil {
+		return nil, fmt.Errorf("%w: session %s", ErrPromptCancelled, sessionID)
+	}
+
+	m.promptMu.Lock()
+	if entry.cancelled || qctx.Err() != nil {
+		m.promptMu.Unlock()
+		release()
+		return nil, fmt.Errorf("%w: session %s", ErrPromptCancelled, sessionID)
+	}
+	entry.started = true
+	m.promptMu.Unlock()
+	defer release()
+
+	// 只有拿到全局槽位后才获取活跃 Agent；排队中的 prompt 不计入运行中状态。
 	conn, err := m.acquireAgent(ctx, agentID)
 	if err != nil {
 		return nil, err
 	}
 	defer m.releaseAgent(conn)
-
 	return conn.Prompt(ctx, acp.SessionId(sessionID), message)
 }
 
-// Cancel 取消指定 session 的当前 prompt。
+// Cancel 取消指定 session 的 prompt：排队中的撤销 FIFO 等待，执行中的发送 ACP cancel。
 func (m *Manager) Cancel(ctx context.Context, agentID, sessionID string) error {
+	key := promptKey{agentID: agentID, sessionID: sessionID}
+	m.promptMu.Lock()
+	entry, tracked := m.prompts[key]
+	if tracked {
+		entry.cancelled = true
+		entry.cancel()
+	}
+	started := tracked && entry.started
+	m.promptMu.Unlock()
+
+	if tracked && !started {
+		return nil
+	}
+
 	m.mu.Lock()
 	conn, exists := m.agents[agentID]
 	m.mu.Unlock()
-
 	if !exists {
+		if tracked {
+			return nil
+		}
 		return fmt.Errorf("agent '%s' not started", agentID)
 	}
 
 	return conn.Cancel(ctx, acp.SessionId(sessionID))
+}
+
+// cancelQueuedPrompts 撤销指定 Agent 在全局 FIFO 中尚未取得槽位的 prompt。
+// Agent 进程级强杀后，这些请求不能继续复用已经失效的连接。
+func (m *Manager) cancelQueuedPrompts(agentID string) {
+	m.promptMu.Lock()
+	defer m.promptMu.Unlock()
+	for key, entry := range m.prompts {
+		if key.agentID == agentID && !entry.started {
+			entry.cancelled = true
+			entry.cancel()
+		}
+	}
 }
 
 // CloseSession 关闭指定 ACP session（释放 agent 端会话资源）。
@@ -924,38 +1034,31 @@ type AgentConnection struct {
 	provider *providers.Provider
 	bridge   *acpclient.Bridge
 
-	mu             sync.Mutex
-	cmd            *exec.Cmd
-	conn           *acp.ClientSideConnection
-	stdin          io.WriteCloser
-	currentSession *SessionState
-	started        bool
-	procCancel     context.CancelFunc
-	promptGate     promptGate // 同 agent prompt 串行门闩（可取消排队）
+	mu            sync.Mutex
+	cmd           *exec.Cmd
+	conn          *acp.ClientSideConnection
+	stdin         io.WriteCloser
+	sessions      map[acp.SessionId]*SessionState
+	lastSessionID acp.SessionId
+	started       bool
+	procCancel    context.CancelFunc
 
-	// 排队撤销：queuedCancels 记录「等待门闩中」的 prompt 的取消函数（按会话），
-	// Cancel 先查这里撤销排队（不向 agent 发任何内容），再发 ACP cancel（针对正在执行的 prompt）
-	cancelMu      sync.Mutex
-	queuedCancels map[acp.SessionId]context.CancelFunc
+	// onPromptStarted 在 Manager 的全局槽位获取成功后调用：此时 prompt
+	// 即将发送，事件回调按 ACP session id 路由，不再依赖单一当前 session。
+	onPromptStarted    func(sessionID string)
+	onAgentForceKilled func()
 
-	// onPromptStarted 在排队门闩获取成功（本会话真正开始执行）后调用，
-	// 由 EventBridge 注入：此时才注册该会话的事件回调，保证排队期间
-	// 执行中会话的事件仍按原会话路由（修复旧「每次 prompt 前覆盖注册」的串台）。
-	onPromptStarted func(sessionID string)
-
-	// 空闲回收用：lastUsed 为最后一次活跃操作时间，activePrompts 为进行中的 prompt 数
+	// 空闲回收用：lastUsed 为最后一次活跃操作时间，activePrompts 为已获得
+	// 全局槽位且仍在进行中的 prompt 数。
 	lastUsed      time.Time
 	activePrompts int
 
-	// 取消确认（cancel 兜底）：
-	// cancelConfirm 记录「执行中 turn」的完成信号（按会话，同 agent 串行执行，
-	// 同一时刻至多一个）。Prompt 真正执行前注册、返回后关闭；
-	// Cancel 用它等待取消确认，cancelConfirmTimeout 内未确认则强制 kill（见 waitCancelConfirm）。
+	// 取消确认（cancel 兜底）：每个 session 独立记录完成信号，便于并发 prompt
+	// 同时等待取消确认。强杀仍是 Agent 进程级行为，见 waitCancelConfirm。
 	cancelConfirmMu sync.Mutex
 	cancelConfirm   map[acp.SessionId]chan struct{}
 	// forceCancelled 被强制 kill 的会话标记：kill 兜底触发时置位，
-	// Prompt 返回错误时据此把「进程被杀」识别为「已取消」（ErrPromptCancelled），
-	// 避免对已点停止的用户再弹错误。
+	// Prompt 返回错误时据此把进程错误识别为「已取消」。
 	forceCancelledMu sync.Mutex
 	forceCancelled   map[acp.SessionId]bool
 }
@@ -976,12 +1079,11 @@ func NewAgentConnection(log *slog.Logger, provider *providers.Provider, autoAppr
 		log = slog.Default()
 	}
 	return &AgentConnection{
-		log:      log,
-		provider: provider,
-		bridge:   acpclient.New(log, autoApprove),
-		// 初始视为活跃：刚启动的连接不应被立即回收
+		log:            log,
+		provider:       provider,
+		bridge:         acpclient.New(log, autoApprove),
 		lastUsed:       time.Now(),
-		queuedCancels:  make(map[acp.SessionId]context.CancelFunc),
+		sessions:       make(map[acp.SessionId]*SessionState),
 		cancelConfirm:  make(map[acp.SessionId]chan struct{}),
 		forceCancelled: make(map[acp.SessionId]bool),
 	}
@@ -1066,17 +1168,12 @@ func (c *AgentConnection) Start(ctx context.Context) error {
 		err := cmd.Wait()
 		c.log.Info("agent process exited", "agent", c.provider.ID, "err", err)
 		c.mu.Lock()
-		// 仅当 c.cmd 仍是本 goroutine 启动的进程时才清理（compare-and-clear）：
-		// 清理不得清掉更新的进程状态（如进程退出后、抢到锁前已按需重启的新进程），
-		// 否则新进程会变成 started=false、无法被 Close 杀掉的孤儿，并引发反复重启。
 		if c.cmd == cmd {
 			c.started = false
-			// 进程已退出：底层 ACP 连接必然失效，进程内存中的 session 也随进程丢失。
-			// 清空引用，避免 ListAgents 把已死的 session 当活跃展示，也避免后续
-			// 操作拿到悬挂的 conn/stdin；重启后旧 session id 在 agent 内存中不存在，
-			// Prompt 返回 unknown/unsupported session 错误，由 ws bridge / service 的
-			// 恢复逻辑（IsUnknownSessionErr + RecoverSession）自动 load 或重建。
-			c.currentSession = nil
+			// 进程退出后底层 ACP 连接和其中所有 session 都失效；清空内存索引，
+			// 后续 prompt 由恢复逻辑按 DB 中的 session id 逐个 load/recreate。
+			c.sessions = make(map[acp.SessionId]*SessionState)
+			c.lastSessionID = ""
 			c.conn = nil
 			c.stdin = nil
 			c.cmd = nil
@@ -1109,13 +1206,12 @@ func (c *AgentConnection) CreateSession(ctx context.Context, cwd string) (acp.Se
 		return "", nil, fmt.Errorf("create session: %w", err)
 	}
 
-	c.currentSession = &SessionState{
+	c.sessions[sess.SessionId] = &SessionState{
 		ID:      sess.SessionId,
 		Cwd:     cwd,
 		Created: time.Now(),
 	}
-
-	c.log.Info("session created", "agent", c.provider.ID, "sessionId", sess.SessionId, "cwd", cwd, "configOptions", len(sess.ConfigOptions))
+	c.lastSessionID = sess.SessionId
 	return sess.SessionId, sess.ConfigOptions, nil
 }
 
@@ -1147,25 +1243,27 @@ func (c *AgentConnection) LoadSession(ctx context.Context, sessionID acp.Session
 		return fmt.Errorf("load session: %w", err)
 	}
 
-	c.currentSession = &SessionState{
+	c.sessions[sessionID] = &SessionState{
 		ID:            sessionID,
 		Cwd:           cwd,
 		Created:       time.Now(),
 		ConfigOptions: res.ConfigOptions,
 	}
+	c.lastSessionID = sessionID
 
 	c.log.Info("session loaded", "agent", c.provider.ID, "sessionId", sessionID, "cwd", cwd)
 	return nil
 }
 
-// LoadedConfigOptions 返回最近一次 session/load 恢复的配置快照（锁内读，供对账）。
-func (c *AgentConnection) LoadedConfigOptions() []acp.SessionConfigOption {
+// LoadedConfigOptions 返回指定 session 最近一次 load 的配置快照（锁内读）。
+func (c *AgentConnection) LoadedConfigOptions(sessionID acp.SessionId) []acp.SessionConfigOption {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.currentSession == nil {
+	session := c.sessions[sessionID]
+	if session == nil {
 		return nil
 	}
-	return c.currentSession.ConfigOptions
+	return session.ConfigOptions
 }
 
 // PromptResult prompt 执行结果。
@@ -1178,10 +1276,8 @@ type PromptResult struct {
 }
 
 // Prompt 发送消息并等待响应。
-// 同 agent 的 prompt 经 promptGate 串行：后续 prompt 进入 FIFO 排队，
-// 排队期间不向 agent 发送任何内容（agent 端始终只有一个 turn 在执行）。
-// 排队中的 prompt 可被 Cancel 撤销（按会话，不向 agent 发任何东西）；
-// 已开始执行的 turn 由 ACP cancel 中断。
+// Manager 已在调用前取得全局执行槽位；同一 Agent 的多个 session 可以并发向
+// ACP 发送 prompt。事件缓存按 session id 隔离，取消确认也按 session 隔离。
 func (c *AgentConnection) Prompt(ctx context.Context, sessionID acp.SessionId, message string) (*PromptResult, error) {
 	message = strings.TrimSpace(message)
 	if message == "" {
@@ -1196,39 +1292,14 @@ func (c *AgentConnection) Prompt(ctx context.Context, sessionID acp.SessionId, m
 	conn := c.conn
 	c.mu.Unlock()
 
-	// 排队等待门闩用 qctx：可被 Cancel 触发取消（撤销排队）。
-	// 执行阶段仍用原 ctx——排队撤销只影响「等待」，不误伤已开始的 turn
-	// （取消执行中 turn 走下方 ACP cancel 路径）。
-	qctx, qcancel := context.WithCancel(ctx)
-	defer qcancel()
-	c.cancelMu.Lock()
-	c.queuedCancels[sessionID] = qcancel
-	c.cancelMu.Unlock()
-
-	release, err := c.promptGate.acquire(qctx)
-
-	c.cancelMu.Lock()
-	delete(c.queuedCancels, sessionID)
-	c.cancelMu.Unlock()
-
-	if err != nil {
-		// 排队期间被取消（撤销排队）：agent 尚未收到任何内容，
-		// 返回可识别错误，调用方据此广播 turn.done(cancelled) 复位前端「排队中」
-		return nil, fmt.Errorf("%w: session %s", ErrPromptCancelled, sessionID)
-	}
-	defer release()
-
-	// 真正开始执行：通知外部（EventBridge）注册本会话的事件回调，
-	// 使后续事件/turn.done 按本会话路由（排队期间不覆盖其它会话的回调）。
+	// Manager 的全局槽位已获得：现在才注册本 session 的事件回调和取消确认。
 	if c.onPromptStarted != nil {
 		c.onPromptStarted(string(sessionID))
 	}
-
-	c.bridge.Reset()
+	c.bridge.ResetSession(string(sessionID))
+	defer c.bridge.ResetSession(string(sessionID))
 	start := time.Now()
 
-	// 注册取消确认信号：Cancel 兜底（waitCancelConfirm）据此等待本 turn 结束，
-	// 超时未确认才升级为强制 kill。返回后（defer）关闭并清理。
 	done := make(chan struct{})
 	c.cancelConfirmMu.Lock()
 	c.cancelConfirm[sessionID] = done
@@ -1245,9 +1316,8 @@ func (c *AgentConnection) Prompt(ctx context.Context, sessionID acp.SessionId, m
 		Prompt:    []acp.ContentBlock{acp.TextBlock(message)},
 	})
 	if err != nil {
-		// 强制 kill 兜底触发时，进程死亡使 conn.Prompt 返回连接错误：
-		// 识别为「已取消」，复用 ErrPromptCancelled 路径（广播 turn.done(cancelled)），
-		// 不对已点停止的用户报错。读后即删，避免状态滞留。
+		// 强制 kill 兜底触发时，进程死亡使 conn.Prompt 返回连接错误；
+		// 识别为「已取消」，避免对已点停止的用户再弹错误。
 		c.forceCancelledMu.Lock()
 		forced := c.forceCancelled[sessionID]
 		delete(c.forceCancelled, sessionID)
@@ -1260,42 +1330,30 @@ func (c *AgentConnection) Prompt(ctx context.Context, sessionID acp.SessionId, m
 
 	return &PromptResult{
 		SessionID:  string(sessionID),
-		Reply:      c.bridge.AgentText(),
+		Reply:      c.bridge.AgentText(string(sessionID)),
 		StopReason: string(resp.StopReason),
-		Events:     c.bridge.Events(),
+		Events:     c.bridge.Events(string(sessionID)),
 		DurationMs: time.Since(start).Milliseconds(),
 	}, nil
 }
 
-// Cancel 取消 prompt：排队中的先撤销排队（不向 agent 发任何内容），
-// 正在执行的发 ACP cancel 中断；若 agent 在 cancelConfirmTimeout 内未响应取消
-// （turn 仍挂起），则升级为强制 kill agent 进程（最后手段）。三步幂等，任意状态都能取消。
+// Cancel 取消正在执行的 prompt；排队中的 prompt 由 Manager.Cancel 在全局 FIFO
+// 调度器中撤销。ACP cancel 无响应时仍沿用 Agent 进程级强杀兜底。
 func (c *AgentConnection) Cancel(ctx context.Context, sessionID acp.SessionId) error {
-	// 第一步：撤销排队（若该会话的 prompt 仍在等待门闩）。触发后等待中的
-	// Prompt 会从队列移除并返回 ErrPromptCancelled，不落任何内容。
-	c.cancelMu.Lock()
-	if cancel, ok := c.queuedCancels[sessionID]; ok {
-		cancel()
-	}
-	c.cancelMu.Unlock()
-
-	// 第二步：ACP cancel（针对正在执行的 prompt；对未执行的会话是 no-op，无害）
 	c.mu.Lock()
-	defer c.mu.Unlock()
-
 	if !c.started || c.conn == nil {
+		c.mu.Unlock()
 		return fmt.Errorf("agent not started")
 	}
+	conn := c.conn
+	c.mu.Unlock()
 
-	if err := c.conn.Cancel(ctx, acp.CancelNotification{SessionId: sessionID}); err != nil {
+	if err := conn.Cancel(ctx, acp.CancelNotification{SessionId: sessionID}); err != nil {
 		return err
 	}
 
-	// 第三步：取消确认兜底（异步）。ACP cancel 是尽力而为的通知，agent 可能
-	// 不响应（卡死的工具调用等），此时 turn 会一直挂起。在后台等待取消确认：
-	// cancelConfirmTimeout 内该会话的 turn 未结束 → 强制 kill 进程。
-	// 必须在 goroutine 中执行：调用方（ws bridge HandleCancel）运行在 WS 消息
-	// 循环里，同步阻塞会卡住后续所有消息（心跳、新 prompt）。
+	// ACP cancel 是尽力而为的通知，agent 可能不响应（卡死的工具调用等）。
+	// 在后台等待该 session 的完成信号，超时后仍强杀整个 Agent 进程。
 	c.cancelConfirmMu.Lock()
 	done, ok := c.cancelConfirm[sessionID]
 	c.cancelConfirmMu.Unlock()
@@ -1319,14 +1377,11 @@ func (c *AgentConnection) waitCancelConfirm(sessionID acp.SessionId, done chan s
 			"timeout", cancelConfirmTimeout)
 	}
 
-	// 兜底 kill 前收窄影响面：
-	// 1) 撤销该 agent 所有排队中的 prompt，避免它们持有将死的连接，轮到执行时报错；
-	// 2) 标记本会话「被强制取消」，Prompt 返回错误时转 ErrPromptCancelled（见 Prompt）。
-	c.cancelMu.Lock()
-	for _, qc := range c.queuedCancels {
-		qc()
+	// Agent 级强杀前，先通知 Manager 撤销该 Agent 仍在全局 FIFO 中排队的
+	// prompt，避免它们在旧连接被杀后又拿到槽位继续发送。
+	if c.onAgentForceKilled != nil {
+		c.onAgentForceKilled()
 	}
-	c.cancelMu.Unlock()
 
 	c.forceCancelledMu.Lock()
 	c.forceCancelled[sessionID] = true
@@ -1341,8 +1396,8 @@ func (c *AgentConnection) waitCancelConfirm(sessionID acp.SessionId, done chan s
 }
 
 // CloseSession 关闭单个 ACP session（释放 agent 端会话资源）。
-// 用于切 tab 时释放旧隐式草稿会话。ACP CloseSession 是可选能力
-// （sessionCapabilities.close），agent 不支持时可能报错，调用方按尽力释放处理。
+// 用于切 tab 时释放旧隐式草稿会话。ACP CloseSession 是可选能力，
+// agent 不支持时可能报错，调用方按尽力释放处理。
 func (c *AgentConnection) CloseSession(ctx context.Context, sessionID acp.SessionId) error {
 	c.mu.Lock()
 	if !c.started || c.conn == nil {
@@ -1353,6 +1408,18 @@ func (c *AgentConnection) CloseSession(ctx context.Context, sessionID acp.Sessio
 	c.mu.Unlock()
 
 	_, err := conn.CloseSession(ctx, acp.CloseSessionRequest{SessionId: sessionID})
+	if err == nil {
+		c.mu.Lock()
+		delete(c.sessions, sessionID)
+		if c.lastSessionID == sessionID {
+			c.lastSessionID = ""
+			for id := range c.sessions {
+				c.lastSessionID = id
+				break
+			}
+		}
+		c.mu.Unlock()
+	}
 	return err
 }
 

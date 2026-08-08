@@ -60,9 +60,11 @@ export interface ToolCard {
 
 /** 待处理的权限请求（permission.request 后、用户选择前） */
 export interface PendingPermission {
-  permissionId: string
-  toolCall: PermissionToolCall | null
-  options: PermissionOption[]
+	/** 权限所属的 DB session id，用于切换会话时准确显示弹窗 */
+	sessionId: number
+	permissionId: string
+	toolCall: PermissionToolCall | null
+	options: PermissionOption[]
 }
 
 /** 会话 turn 状态：idle=可发送 / queued=已发送排队中（可取消）/ streaming=流式进行中 / cancelling=已点停止、等待取消确认 */
@@ -94,15 +96,12 @@ export const useSessionStore = defineStore('session', () => {
   const loadingError = ref<string | null>(null)
 
   // ---------------------------------------------------------------------------
-  // 流式状态（方案 B「展示并发、执行串行」）：所有 turn 状态按会话隔离。
-  //
-  // 后端允许：同 agent 串行排队（后续 prompt 进入 FIFO）、跨 agent 天然并行。
-  // 因此同一时刻可能有「A streaming、B queued」或「A/B 都 streaming」，
-  // 全局单值无法表达——一律以 DB session id 为 key 的 Map 存储，
-  // 组件经 statusOf / streamBlocksOf 等取当前会话的值。
+  // 流式状态：所有 turn 状态按 DB session id 隔离。
+  // 后端全局最多 3 个 prompt 并发执行，其余按 FIFO 排队；不同 session 可同时
+  // streaming，排队中的 session 可取消。组件经 statusOf / streamBlocksOf 等取值。
   // ---------------------------------------------------------------------------
 
-  /** 会话 turn 状态：idle=可发送 / queued=已发送排队中（可取消）/ streaming=流式进行中 / cancelling=已点停止、等待取消确认 */
+  /** 各会话 turn 状态（key: DB session id；缺失视为 idle） */
   type SessionStreamStatus = 'idle' | 'queued' | 'streaming' | 'cancelling'
 
   /** 各会话 turn 状态（key: DB session id；缺失视为 idle） */
@@ -112,10 +111,19 @@ export const useSessionStore = defineStore('session', () => {
    * 与状态机同步：queued/streaming 都算进行中；turn.done/error/取消后移除。
    */
   const runningSessionIds = ref<Set<number>>(new Set())
-  /** 流式发送错误（ChatPane 错误条展示；按会话覆盖，展示时取当前会话） */
+  /** 新建会话/草稿阶段使用的全局错误；已有 session 的错误单独存储。 */
   const streamError = ref<string | null>(null)
-  /** 待处理的权限请求（非空时 PermissionModal 显示） */
-  const pendingPermission = ref<PendingPermission | null>(null)
+  /** 已有 session 的错误提示，避免后台 session 的错误串到当前窗口。 */
+  const streamErrorBySession = ref<Record<number, string>>({})
+  /** 各 session 的待处理权限请求队列；当前页面只展示当前 session 队首。 */
+  const pendingPermissionsBySession = ref<Record<number, PendingPermission[]>>({})
+  /** 当前 session 的队首权限请求；切换 session 后自动切换到对应队列。 */
+  const pendingPermission = computed<PendingPermission | null>(() => {
+    const sessionId = currentId.value
+    return sessionId === null
+      ? null
+      : (pendingPermissionsBySession.value[sessionId]?.[0] ?? null)
+  })
   /** 各会话当前 turn 的实时工具调用卡片（流式期间展示；turn.done 清空，历史由消息 events 渲染） */
   const activeToolCardsBySession = ref<Record<number, ToolCard[]>>({})
   /** 各会话当前 turn 的实时执行计划（plan 事件整体替换；turn.done 清空，历史由 latestPlanOf 从消息 events 恢复） */
@@ -126,7 +134,8 @@ export const useSessionStore = defineStore('session', () => {
    * 消息切换到历史路径（由消息 events 重建 text/tool）。
    */
   const streamBlocksBySession = ref<Record<number, MessageBlock[]>>({})
-
+  /** 各会话当前流式 assistant 占位消息 id（-1 表示无占位） */
+  const streamMsgIdBySession = ref<Record<number, number>>({})
 
   /**
    * 取最新 100 条历史消息中的最后一个执行计划。
@@ -152,9 +161,6 @@ export const useSessionStore = defineStore('session', () => {
     }
     return latest
   }
-
-  /** 各会话当前流式 assistant 占位消息 id（-1 表示无占位） */
-  const streamMsgIdBySession = ref<Record<number, number>>({})
   /**
    * 当前会话的配置项（模型/思考强度/mode 等，来自 GET config-options）。
    * agent 不支持时为空数组 → 前端隐藏配置 UI（用户约定「ACP 不支持才隐藏」）。
@@ -204,19 +210,21 @@ export const useSessionStore = defineStore('session', () => {
     dbIdByAcpSession.set(session.acpSessionId, session.id)
   }
 
-  function dropSessionIndexes(sessionId: number) {
-    for (const [acpId, dbId] of dbIdByAcpSession) {
-      if (dbId === sessionId) dbIdByAcpSession.delete(acpId)
-    }
-    sentSessions.delete(sessionId)
-    initialSessionDetailRefresh.delete(sessionId)
-    delete statusBySession.value[sessionId]
-    runningSessionIds.value.delete(sessionId)
-    delete streamBlocksBySession.value[sessionId]
-    delete activeToolCardsBySession.value[sessionId]
-    delete activePlanBySession.value[sessionId]
-    delete streamMsgIdBySession.value[sessionId]
-  }
+	function dropSessionIndexes(sessionId: number) {
+		for (const [acpId, dbId] of dbIdByAcpSession) {
+			if (dbId === sessionId) dbIdByAcpSession.delete(acpId)
+		}
+		sentSessions.delete(sessionId)
+		initialSessionDetailRefresh.delete(sessionId)
+		delete statusBySession.value[sessionId]
+		runningSessionIds.value.delete(sessionId)
+		delete streamErrorBySession.value[sessionId]
+		delete pendingPermissionsBySession.value[sessionId]
+		delete streamBlocksBySession.value[sessionId]
+		delete activeToolCardsBySession.value[sessionId]
+		delete activePlanBySession.value[sessionId]
+		delete streamMsgIdBySession.value[sessionId]
+	}
   /** 首轮 prompt 后若仍是默认标题，安排一次会话详情同步；手动改名会话不参与。 */
   function markInitialSessionDetailRefresh(session: ChatSession) {
     if (initialSessionDetailRefresh.has(session.id)) return
@@ -231,6 +239,30 @@ export const useSessionStore = defineStore('session', () => {
     if (sessionId === null || sessionId === undefined) return 'idle'
     return statusBySession.value[sessionId] ?? 'idle'
   }
+
+	/** 取指定 session 的错误提示；后台 session 的错误不污染当前窗口。 */
+	function streamErrorOf(sessionId: number | null | undefined): string | null {
+		if (sessionId === null || sessionId === undefined) return null
+		return streamErrorBySession.value[sessionId] ?? null
+	}
+
+	function setSessionStreamError(sessionId: number, message: string | null) {
+		if (message === null) {
+			delete streamErrorBySession.value[sessionId]
+		} else {
+			streamErrorBySession.value[sessionId] = message
+		}
+	}
+
+	function clearSessionStreamError(sessionId: number) {
+		delete streamErrorBySession.value[sessionId]
+	}
+
+	/** 侧栏权限提醒使用：有待处理权限时仍属于 running，但颜色单独区分。 */
+	function hasPendingPermission(sessionId: number | null | undefined): boolean {
+		if (sessionId === null || sessionId === undefined) return false
+		return (pendingPermissionsBySession.value[sessionId]?.length ?? 0) > 0
+	}
 
   /** 取会话的实时消息块时间线（空数组兜底） */
   function streamBlocksOf(sessionId: number | null | undefined): MessageBlock[] {
@@ -637,10 +669,13 @@ export const useSessionStore = defineStore('session', () => {
   }
 
 
-  /** 用户选择权限选项：回传 permission 帧并关闭弹窗 */
+  /** 用户选择当前 session 的队首权限选项：回传后移除该请求，继续显示下一项。 */
   function resolvePermission(optionId: string) {
-    const pending = pendingPermission.value
-    if (!pending) {
+    const sessionId = currentId.value
+    const pending = sessionId === null
+      ? null
+      : (pendingPermissionsBySession.value[sessionId]?.[0] ?? null)
+    if (sessionId === null || !pending) {
       return
     }
     acpSocket.send({
@@ -648,7 +683,12 @@ export const useSessionStore = defineStore('session', () => {
       permissionId: pending.permissionId,
       optionId,
     })
-    pendingPermission.value = null
+    const queue = pendingPermissionsBySession.value[sessionId]
+    if (queue && queue.length > 1) {
+      queue.shift()
+    } else {
+      delete pendingPermissionsBySession.value[sessionId]
+    }
   }
 
   /** 加载当前会话配置项（进入会话时调用；agent 不支持时为空数组） */
@@ -698,6 +738,7 @@ export const useSessionStore = defineStore('session', () => {
     streamBlocksBySession.value[sessionId] = []
     activeToolCardsBySession.value[sessionId] = []
     activePlanBySession.value[sessionId] = null
+    delete pendingPermissionsBySession.value[sessionId]
     runningSessionIds.value.delete(sessionId)
   }
 
@@ -810,9 +851,8 @@ export const useSessionStore = defineStore('session', () => {
           break
         }
         case 'turn.started': {
-          // 后端排队门闩获取成功、agent 已开始处理本会话 prompt：
-          // queued → streaming。立即执行的会话几乎瞬间收到（排队中一闪而过），
-          // 真正排队的会话在轮到自己时才收到（排队中文案持续到此刻）。
+          // 全局三槽位获取成功、agent 开始处理本会话 prompt：queued → streaming。
+          // 立即执行的会话几乎瞬间收到，真正排队的会话在轮到自己时才收到。
           if (sid !== null && statusOf(sid) === 'queued') {
             statusBySession.value[sid] = 'streaming'
           }
@@ -868,27 +908,29 @@ export const useSessionStore = defineStore('session', () => {
           break
         }
         case 'permission.request': {
-          // 权限请求：弹出 Modal 等待用户选择。
-          // 若本会话仍在排队（后端不可能发出，属防御）→ 视为已开始执行
+          // 权限请求按 DB session id 入队：后台 session 的请求不会覆盖当前窗口。
           if (sid !== null && statusOf(sid) === 'queued') {
             statusBySession.value[sid] = 'streaming'
           }
-          pendingPermission.value = {
-            permissionId: msg.permissionId ?? '',
-            toolCall: msg.toolCall ?? null,
-            options: msg.options ?? [],
+          if (sid !== null) {
+            const queue = pendingPermissionsBySession.value[sid] ?? (pendingPermissionsBySession.value[sid] = [])
+            queue.push({
+              sessionId: sid,
+              permissionId: msg.permissionId ?? '',
+              toolCall: msg.toolCall ?? null,
+              options: msg.options ?? [],
+            })
           }
           break
         }
         case 'error': {
-          // 出错同样结束本轮：清除侧栏「任务进行中」圆点 + 复位状态。
-          // sid 解析失败时同 turn.done 回退唯一运行中会话（recover 换 id 的自愈链）
+          // 出错同样结束本轮；错误只写入目标 session，避免后台错误串到当前窗口。
           const target =
             sid ?? (runningSessionIds.value.size === 1 ? [...runningSessionIds.value][0] : null)
           if (target !== null) {
             endStreamTurn(target)
+            setSessionStreamError(target, msg.message ?? msg.code ?? 'unknown error')
           }
-          streamError.value = msg.message ?? msg.code ?? 'unknown error'
           break
         }
         default:
@@ -956,12 +998,10 @@ export const useSessionStore = defineStore('session', () => {
     ]
     touch(sessionId, placeholder.createdAt)
 
-    // 状态机：发送后先置 queued（「排队中」+ 停止按钮），后端排队门闩获取成功
-    // 即广播 turn.started（立即执行的会话毫秒级收到，排队中一闪而过；真正排队的
-    // 会话保持到轮到自己）→ 转 streaming。event/permission.request 兜底切换
-    // （旧后端/广播丢失场景），保证状态机不会卡在 queued。
+    // 状态机：发送后先置 queued（「排队中」+ 停止按钮），后端全局槽位获取成功
+    // 后广播 turn.started；事件/permission.request 兜底切换，保证不会卡在 queued。
     statusBySession.value[sessionId] = 'queued'
-    streamError.value = null
+    clearSessionStreamError(sessionId)
     streamBlocksBySession.value[sessionId] = []
     activeToolCardsBySession.value[sessionId] = []
     activePlanBySession.value[sessionId] = null
@@ -978,7 +1018,7 @@ export const useSessionStore = defineStore('session', () => {
     if (!sent) {
       // 连接未就绪：提示并回退？P2 简化：置错并结束流式
       endStreamTurn(sessionId)
-      streamError.value = 'websocket not connected'
+      setSessionStreamError(sessionId, 'websocket not connected')
     } else {
       // 发送成功即视为「任务进行中」，点亮侧栏圆点
       runningSessionIds.value.add(sessionId)
@@ -1037,7 +1077,7 @@ export const useSessionStore = defineStore('session', () => {
     currentId,
     loading,
     loadingError,
-    // 流式状态（方案 B）：按会话隔离的存取函数 + 当前会话便捷视图
+    // 流式状态：按会话隔离的存取函数 + 当前会话便捷视图
     streaming,
     currentStatus,
     statusOf,
@@ -1047,6 +1087,10 @@ export const useSessionStore = defineStore('session', () => {
     isStreamingMessage,
     runningSessionIds,
     streamError,
+    streamErrorOf,
+    setSessionStreamError,
+    clearSessionStreamError,
+    hasPendingPermission,
     latestPlanOf,
     pendingPermission,
     configOptions,

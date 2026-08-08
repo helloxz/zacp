@@ -26,7 +26,7 @@ export default {
     deleteTitle: 'Delete session',
     confirmDelete: 'Delete this session? This cannot be undone.',
     loadMoreSessions: 'Load more',
-    runningHint: 'Task in progress',
+    runningHint: 'In progress',
   },
   dirPicker: {
     up: 'Go to parent directory',
@@ -48,7 +48,7 @@ export default {
     reasoningThinking: 'Thinking',
     send: 'Send',
     stop: 'Stop',
-    queued: 'Queued — will start after the previous turn finishes',
+    queued: 'Queued',
     stopping: 'Stopping…',
     agent: 'Agent',
     workspace: 'Workspace',
@@ -88,7 +88,7 @@ export default {
   permission: {
     title: 'Permission request',
     unknownTool: 'Tool call',
-    hint: 'The agent is waiting for your decision',
+    hint: 'Awaiting confirmation',
   },
   settings: {
     title: 'Settings',

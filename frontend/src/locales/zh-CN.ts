@@ -35,7 +35,7 @@ export default {
     deleteTitle: '删除会话',
     confirmDelete: '确定删除该会话？删除后不可恢复。',
     loadMoreSessions: '查看更多',
-    runningHint: '任务进行中',
+    runningHint: '进行中',
   },
   dirPicker: {
     up: '返回上级目录',
@@ -59,7 +59,7 @@ export default {
     enterHint: 'Enter 发送 · Shift+Enter 换行',
     send: '发送',
     stop: '停止',
-    queued: '排队中，前一个对话完成后自动开始',
+    queued: '排队中',
     stopping: '正在停止…',
     agent: 'Agent',
     workspace: '工作区',
@@ -99,7 +99,7 @@ export default {
   permission: {
     title: '权限请求',
     unknownTool: '工具调用',
-    hint: 'Agent 正在等待你的决定',
+    hint: '待您确认',
   },
   settings: {
     title: '设置',

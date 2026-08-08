@@ -181,18 +181,18 @@ func (c *Client) handleMessage(ctx context.Context, msg ClientMessage) {
 	case MsgTypePrompt:
 		c.hub.log.Info("received prompt", "sessionID", msg.SessionID, "message", msg.Message)
 		// 无绑定连接（GET /api/v1/ws）通过消息里的 sessionId/agentId 动态订阅，
-		// 使该会话的事件/turn.done 广播（按订阅集合匹配）能回送到本连接。
-		// 订阅为集合语义：同一连接可同时跟踪多个会话（同 agent 排队、跨 agent 并行），
-		// 避免旧「单绑定覆盖」导致 A 会话进行中发 B 时 A 的广播丢失。
+		// 订阅为集合语义：同一连接可同时跟踪多个会话；全局 FIFO 排队或并行时，
+		// 各会话广播仍按 sessionId 回送，避免旧「单绑定覆盖」导致事件丢失。
 		if msg.SessionID != "" {
 			c.SubscribeSession(msg.SessionID, msg.AgentID)
 		}
 		if bridge != nil {
+			wait, release := bridge.newPromptOrderTicket()
 			go func() {
-				if err := bridge.HandlePrompt(ctx, msg.SessionID, msg.AgentID, msg.Message); err != nil {
+				if err := bridge.HandlePromptWithOrder(ctx, msg.SessionID, msg.AgentID, msg.Message, wait, release); err != nil {
 					c.hub.log.Error("handle prompt error", "error", err)
 					// 错误广播必须带 sessionId：前端按会话路由复位状态，
-					// 缺省时回退当前会话，A 会话出错会误伤排队中的 B（见 session.ts error 分支）
+					// 避免 A 会话出错误伤排队中的 B。
 					c.Send(ServerMessage{
 						Type:      MsgTypeError,
 						SessionID: msg.SessionID,
@@ -243,8 +243,8 @@ func (c *Client) BindSession(sessionID, agentID string) {
 }
 
 // SubscribeSession 订阅会话：本连接将收到该会话的事件/turn.done/权限等广播。
-// 与旧「单绑定覆盖」不同，订阅是集合语义——同一连接可同时跟踪多个会话
-// （同 agent 排队、跨 agent 并行时，执行中会话的广播必须继续送达）。
+// 与旧「单绑定覆盖」不同，订阅是集合语义——同一连接可同时跟踪多个会话，
+// 全局三槽位排队/并行时，执行中会话的广播必须继续送达。
 // 订阅保留到连接关闭才清空：会话结束后无新广播，残留无害，实现最简单。
 func (c *Client) SubscribeSession(sessionID, agentID string) {
 	c.mu.Lock()

@@ -183,10 +183,9 @@ Examples:
 
 	// 创建 EventBridge
 	eventBridge := ws.NewEventBridge(wsHandler, mgr, sessionRepo, messageRepo, log)
-	// 注入「prompt 开始执行」钩子：排队门闩获取成功（真正执行）时才注册
-	// 该会话的事件回调 + 广播 turn.started，排队期间不注册——
-	// 执行中会话的流式事件不串台（同 agent 排队/跨 agent 并行场景，
-	// 见 manager.promptGate 与 EventBridge.SetupEventCallback/OnPromptStarted）。
+	// 注入「prompt 开始执行」钩子：全局三槽位获取成功（真正执行）时才注册
+	// 该会话的事件回调并广播 turn.started，排队期间不注册，避免回调覆盖。
+	// 事件本身携带 ACP session id，多个并行会话按 id 路由。
 	mgr.SetPromptStartedHook(func(agentID, sessionID string) {
 		eventBridge.OnPromptStarted(agentID, sessionID)
 	})

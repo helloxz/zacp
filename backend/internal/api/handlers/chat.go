@@ -47,7 +47,7 @@ func (h *ChatHandler) GetAgentStatus(c *gin.Context) {
 }
 
 // Chat 处理 POST /api/v1/chat — 发送消息并等待完整响应（兼容旧 demo）。
-// 使用第一个可用的 agent 和 session。
+// 使用第一个可用的 agent 和 session；并发上限由 manager 全局调度器统一控制。
 func (h *ChatHandler) Chat(c *gin.Context) {
 	var req chatRequest
 	if err := c.ShouldBindJSON(&req); err != nil {

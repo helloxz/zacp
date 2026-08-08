@@ -46,29 +46,26 @@ type Event struct {
 	Plan *Plan `json:"plan,omitempty"`
 }
 
-// Bridge is an ACP Client that buffers session updates and auto-approves permissions (demo).
+// Bridge is an ACP Client that buffers session updates and forwards live events.
+// 事件缓存按 ACP session id 隔离：同一 Agent 连接上的多个 prompt 并发执行时，
+// 一个 session 的回复和工具事件不能覆盖另一个 session。
 type Bridge struct {
 	log         *slog.Logger
 	autoApprove bool
 
-	mu     sync.Mutex
-	events []Event
+	mu              sync.Mutex
+	eventsBySession map[string][]Event
 	// onEvent is optional live callback (e.g. print to stdout).
 	onEvent func(Event)
 	// configOptionsHandler 接收 agent 经 session/update 通知下发的 configOptions
-	// （模型/思考强度/mode 等，可能不在 session/new 响应里，而在后续通知中）。
-	// 第一个参数为 SDK 通知里的 ACP session id（通知自带，不依赖调用方闭包）。
+	//（模型/思考强度/mode 等，可能不在 session/new 响应里，而在后续通知中）。
+	// 第一个参数为 SDK 通知里的 ACP session id。
 	configOptionsHandler func(sessionID string, opts []acp.SessionConfigOption)
-	// availableCommandsHandler 接收 agent 经 session/update 通知下发的可用 / 命令
-	// （ACP available_commands_update），由 bridge 落库并广播给前端。
-	// 第一个参数为 SDK 通知里的 ACP session id（同上）。
+	// availableCommandsHandler 接收 agent 经 session/update 通知下发的可用 / 命令。
 	availableCommandsHandler func(sessionID string, cmds []acp.AvailableCommand)
-	// sessionInfoHandler 接收 agent 经 session/update 通知下发的会话信息
-	// （ACP session_info_update，如 AI 总结的会话标题）：由 bridge 落库并广播给前端。
-	// 第一个参数为 SDK 通知里的 ACP session id（同上）。
+	// sessionInfoHandler 接收 agent 经 session/update 通知下发的会话信息。
 	sessionInfoHandler func(sessionID string, info acp.SessionSessionInfoUpdate)
-	// permissionHandler 将权限请求转发给外部（如 WebSocket 前端交互式选择）；
-	// 非 autoApprove 时优先使用，未设置时维持默认（autoApprove 放行 / 否则取消）。
+	// permissionHandler 将权限请求转发给外部（如 WebSocket 前端交互式选择）。
 	permissionHandler func(acp.RequestPermissionRequest) (acp.RequestPermissionResponse, error)
 }
 
@@ -80,7 +77,11 @@ func New(log *slog.Logger, autoApprove bool) *Bridge {
 	if log == nil {
 		log = slog.Default()
 	}
-	return &Bridge{log: log, autoApprove: autoApprove}
+	return &Bridge{
+		log:             log,
+		autoApprove:     autoApprove,
+		eventsBySession: make(map[string][]Event),
+	}
 }
 
 // SetOnEvent sets a live event sink (optional).
@@ -126,26 +127,27 @@ func (b *Bridge) SetSessionInfoHandler(fn func(sessionID string, info acp.Sessio
 	b.sessionInfoHandler = fn
 }
 
-// Reset clears buffered events (call before each Prompt).
-func (b *Bridge) Reset() {
+// ResetSession clears buffered events for one ACP session.
+func (b *Bridge) ResetSession(sessionID string) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	b.events = nil
+	delete(b.eventsBySession, sessionID)
 }
 
-// Events returns a copy of buffered events.
-func (b *Bridge) Events() []Event {
+// Events returns a copy of buffered events for one ACP session.
+func (b *Bridge) Events(sessionID string) []Event {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	out := make([]Event, len(b.events))
-	copy(out, b.events)
+	events := b.eventsBySession[sessionID]
+	out := make([]Event, len(events))
+	copy(out, events)
 	return out
 }
 
-// AgentText joins all agent message text chunks.
-func (b *Bridge) AgentText() string {
+// AgentText joins all agent message text chunks for one ACP session.
+func (b *Bridge) AgentText(sessionID string) string {
 	var sb strings.Builder
-	for _, e := range b.Events() {
+	for _, e := range b.Events(sessionID) {
 		if e.Type == "agent_message" {
 			sb.WriteString(e.Text)
 		}
@@ -155,7 +157,7 @@ func (b *Bridge) AgentText() string {
 
 func (b *Bridge) push(e Event) {
 	b.mu.Lock()
-	b.events = append(b.events, e)
+	b.eventsBySession[e.SessionID] = append(b.eventsBySession[e.SessionID], e)
 	fn := b.onEvent
 	b.mu.Unlock()
 	if fn != nil {

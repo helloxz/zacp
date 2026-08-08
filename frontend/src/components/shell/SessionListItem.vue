@@ -33,8 +33,35 @@ const agentName = computed(() => {
 
 const title = computed(() => props.session.title || t('chat.newChatTitle'))
 
-/** 该会话是否正在等待 Agent 回复（驱动列表项前「任务进行中」呼吸圆点） */
+/** 该会话是否正在等待 Agent 回复（驱动列表项前的状态圆点） */
 const isRunning = computed(() => sessionStore.runningSessionIds.has(props.session.id))
+/** 当前 session 是否有待处理权限：与普通运行状态使用不同颜色。 */
+const isPermissionPending = computed(() => sessionStore.hasPendingPermission(props.session.id))
+const streamStatus = computed(() => sessionStore.statusOf(props.session.id))
+/** 状态圆点颜色优先级：权限 > 停止中 > 排队 > 执行中。 */
+const statusDotClass = computed(() => {
+  if (isPermissionPending.value) return 'permission-dot'
+  if (streamStatus.value === 'cancelling') return 'cancelling-dot'
+  if (streamStatus.value === 'queued') return 'queued-dot'
+  return 'running-dot'
+})
+const statusDotTitle = computed(() => {
+  if (isPermissionPending.value) return t('permission.hint')
+  if (streamStatus.value === 'cancelling') return t('chat.stopping')
+  if (streamStatus.value === 'queued') return t('chat.queued')
+  return t('shell.runningHint')
+})
+
+/** 状态 tooltip 主题：亮色模式白底深字，暗色模式跟随 Naive UI 默认主题。 */
+const statusTooltipTheme = computed(() =>
+  appStore.isDark
+    ? {}
+    : {
+        color: '#ffffff',
+        textColor: '#334155',
+        boxShadow: '0 2px 10px rgba(15, 23, 42, 0.1)',
+      },
+)
 
 const relativeTime = computed(() =>
   formatRelativeTime(props.session.updatedAt, appStore.locale),
@@ -123,13 +150,21 @@ async function onDelete() {
   >
     <div class="flex min-w-0 flex-1 flex-col gap-0.5">
       <div class="flex min-w-0 items-center gap-1.5">
-        <!-- 任务进行中：蓝色轻呼吸圆点（仅进行中的会话显示，完成后消失） -->
-        <span
+        <!-- 状态颜色：排队紫色、执行蓝色、权限橙色、停止灰色；悬停显示状态说明 -->
+        <n-tooltip
           v-if="isRunning"
-          class="running-dot shrink-0"
-          :title="t('shell.runningHint')"
-          aria-hidden="true"
-        />
+          trigger="hover"
+          placement="top"
+          :theme-overrides="statusTooltipTheme"
+        >
+          <template #trigger>
+            <span
+              :class="[statusDotClass, 'shrink-0']"
+              aria-hidden="true"
+            />
+          </template>
+          {{ statusDotTitle }}
+        </n-tooltip>
         <span
           class="truncate text-sm"
           :class="isActive ? 'font-medium text-ink' : 'text-ink-secondary'"
@@ -207,17 +242,56 @@ async function onDelete() {
 </template>
 
 <style scoped>
-/* 任务进行中呼吸圆点：蓝色轻闪烁（opacity 0.35↔1，周期 2.4s），比 Tailwind
-   animate-pulse 的强脉冲更柔和；仅装饰，无信息承载（配合 aria-hidden） */
-.running-dot {
+/* 所有状态圆点统一尺寸；颜色和动画表达不同的等待/执行语义。 */
+.running-dot,
+.queued-dot,
+.permission-dot,
+.cancelling-dot {
   width: 8px;
   height: 8px;
   border-radius: 9999px;
-  background: #3b82f6; /* blue-500 */
-  animation: running-dot-breathe 2.4s ease-in-out infinite;
 }
 
-@keyframes running-dot-breathe {
+/* 执行中：蓝色正常呼吸 */
+.running-dot {
+  background: #3b82f6; /* blue-500 */
+  animation: status-dot-breathe 2.4s ease-in-out infinite;
+}
+
+/* 排队中：紫色慢速呼吸；无需用户介入，视觉优先级低于执行/权限 */
+.queued-dot {
+  background: #8b5cf6; /* violet-500 */
+  animation: status-dot-breathe 3s ease-in-out infinite;
+}
+
+/* 权限待确认：橙色正常呼吸，提示用户需要处理 */
+.permission-dot {
+  background: #f59e0b; /* amber-500 */
+  animation: status-dot-breathe 2.4s ease-in-out infinite;
+}
+
+/* 正在停止：灰色静态，表示正在收尾而非继续执行 */
+.cancelling-dot {
+  background: #94a3b8; /* slate-400 */
+}
+
+html.dark .running-dot {
+  background: #60a5fa; /* blue-400 */
+}
+
+html.dark .queued-dot {
+  background: #a78bfa; /* violet-400 */
+}
+
+html.dark .permission-dot {
+  background: #fbbf24; /* amber-400 */
+}
+
+html.dark .cancelling-dot {
+  background: #cbd5e1; /* slate-300 */
+}
+
+@keyframes status-dot-breathe {
   0%,
   100% {
     opacity: 0.35;
@@ -227,9 +301,11 @@ async function onDelete() {
   }
 }
 
-/* 动画偏好减弱：降级为静态蓝点，避免闪烁干扰 */
+/* 动画偏好减弱：所有动态状态降级为静态圆点。 */
 @media (prefers-reduced-motion: reduce) {
-  .running-dot {
+  .running-dot,
+  .queued-dot,
+  .permission-dot {
     animation: none;
     opacity: 1;
   }
