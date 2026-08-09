@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { IncremarkContent } from '@incremark/vue'
 import type { ChatMessage, ToolDetailsMap } from '@/types/models'
@@ -13,6 +13,9 @@ const props = defineProps<{ message: ChatMessage }>()
 
 const { t } = useI18n()
 const sessionStore = useSessionStore()
+
+/** 思考过程滚动容器（展开后的内容区，限高 + 滚动，避免长思考把页面撑开） */
+const reasoningBodyRef = ref<HTMLElement | null>(null)
 
 /** user 右对齐 / assistant 左对齐（角色用样式区分，不用气泡色做语义） */
 const isUser = computed(() => props.message.role === 'user')
@@ -66,6 +69,23 @@ const isStreamingPlaceholder = computed(
   () =>
     sessionStore.statusOf(props.message.sessionId) === 'streaming' &&
     sessionStore.activeMessages.at(-1)?.id === props.message.id,
+)
+
+/**
+ * 流式自动滚底：思考中 agent_thought 持续追加 reasoning，
+ * 若用户已展开面板，视口停在顶部会只看到旧内容；这里在内容增长后把滚动容器
+ * 滚到底部，让用户追着最新思考看。turn.done 后（isStreamingPlaceholder=false）不再滚动。
+ * 注意：不用 smooth 行为，token 高频追加时平滑动画会累积排队，反而卡顿。
+ * 注意：必须定义在 reasoning / isStreamingPlaceholder 之后——Vue 的 watch 注册时会
+ * 立即执行一次 getter 收集依赖，若此时引用尚未初始化的 const 会触发 TDZ 报错。
+ */
+watch(
+  () => reasoning.value.length,
+  async () => {
+    if (!isStreamingPlaceholder.value) return
+    await nextTick()
+    reasoningBodyRef.value?.scrollTo({ top: reasoningBodyRef.value.scrollHeight })
+  },
 )
 
 
@@ -180,7 +200,12 @@ const blocks = computed<MessageBlock[]>(() => {
           <span v-for="i in 3" :key="i" class="loading-dot loading-dot-sm" />
         </span>
       </summary>
-      <div class="mt-1.5 whitespace-pre-wrap">{{ reasoning }}</div>
+      <div
+        ref="reasoningBodyRef"
+        class="reasoning-scroll mt-1.5 max-h-80 overflow-y-auto overscroll-contain whitespace-pre-wrap pr-2"
+      >
+        {{ reasoning }}
+      </div>
     </details>
 
     <!-- user：右对齐气泡 -->
@@ -249,6 +274,15 @@ const blocks = computed<MessageBlock[]>(() => {
 }
 .loading-dot:nth-child(3) {
   animation-delay: 0.3s;
+}
+/* 思考过程滚动区：限高后出现滚动条，这里收敛原生滚动条样式（窄条 + 主题色），
+   暗色下浏览器默认滚动条偏亮，覆盖为暗色系（.dark 由 stores/app applyThemeClass 控制） */
+.reasoning-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: rgb(203 213 225 / 0.9) transparent; /* slate-300 */
+}
+html.dark .reasoning-scroll {
+  scrollbar-color: rgb(71 85 105 / 0.9) transparent; /* slate-600 */
 }
 /* 思考中 summary 内的小号圆点：尺寸更小、amber-600 色，与「思考中」活跃提示一致；
    动画复用上方 loading-dot（弹跳），本类仅覆盖尺寸与颜色（须定义在 .loading-dot 之后） */
