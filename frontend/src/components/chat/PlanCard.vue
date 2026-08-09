@@ -8,7 +8,9 @@ defineProps<{ plan: Plan }>()
 
 const { t } = useI18n()
 
-/** 步骤状态标识样式：completed 绿色对勾底 / in_progress 蓝色呼吸点 / pending 灰色圆点 */
+/** 步骤状态标识样式：completed 绿色对勾底 / in_progress 蓝色呼吸点 / pending 灰色圆点；
+ * 三种状态仅靠圆点区分（不再挂文字标签，避免与圆点重复占位），
+ * in_progress 额外用 title/aria-label 提供无障碍状态词 */
 function statusDotClass(status: string): string {
   switch (status) {
     case 'completed':
@@ -41,10 +43,14 @@ function isCompleted(step: PlanStep): boolean {
         :key="idx"
         class="flex items-start gap-2.5 py-1 text-sm"
       >
-        <!-- 状态标识：completed 对勾 / in_progress 呼吸圆点 / pending 灰色圆点 -->
+        <!-- 状态标识：completed 对勾 / in_progress 呼吸圆点 / pending 灰色圆点；
+             in_progress 不再显示「进行中」文字（圆点呼吸动画已表达，文字重复且占位），
+             仅通过 title/aria-label 保留无障碍状态提示 -->
         <span
           class="relative mt-1 flex h-4 w-4 shrink-0 items-center justify-center rounded-full"
           :class="statusDotClass(step.status)"
+          :title="step.status === 'in_progress' ? t('plan.inProgress') : undefined"
+          :aria-label="step.status === 'in_progress' ? t('plan.inProgress') : undefined"
         >
           <n-icon v-if="isCompleted(step)" class="text-[10px] text-white">
             <CheckmarkOutline />
@@ -55,10 +61,6 @@ function isCompleted(step: PlanStep): boolean {
           :class="{ 'text-ink-muted line-through': isCompleted(step) }"
           :title="step.content"
         >{{ step.content }}</span>
-        <span
-          v-if="step.status === 'in_progress'"
-          class="shrink-0 text-xs text-blue-500 dark:text-blue-400"
-        >{{ t('plan.inProgress') }}</span>
       </li>
     </ol>
     <!-- 空计划兜底：agent 发过 plan 事件但无条目时避免空白卡片 -->
