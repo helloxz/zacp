@@ -21,7 +21,10 @@
 #     BEFORE the entry symlink is switched, so a failed download/extract never
 #     breaks the current installation (no "remove first, download later").
 #   - Runtime state (config / db under $ZACP_DATA, default ~/.zacp) is never
-#     touched by an update; only binaries under ~/.acp/bin are replaced.
+#     touched by an update; only binaries are replaced. Legacy installs whose
+#     binary dir is the historical default ~/.acp/bin are migrated to
+#     ~/.zacp/bin and the old dir removed, so future updates land in the
+#     right place (a custom ZACP_BIN_DIR is never touched).
 #
 # Usage:
 #   bash update.sh                            # update to the latest release
@@ -45,6 +48,7 @@ INSTALL_DIR=""    # empty = detect from the existing install
 FORCE_OS=""
 FORCE_ARCH=""
 STAGE_DIR=""      # temp dir (global, referenced by the EXIT trap; must survive main's return)
+MIGRATED_ENTRY=""  # set by migrate_old_bin_dir when a legacy entry is relocated (read by main)
 
 # Clean up the temp dir on EXIT. Note: the trap must not be registered inside main
 # referencing local variables: after main returns the locals are gone, and with
@@ -76,7 +80,7 @@ Options:
 
 Install layout (managed by install.sh; update.sh keeps it):
   <dir>/zacp                  symlink to the current version (the command on PATH)
-  ~/.acp/bin/zacp-<version>   versioned binary (e.g. ~/.acp/bin/zacp-0.1.0; override with ZACP_BIN_DIR)
+  ~/.zacp/bin/zacp-<version>   versioned binary (e.g. ~/.zacp/bin/zacp-0.1.0; override with ZACP_BIN_DIR)
   The previous version is kept for rollback; older ones are pruned.
 
 Examples:
@@ -247,8 +251,104 @@ local_version() {
   echo "$ver"
 }
 
+# --- Migrate a legacy install from the historical default bin dir
+#     (~/.acp/bin) to the correct one (~/.zacp/bin) ---
+# 背景：旧版 install.sh 默认把二进制装到 ~/.acp/bin，正确位置是 $ZACP_DATA/bin
+# （默认 ~/.zacp/bin）。本函数在更新的**末尾**执行——此时新版本已安装、已验证、
+# 入口已指向它——所以这里的任何失败都不破坏本次更新（旧目录保留，可手动清理）。
+# 安全规则：
+#   - 只处理已知的坏默认目录 $HOME/.acp/bin；自定义 ZACP_BIN_DIR 或其他目录一律不动。
+#   - legacy 平铺安装的入口若在旧目录内，先搬到标准命令目录再删旧目录，
+#     避免删除旧目录时把命令入口一起删掉（入口位置通过全局 MIGRATED_ENTRY 回报 main）。
+#   - 旧目录仅当其中只剩 zacp 相关文件时才整目录删除；否则只删 zacp 文件、
+#     保留目录并提示（防误删用户数据）。
+#   - 任何失败只打印 warning 并返回 0，更新本身保持成功。
+migrate_old_bin_dir() {
+  local old="$1" entry="$2" new="$3"
+  local f name cur_target leftovers newest_prev new_entry
+  [ -n "$HOME" ] || return 0
+  [ "$old" = "${HOME}/.acp/bin" ] || return 0
+  case "$old" in /*) ;; *) return 0 ;; esac   # 只接受绝对路径（防 HOME 被设成相对路径）
+  [ -d "$old" ] || return 0
+  [ -n "${ZACP_BIN_DIR:-}" ] && return 0      # 用户显式指定目录：不自动迁移
+
+  echo "==> Migrating legacy binary dir: ${old} -> ${new}"
+
+  # 当前版本文件名（入口此刻已是指向新目录中刚安装版本的 symlink）
+  cur_target="$(basename "$(resolve_link "$entry")")"
+
+  # Legacy 平铺安装：入口本身在旧目录内（此刻已被主流程 ln -sfn 换成 symlink）。
+  # 先把它搬到标准命令目录 ~/.local/bin（install.sh 的默认入口位置），
+  # 避免删除旧目录时把命令入口一起删掉。
+  if [ "$entry" = "${old}/zacp" ]; then
+    new_entry="${HOME}/.local/bin/zacp"
+    if mkdir -p "${HOME}/.local/bin" 2>/dev/null && [ -w "${HOME}/.local/bin" ]; then
+      if ln -sfn "${new}/${cur_target}" "$new_entry" && rm -f "$entry"; then
+        echo "==> Moved entry: ${entry} -> ${new_entry}"
+        MIGRATED_ENTRY="$new_entry"
+        entry="$new_entry"
+      else
+        echo "warning: failed to move ${entry} to ${new_entry}; keeping ${old}" >&2
+        return 0
+      fi
+    else
+      echo "warning: cannot write ${HOME}/.local/bin; keeping ${entry} (old dir kept too)" >&2
+      return 0
+    fi
+  fi
+
+  # 把旧目录中的版本化二进制搬进新目录；同名跳过（刚装的新版本已在）。
+  # 跨文件系统时 mv 会失败（~/.acp 与 ~/.zacp 同在 home 下，理论上不会），
+  # 失败则保留旧目录，由用户手动清理。
+  for f in "$old"/zacp-*; do
+    [ -e "$f" ] || continue
+    name="$(basename "$f")"
+    if [ ! -e "$new/$name" ]; then
+      if mv -f "$f" "$new/$name" 2>/dev/null; then
+        echo "==> Moved: ${f} -> ${new}/${name}"
+      else
+        echo "warning: cannot move ${f}; keeping ${old} for manual cleanup" >&2
+        return 0
+      fi
+    else
+      rm -f "$f"
+      echo "==> Skipped (already present): ${f}"
+    fi
+  done
+
+  # 迁移后在新目录做一次 prune（与主流程第 7 步相同策略）：
+  # 保留当前版本 + 最新一个旧版本，其余删除。
+  newest_prev=""
+  while IFS= read -r f; do
+    [ -z "$f" ] && continue
+    [ "$(basename "$f")" = "$cur_target" ] && continue
+    if [ -z "$newest_prev" ]; then
+      newest_prev="$f"
+      echo "==> Keeping previous version: ${f}"
+      continue
+    fi
+    rm -f "$f"
+    echo "==> Removed old version: ${f}"
+  done < <(find "$new" -maxdepth 1 -type f -name 'zacp-*' | sort_ver -r)
+
+  # 删除旧目录：仅当其中只剩 zacp 相关文件时才整目录删（防误删用户数据）；
+  # 否则只删 zacp 文件并保留目录提示。删除失败不阻塞更新。
+  leftovers="$(find "$old" -mindepth 1 -maxdepth 1 ! -name 'zacp' ! -name 'zacp-*' -print 2>/dev/null | head -1)"
+  if [ -z "$leftovers" ]; then
+    if rm -rf "$old" 2>/dev/null; then
+      echo "==> Removed old binary dir: ${old}"
+    else
+      echo "warning: could not remove ${old}; please remove it manually" >&2
+    fi
+  else
+    rm -f "$old"/zacp "$old"/zacp-* 2>/dev/null || true
+    echo "warning: ${old} contains non-zacp files; removed zacp files only, please clean the rest manually" >&2
+  fi
+  return 0
+}
+
 main() {
-  local os="" arch="" entry="" entry_dir="" bin_dir="" real=""
+  local os="" arch="" entry="" entry_dir="" bin_dir="" old_bin_dir="" real=""
   local local_ver="" remote_tag="" remote_ver="" url="" tag="" file=""
   local pkgfile="" bin="" ver="" target="" newest_prev="" latest_out="" f=""
 
@@ -282,14 +382,26 @@ main() {
   echo "==> Found zacp: ${entry}"
 
   # --- 2. Entry type: symlink (versioned layout) or plain binary (legacy install) ---
+  # 同时记录旧 bin_dir：若命中历史默认目录 ~/.acp/bin，主流程末尾会把它迁移
+  # 到 ~/.zacp/bin 并删除（详见 migrate_old_bin_dir 的注释）。
   entry_dir="$(dirname "$entry")"
   if [ -L "$entry" ]; then
     real="$(resolve_link "$entry")"
-    bin_dir="${ZACP_BIN_DIR:-$(dirname "$real")}"
+    old_bin_dir="$(dirname "$real")"
+    if [ -n "${ZACP_BIN_DIR:-}" ]; then
+      # 用户显式指定了二进制目录：尊重，绝不迁移
+      bin_dir="$ZACP_BIN_DIR"
+    elif [ "$old_bin_dir" = "${HOME}/.acp/bin" ]; then
+      # 历史默认目录：新版本直接装进新默认目录，旧目录随后迁移
+      bin_dir="${HOME}/.zacp/bin"
+    else
+      bin_dir="$old_bin_dir"
+    fi
     echo "==> Entry: symlink -> ${real}"
   else
-    bin_dir="${ZACP_BIN_DIR:-${HOME}/.acp/bin}"
-    echo "==> Entry: plain binary (legacy install); will migrate to the versioned layout (~/.acp/bin/zacp-<version> + symlink)"
+    old_bin_dir="${HOME}/.acp/bin"
+    bin_dir="${ZACP_BIN_DIR:-${HOME}/.zacp/bin}"
+    echo "==> Entry: plain binary (legacy install); will migrate to the versioned layout (~/.zacp/bin/zacp-<version> + symlink)"
   fi
 
   # --- 3. Version check (skipped when a specific version is given or --force) ---
@@ -401,7 +513,18 @@ main() {
   # --- 8. Verify (through the entry) ---
   "$entry" --version
 
-  # --- PATH hint (common for user-local installs) ---
+  # --- 9. Migrate a legacy ~/.acp/bin install (if any) to ~/.zacp/bin ---
+  # 旧 install.sh 的默认二进制目录是 ~/.acp/bin；把它迁移到 ~/.zacp/bin 并删除
+  # 旧目录，让后续更新落在正确位置。任何失败都不阻断本次更新（旧目录保留）。
+  # legacy 场景入口被搬走时，同步更新 entry/entry_dir 供下方的 PATH 提示使用。
+  MIGRATED_ENTRY=""
+  migrate_old_bin_dir "$old_bin_dir" "$entry" "$bin_dir"
+  if [ -n "$MIGRATED_ENTRY" ]; then
+    entry="$MIGRATED_ENTRY"
+    entry_dir="$(dirname "$entry")"
+  fi
+
+  # --- 10. PATH hint (common for user-local installs) ---
   case ":$PATH:" in
     *":${entry_dir}:"*) ;;
     *)

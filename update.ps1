@@ -3,7 +3,7 @@
 #
 # Design notes (mirrors update.sh for macOS / Linux, Windows-specific bits):
 #   - Requires an existing installation: entry detection order is
-#     -Dir -> PATH (Get-Command, external programs only) -> $HOME\.acp\bin\zacp.exe.
+#     -Dir -> PATH (Get-Command, external programs only) -> $HOME\.zacp\bin\zacp.exe.
 #     When nothing is found it prints an install hint and exits.
 #   - Layout detection: install.ps1 uses a plain COPY for the command entry
 #     (no symlink - Windows symlinks need admin rights or developer mode), so
@@ -20,6 +20,11 @@
 #     installation (stronger than update.sh, which switches the entry first).
 #   - Runtime state (config / db under $ZACP_DATA, default ~/.zacp) is never
 #     touched by an update; only binaries under the bin dir are replaced.
+#   - Legacy migration: installs whose bin dir is the historical default
+#     $HOME\.acp\bin are moved to $HOME\.zacp\bin (versioned files copied,
+#     the user PATH entry swapped via the registry) and the old dir removed,
+#     so future updates land in the right place. An explicit -Dir is respected
+#     as-is and never migrated.
 #   - Output is English: PS 5.1 consoles default to GBK and Chinese output
 #     is garbled in some environments; Chinese notes live in the README.
 #
@@ -181,7 +186,7 @@ function Find-Entry {
   # -CommandType Application: external programs only, never aliases/functions
   $cmd = Get-Command -Name zacp -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
   if ($cmd) { return $cmd.Source }
-  $def = Join-Path $HOME '.acp\bin\zacp.exe'
+  $def = Join-Path $HOME '.zacp\bin\zacp.exe'
   if (Test-Path -LiteralPath $def) { return $def }
   return $null
 }
@@ -231,6 +236,19 @@ function Update-Zacp {
   }
   Write-Host "==> Found zacp: $entry"
   $binDir = Split-Path -Parent $entry
+
+  # --- Legacy migration detection: the historical default bin dir was
+  #     ~/.acp\bin (install.ps1 now uses ~/.zacp\bin). When the found install
+  #     lives there AND no explicit -Dir was given, the new version is
+  #     installed into ~/.zacp\bin and the old dir is migrated afterwards.
+  #     An explicit -Dir is respected as-is and never migrated. ---
+  $oldBinDir = $null
+  $legacyDefault = Join-Path $HOME '.acp\bin'
+  if (-not $Dir -and $binDir.TrimEnd('\') -ieq $legacyDefault.TrimEnd('\') -and (Test-Path -LiteralPath $legacyDefault)) {
+    $oldBinDir = $binDir
+    $binDir = Join-Path $HOME '.zacp\bin'
+    Write-Host "==> Legacy binary dir detected: $oldBinDir; migrating to $binDir"
+  }
 
   # --- Windows-specific: a running zacp.exe cannot be replaced (file lock).
   #     Refuse to run while the service is active; do NOT auto-kill it (that
@@ -361,6 +379,46 @@ function Update-Zacp {
       Write-Host "==> Removed old version: $($f.FullName)"
     }
 
+    # --- 7. Migrate a legacy ~/.acp\bin install (if any) to ~/.zacp\bin ---
+    # 旧 install.ps1 的默认二进制目录是 ~/.acp\bin；迁移到 ~/.zacp\bin：
+    # 版本化文件复制过来（同名跳过，刚装的新版本已在）、用户 PATH 条目替换、
+    # 然后删除旧目录（仅当其中只剩 zacp 文件时整目录删，防误删用户数据）。
+    # 任何失败只警告不阻断：新安装已完整就位且已验证。复制有失败时保留旧目录。
+    if ($oldBinDir) {
+      $migrateOk = $true
+      $oldFiles = @(Get-ChildItem -LiteralPath $oldBinDir -Filter 'zacp-*.exe' -File -ErrorAction SilentlyContinue)
+      foreach ($f in $oldFiles) {
+        $dest = Join-Path $binDir $f.Name
+        if (Test-Path -LiteralPath $dest) {
+          Write-Host "==> Skipped (already present): $($f.FullName)"
+        } else {
+          try {
+            Copy-Item -LiteralPath $f.FullName -Destination $dest -Force
+            Write-Host "==> Moved: $($f.FullName) -> $dest"
+          } catch {
+            Write-Host "warning: cannot copy $($f.FullName) to $dest; keeping $oldBinDir for manual cleanup" -ForegroundColor Yellow
+            $migrateOk = $false
+          }
+        }
+      }
+      # PATH 替换始终执行（新目录已有完整安装）；删除仅在复制全部成功时执行
+      try { Update-UserPathEntry -OldEntry $oldBinDir -NewEntry $binDir } catch { Write-Host "warning: PATH update failed: $_" -ForegroundColor Yellow }
+      if ($migrateOk) {
+        $nonZacp = @(Get-ChildItem -LiteralPath $oldBinDir -Force -ErrorAction SilentlyContinue | Where-Object { $_.Name -notlike 'zacp*' })
+        if (-not $nonZacp) {
+          try {
+            Remove-Item -LiteralPath $oldBinDir -Recurse -Force
+            Write-Host "==> Removed old binary dir: $oldBinDir"
+          } catch {
+            Write-Host "warning: could not remove $oldBinDir; please remove it manually" -ForegroundColor Yellow
+          }
+        } else {
+          Get-ChildItem -LiteralPath $oldBinDir -Filter 'zacp*' -Force -ErrorAction SilentlyContinue | Remove-Item -Force
+          Write-Host "warning: $oldBinDir contains non-zacp files; removed zacp files only, please clean the rest manually" -ForegroundColor Yellow
+        }
+      }
+    }
+
     # --- PATH hint (only when the bin dir is missing from the current PATH) ---
     $norm = $binDir.TrimEnd('\')
     $onPath = @($env:Path -split ';') | Where-Object { $_ -and $_.TrimEnd('\') -ieq $norm }
@@ -375,6 +433,59 @@ function Update-Zacp {
     Write-Host 'Update complete. Start zacp when ready (the previous version is kept for rollback).'
   } finally {
     Remove-Item -Path $tmp -Recurse -Force -ErrorAction SilentlyContinue
+  }
+}
+
+# --- Swap one entry for another in the USER PATH (HKCU\Environment), reusing
+#     install.ps1's proven registry pattern: raw values are read with
+#     DoNotExpandEnvironmentNames (keeps %VAR% entries intact) and written back
+#     with the original value kind (ExpandString); case-insensitive dedup.
+#     Also updates the current process $env:Path and broadcasts WM_SETTINGCHANGE
+#     (best-effort). Failures only warn: the update must not fail over PATH
+#     cosmetics ---
+function Update-UserPathEntry {
+  param([string]$OldEntry, [string]$NewEntry)
+  $oldNorm = $OldEntry.TrimEnd('\')
+  $newNorm = $NewEntry.TrimEnd('\')
+  $reg = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Environment', $true)
+  if (-not $reg) {
+    Write-Host "warning: cannot open HKCU\Environment; PATH not updated (add $NewEntry manually)" -ForegroundColor Yellow
+    return
+  }
+  try {
+    $userPath = [string]$reg.GetValue('Path', '', [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
+    try { $kind = $reg.GetValueKind('Path') } catch { $kind = [Microsoft.Win32.RegistryValueKind]::ExpandString }
+    # 去掉旧条目（大小写不敏感），新条目不存在则追加；同时清理空段
+    $segments = @($userPath -split ';') | Where-Object { $_ -and $_.TrimEnd('\') -ine $oldNorm }
+    $hasNew = @($segments) | Where-Object { $_.TrimEnd('\') -ieq $newNorm }
+    if (-not $hasNew) { $segments += $newNorm }
+    $newPath = $segments -join ';'
+    if ($newPath -ne $userPath) {
+      $reg.SetValue('Path', $newPath, $kind)
+      Write-Host "==> Updated user PATH: $oldNorm -> $newNorm"
+      # 当前进程立即生效（irm | iex 共享调用方进程）
+      $currentHasNew = @($env:Path -split ';') | Where-Object { $_ -and $_.TrimEnd('\') -ieq $newNorm }
+      if (-not $currentHasNew) { $env:Path = $newNorm + ';' + $env:Path }
+      # WM_SETTINGCHANGE 广播（best-effort；Add-Type 需本地 C# 编译器，
+      # 'Zacp.Native.EnvNotify' 守卫防同进程重复 Add-Type）
+      try {
+        if (-not ('Zacp.Native.EnvNotify' -as [type])) {
+          $envNotifySource = @'
+[DllImport("user32.dll", SetLastError = true, CharSet = CharSet.Auto)]
+public static extern IntPtr SendMessageTimeout(IntPtr hWnd, uint Msg, UIntPtr wParam, string lParam, uint fuFlags, uint uTimeout, out UIntPtr lpdwResult);
+'@
+          Add-Type -Namespace Zacp.Native -Name EnvNotify -MemberDefinition $envNotifySource
+        }
+        # HWND_BROADCAST=0xffff, WM_SETTINGCHANGE=0x1a, SMTO_ABORTIFHUNG=0x0002
+        $result = [UIntPtr]::Zero
+        $null = [Zacp.Native.EnvNotify]::SendMessageTimeout(
+          [IntPtr]0xffff, 0x1a, [UIntPtr]::Zero, 'Environment', 0x0002, 5000, [ref]$result)
+      } catch {
+        Write-Host '==> Note: environment-change notification skipped (harmless)'
+      }
+    }
+  } finally {
+    $reg.Dispose()
   }
 }
 

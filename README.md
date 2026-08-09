@@ -52,13 +52,6 @@ curl -fsSL https://raw.githubusercontent.com/helloxz/zacp/main/install.sh | bash
 irm https://raw.githubusercontent.com/helloxz/zacp/main/install.ps1 | iex
 ```
 
-或在 CMD 中执行（下载到本地后运行，可指定版本）：
-
-```cmd
-curl -fsSL https://raw.githubusercontent.com/helloxz/zacp/main/install.ps1 -o "%TEMP%\zacp-install.ps1" && powershell -ExecutionPolicy Bypass -File "%TEMP%\zacp-install.ps1"
-```
-
-安装脚本会把 bin 目录加入用户 PATH（`irm ... | iex` 方式安装后**当前终端立即可用**；`-File` 方式运行则新终端生效），并将最新版本复制为 `zacp.exe`，旧版本保留一份用于回滚。升级请用下面的 [一键更新](#一键更新推荐) 命令，不必重跑安装。
 
 > 提示：`irm ... | iex` 会直接执行来自网络的脚本，请确认来源可信；首次启动若弹出 Windows 防火墙提示，允许后即可通过 `http://127.0.0.1:8680/` 访问。
 
@@ -80,11 +73,9 @@ zacp
 2. 填写**用户名**与**密码**，点保存（密码留空并保存 = 关闭登录保护）；
 3. 保存后**立即生效**（热更新，无需重启），之后所有页面需重新登录。
 
-实现说明：
+**忘记密码：**
 
-- 密码经 SHA-256 + 固定盐哈希后写入 `~/.zacp/config.toml` 的 `[auth]` 段，**明文不落盘**；
-- 登录 token 有效 7 天、存于后端内存（服务重启后需重新登录）；图片预览直链使用独立的 **12 小时短 token**（绑定工作区与文件路径），即使出现在访问日志中也不会泄露登录态；
-- **忘记密码**：编辑 `~/.zacp/config.toml`，把 `[auth]` 段的 `password_hash` 置空（或直接删除 `[auth]` 段），保存后重启服务即恢复免登录，再按上述步骤重新设置即可。
+编辑 `~/.zacp/config.toml`，把 `[auth]` 段的 `password_hash` 置空（或直接删除 `[auth]` 段），保存后重启服务即恢复免登录，再按上述步骤重新设置即可。
 
 ## 更新
 
@@ -110,12 +101,6 @@ Windows 用户在 PowerShell 中更新（自动检测已安装的 zacp 并升级
 
 ```powershell
 irm https://raw.githubusercontent.com/helloxz/zacp/main/update.ps1 | iex
-```
-
-或下载到本地后执行（可指定版本 / 强制重装）：
-
-```cmd
-curl -fsSL https://raw.githubusercontent.com/helloxz/zacp/main/update.ps1 -o "%TEMP%\zacp-update.ps1" && powershell -ExecutionPolicy Bypass -File "%TEMP%\zacp-update.ps1"
 ```
 
 

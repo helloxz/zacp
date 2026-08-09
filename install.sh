@@ -14,12 +14,12 @@
 #     on every distro; unzip is often NOT installed), macOS/Windows stay .zip.
 #   - Upgrade-friendly layout (supports a future `zacp update`):
 #       <cmd-dir>/zacp                  -> command entry: symlink to the current version
-#       ~/.acp/bin/zacp-<version>       -> versioned binary (e.g. ~/.acp/bin/zacp-0.1.0)
+#       ~/.zacp/bin/zacp-<version>       -> versioned binary (e.g. ~/.zacp/bin/zacp-0.1.0)
 #     The symlink points to the newest version; the previous version is kept
 #     for rollback and anything older is pruned. The binary root can be
 #     overridden with ZACP_BIN_DIR (handy for CI / testing).
-#     Note: ~/.acp holds binaries only; runtime state lives under $ZACP_DATA
-#     (default ~/.zacp) and the two never overlap.
+#     Note: binaries and runtime state both live under $ZACP_DATA (default
+#     ~/.zacp): bin/ holds the binaries, config.toml and data/ the runtime state.
 #   - No config generated: $ZACP_DATA/config.toml is created by zacp itself on
 #     first start (backend/internal/config/init.go); the installer only places
 #     the binary and leaves configuration alone.
@@ -76,7 +76,7 @@ Options:
 
 Install layout (upgrade-friendly):
   <dir>/zacp                  symlink to the current version (the command on PATH)
-  ~/.acp/bin/zacp-<version>   versioned binary (e.g. ~/.acp/bin/zacp-0.1.0; override with ZACP_BIN_DIR)
+  ~/.zacp/bin/zacp-<version>   versioned binary (e.g. ~/.zacp/bin/zacp-0.1.0; override with ZACP_BIN_DIR)
   The previous version is kept for rollback; older ones are pruned.
 
 Examples:
@@ -275,9 +275,10 @@ main() {
     exit 1
   fi
 
-  # --- Versioned binary root (default ~/.acp/bin), overridable for CI/testing ---
-  # ~/.acp is dedicated to binaries; runtime state stays in $ZACP_DATA (~/.zacp).
-  local bin_dir="${ZACP_BIN_DIR:-${HOME}/.acp/bin}"
+  # --- Versioned binary root (default ~/.zacp/bin), overridable for CI/testing ---
+  # 二进制与运行时状态同处 $ZACP_DATA（默认 ~/.zacp）：bin/ 放二进制，
+  # config.toml 与 data/ 放运行时状态。
+  local bin_dir="${ZACP_BIN_DIR:-${HOME}/.zacp/bin}"
   if ! mkdir -p "$bin_dir" 2>/dev/null && [ ! -w "$bin_dir" ]; then
     echo "error: cannot write to binary directory ${bin_dir}" >&2
     exit 1

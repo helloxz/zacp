@@ -12,13 +12,13 @@
 #   - Package format: windows always downloads the .zip asset
 #     (zacp-v<version>-windows-<arch>.zip; top-level dir + zacp.exe inside).
 #   - Upgrade-friendly layout (mirrors install.sh):
-#       $HOME\.acp\bin\zacp.exe            -> command entry (copy of the newest version)
-#       $HOME\.acp\bin\zacp-<version>.exe  -> versioned binary
+#       $HOME\.zacp\bin\zacp.exe            -> command entry (copy of the newest version)
+#       $HOME\.zacp\bin\zacp-<version>.exe  -> versioned binary
 #     The entry is a plain copy, NOT a symlink: Windows symlinks require
 #     admin rights or developer mode, while a copy is idempotent and always
 #     works. The previous version is kept for rollback; older ones are pruned.
-#     ~/.acp holds binaries only; runtime state lives under $ZACP_DATA
-#     (default ~/.zacp) and the two never overlap.
+#     Note: binaries and runtime state both live under $ZACP_DATA (default
+#     ~/.zacp): bin/ holds the binaries, config.toml and data/ the runtime state.
 #   - PATH: the bin dir is added to the *user* PATH (HKCU\Environment) via
 #     the registry API with ExpandString (preserves %VAR% entries), not setx
 #     (setx truncates at 1024 chars and can corrupt the PATH).
@@ -101,15 +101,15 @@ Options:
   -Repo <owner/repo>  Override repository (default: helloxz/zacp)
   -BaseUrl <url>      Download URL prefix (e.g. a mirror)
   -ApiBase <url>      GitHub API URL (for resolving latest)
-  -BinDir <dir>       Binary directory (default: $HOME\.acp\bin)
+  -BinDir <dir>       Binary directory (default: $HOME\.zacp\bin)
   -NoPath             Do not modify the user PATH
 
 Environment variables: ZACP_VERSION, ZACP_REPO, ZACP_BASE_URL,
   ZACP_API_BASE, ZACP_BIN_DIR, ZACP_NO_PATH
 
 Install layout (upgrade-friendly):
-  $HOME\.acp\bin\zacp.exe            command entry (copy of the newest version)
-  $HOME\.acp\bin\zacp-<version>.exe  versioned binary
+  $HOME\.zacp\bin\zacp.exe            command entry (copy of the newest version)
+  $HOME\.zacp\bin\zacp-<version>.exe  versioned binary
   The previous version is kept for rollback; older ones are pruned.
 '@
   if ($script:isInMemory) { return }
@@ -203,9 +203,10 @@ function Install-Zacp {
     $bin = Get-ChildItem -Path $unpacked -Recurse -Filter 'zacp.exe' -File | Select-Object -First 1
     if (-not $bin) { throw 'error: no zacp.exe found in the release package' }
 
-    # --- Binary dir (default ~/.acp/bin, mirrors install.sh; ~/.acp holds binaries
-    #     only, runtime state lives in $ZACP_DATA = ~/.zacp, the two never overlap) ---
-    if (-not $BinDir) { $BinDir = Join-Path $HOME '.acp\bin' }
+    # --- Binary dir (default ~/.zacp/bin, mirrors install.sh; binaries and
+    #     runtime state both live under $ZACP_DATA = ~/.zacp: bin/ holds the
+    #     binaries, config.toml and data/ the runtime state) ---
+    if (-not $BinDir) { $BinDir = Join-Path $HOME '.zacp\bin' }
     New-Item -ItemType Directory -Path $BinDir -Force | Out-Null
 
     # --- Versioned binary (strip the v prefix to match 'zacp --version') ---
