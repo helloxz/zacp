@@ -20,7 +20,6 @@ const (
 	toolSublime     = "sublime"
 	toolTerminal    = "terminal"
 	toolGhostty     = "ghostty"
-	toolOtty        = "otty"
 )
 
 var (
@@ -40,10 +39,9 @@ type toolCommand struct {
 }
 
 type toolRuntime struct {
-	platform      string
-	lookup        func(string) (string, error)
-	appAvailable  func(string) bool
-	appExecutable func(string) (string, bool)
+	platform     string
+	lookup       func(string) (string, error)
+	appAvailable func(string) bool
 }
 
 type toolDefinition struct {
@@ -149,42 +147,14 @@ func (s *ToolService) OpenSessionTool(sessionID uint, toolID string) error {
 
 func defaultToolRuntime() toolRuntime {
 	return toolRuntime{
-		platform:      runtime.GOOS,
-		lookup:        exec.LookPath,
-		appAvailable:  macApplicationAvailable,
-		appExecutable: macApplicationExecutable,
+		platform:     runtime.GOOS,
+		lookup:       exec.LookPath,
+		appAvailable: macApplicationAvailable,
 	}
 }
 
 func macApplicationAvailable(name string) bool {
 	return exec.Command("open", "-Ra", name).Run() == nil
-}
-
-// macApplicationExecutable 查找 OTTY 常见的 macOS App Bundle 可执行文件。
-// OTTY 当前没有公开的 --cwd 参数，直接启动 bundle 内程序并设置 cmd.Dir，
-// 比 `open -a` 更有机会让首个 shell 继承当前工作区。
-func macApplicationExecutable(name string) (string, bool) {
-	if runtime.GOOS != "darwin" || name != "otty" {
-		return "", false
-	}
-	home, _ := os.UserHomeDir()
-	candidates := []string{
-		filepath.Join("/Applications", "otty.app", "Contents", "MacOS", "otty"),
-		filepath.Join("/Applications", "OTTY.app", "Contents", "MacOS", "otty"),
-	}
-	if home != "" {
-		candidates = append(candidates,
-			filepath.Join(home, "Applications", "otty.app", "Contents", "MacOS", "otty"),
-			filepath.Join(home, "Applications", "OTTY.app", "Contents", "MacOS", "otty"),
-		)
-	}
-	for _, candidate := range candidates {
-		info, err := os.Stat(candidate)
-		if err == nil && !info.IsDir() {
-			return candidate, true
-		}
-	}
-	return "", false
 }
 
 func (r toolRuntime) hasCommand(name string) bool {
@@ -273,23 +243,6 @@ func darwinToolDefinitions() []toolDefinition {
 				return toolCommand{}, false
 			},
 		},
-		{
-			id:    toolOtty,
-			label: "OTTY",
-			// OTTY 当前没有公开的目录参数；优先直接调用 CLI，
-			// 其次启动常见 App Bundle 内的可执行文件并依靠 cmd.Dir 继承工作区。
-			resolve: func(r toolRuntime, cwd string) (toolCommand, bool) {
-				if r.hasCommand("otty") {
-					return toolCommand{program: "otty"}, true
-				}
-				if r.appExecutable != nil {
-					if program, ok := r.appExecutable("otty"); ok {
-						return toolCommand{program: program}, true
-					}
-				}
-				return toolCommand{}, false
-			},
-		},
 	}
 }
 
@@ -342,17 +295,6 @@ func linuxToolDefinitions() []toolDefinition {
 					return toolCommand{}, false
 				}
 				return toolCommand{program: "ghostty", args: []string{"--working-directory=" + cwd}}, true
-			},
-		},
-		{
-			id:    toolOtty,
-			label: "OTTY",
-			// OTTY 当前没有公开的目录参数，cmd.Dir 是目录定位的唯一稳定入口。
-			resolve: func(r toolRuntime, cwd string) (toolCommand, bool) {
-				if !r.hasCommand("otty") {
-					return toolCommand{}, false
-				}
-				return toolCommand{program: "otty"}, true
 			},
 		},
 	}
