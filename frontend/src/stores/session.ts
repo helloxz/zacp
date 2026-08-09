@@ -47,6 +47,12 @@ const SESSION_HISTORY_LIMIT = 100
  */
 const CANCEL_FUSE_MS = 25_000
 
+/**
+ * 会话解析超时：进入 /sessions/:id 时以 GET /sessions/:id 校验会话存在性，
+ * 若后端挂起（无响应而非明确报错），超时后强制转错误态，避免无限「加载中」。
+ */
+const SESSION_RESOLVE_TIMEOUT_MS = 15_000
+
 /** 实时工具调用卡片（流式 turn 中显示，turn.done 后随历史 events 持久化渲染） */
 export interface ToolCard {
   toolId: string
@@ -84,6 +90,31 @@ export const useSessionStore = defineStore('session', () => {
 
   /** 当前选中会话 id（进入 /sessions/:id 时由 ChatPane 同步） */
   const currentId = ref<number | null>(null)
+
+  /**
+   * 会话解析状态机：进入 /sessions/:id 时以 GET /sessions/:id 为权威来源
+   * 校验会话是否存在，避免「列表没加载出来/后端未启动/id 不存在」时
+   * 界面永远卡在「加载会话中…」。
+   * - idle      未进入会话态（/ 或 /new）
+   * - loading   正在校验（显示「加载会话中…」）
+   * - ready     已确认存在并并入 sessions 列表（activeSession 可解析）
+   * - not_found 后端返回 404 / session_not_found（id 不存在或已删除）
+   * - network   网络不可达（后端未启动、断网等，status 0）
+   * - error     其它失败 / 超时（附 message）
+   */
+  type SessionResolveStatus =
+    | 'idle'
+    | 'loading'
+    | 'ready'
+    | 'not_found'
+    | 'network'
+    | 'error'
+  const sessionResolve = ref<{ status: SessionResolveStatus; message: string | null }>({
+    status: 'idle',
+    message: null,
+  })
+  /** 解析请求序号：快速切换会话时丢弃过期请求结果，防止状态串台 */
+  let sessionResolveTicket = 0
 
   /**
    * 用户手动重命名过的会话 id 集合（localStorage 持久化，刷新后仍生效）。
@@ -364,6 +395,88 @@ export const useSessionStore = defineStore('session', () => {
     dbIdByAcpSession.clear()
     for (const s of sessions.value) {
       indexAcpSession(s)
+    }
+
+    // 竞态兜底：用户已进入 /sessions/:id（currentId 已设置）但列表未包含目标会话
+    // （如 resolveSession 的 upsert 先于 loadSessions 被整体覆盖 / 列表截断），
+    // 重新触发解析，避免 activeSession 缺失而状态已是 ready 时无限「加载中」。
+    const cur = currentId.value
+    if (cur !== null && !sessions.value.some((s) => s.id === cur)) {
+      void resolveSession(cur)
+    }
+  }
+
+  /**
+   * 将会话并入侧栏列表：已存在则合并最新字段（刷新标题/状态等），
+   * 不存在则插到头部（直接输入 URL / 刷新进入时列表可能尚未包含它），
+   * 并补 workspace 关联与 ACP 反向索引，保证 activeSession 立即可解析。
+   */
+  function upsertSession(session: ChatSession) {
+    // GET /sessions/:id 响应不带 workspace（后端列表接口才预加载），
+    // 从本地 workspaces 兜底匹配，保证侧栏能按父项目分组显示。
+    const ws =
+      session.workspace?.id
+        ? session.workspace
+        : workspaces.value.find((w) => w.id === session.workspaceId)
+    const full = ws ? { ...session, workspace: ws } : session
+    const idx = sessions.value.findIndex((s) => s.id === session.id)
+    if (idx >= 0) {
+      sessions.value[idx] = { ...sessions.value[idx], ...full }
+    } else {
+      sessions.value = [full, ...sessions.value]
+    }
+    indexAcpSession(full)
+  }
+
+  /**
+   * 解析 /sessions/:id 目标会话（进入会话页时由 ChatPane 调用）：
+   * 以 GET /sessions/:id 为唯一权威判定，失败按原因分类：
+   * - 404 / session_not_found → not_found（id 不存在或已删除）
+   * - status 0 / network_error → network（后端未启动/断网）
+   * - AbortError → error（超时兜底，后端挂起时避免无限「加载中」）
+   * - 其它 → error（附后端 message）
+   * 成功则 upsert 进列表，再并行加载消息/配置/命令；后三者失败保持
+   * 非阻塞（历史加载失败不阻塞会话页打开，仅详情校验决定错误态）。
+   */
+  async function resolveSession(sessionId: number) {
+    const ticket = ++sessionResolveTicket
+    sessionResolve.value = { status: 'loading', message: null }
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), SESSION_RESOLVE_TIMEOUT_MS)
+    try {
+      const session = await apiFetchSession(sessionId, controller.signal)
+      if (ticket !== sessionResolveTicket) {
+        return // 已切换到其它会话，丢弃过期结果
+      }
+      upsertSession(session)
+      sessionResolve.value = { status: 'ready', message: null }
+      await Promise.allSettled([
+        loadMessages(sessionId),
+        loadConfigOptions(sessionId),
+        loadSlashCommands(sessionId),
+      ])
+    } catch (e) {
+      if (ticket !== sessionResolveTicket) {
+        return
+      }
+      const err = e as { status?: number; code?: string; message?: string; name?: string }
+      if (err?.name === 'AbortError') {
+        sessionResolve.value = { status: 'error', message: null }
+      } else if (err?.status === 0 || err?.code === 'network_error') {
+        sessionResolve.value = { status: 'network', message: err.message ?? null }
+      } else if (err?.status === 404 || err?.code === 'session_not_found') {
+        // 会话已不存在：同时从侧栏列表移除残留条目（可能来自过期缓存），
+        // 避免侧栏还展示一个打开即失败的「死会话」
+        sessions.value = sessions.value.filter((s) => s.id !== sessionId)
+        dbIdByAcpSession.forEach((dbId, acpId) => {
+          if (dbId === sessionId) dbIdByAcpSession.delete(acpId)
+        })
+        sessionResolve.value = { status: 'not_found', message: err.message ?? null }
+      } else {
+        sessionResolve.value = { status: 'error', message: err?.message ?? String(e) }
+      }
+    } finally {
+      clearTimeout(timer)
     }
   }
 
@@ -1107,6 +1220,9 @@ export const useSessionStore = defineStore('session', () => {
     loadConfigOptions,
     loadSlashCommands,
     setConfigOption,
+    // 会话解析状态机（/sessions/:id 存在性校验），见 resolveSession
+    sessionResolve,
+    resolveSession,
     createSession,
     removeSession,
     renameSession,

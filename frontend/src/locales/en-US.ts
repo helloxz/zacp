@@ -42,6 +42,12 @@ export default {
     loadingAgent: 'Starting the agent…',
     creatingSession: 'Creating session…',
     agentNotRunning: 'Not running, click to start',
+    loadingSession: 'Loading session…',
+    // /sessions/:id resolve failures (backend unreachable / session missing / other)
+    sessionNotFound: 'Session not found. It may have been deleted.',
+    sessionNetworkError: 'Cannot reach the backend service',
+    sessionLoadFailed: 'Failed to load session',
+    retry: 'Retry',
     placeholder: 'Message the agent…',
     enterHint: 'Enter to send · Shift+Enter for a new line',
     reasoning: 'Thought process',

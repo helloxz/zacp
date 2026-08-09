@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { NIcon, useMessage, type DropdownOption } from 'naive-ui'
 import {
 	CaretBackOutline,
@@ -23,6 +23,7 @@ import Composer, {
 
 const { t } = useI18n()
 const route = useRoute()
+const router = useRouter()
 const agentStore = useAgentStore()
 const sessionStore = useSessionStore()
 const appStore = useAppStore()
@@ -108,24 +109,60 @@ const newWorkspaceId = computed(() => {
   return raw ? Number(raw) : undefined
 })
 
-/** 进入 /sessions/:id 时：同步选中 + 按需加载消息历史与配置项 */
+/** 进入 /sessions/:id 时：同步选中 + 以 GET /sessions/:id 为权威校验会话存在性。
+ * 校验成功才加载消息历史/配置项/命令（见 store.resolveSession）；
+ * 失败按原因置错误态（后端未启动 → network、id 不存在 → not_found、超时/其它 → error），
+ * 避免「后端未启动 / 会话不存在」时界面永远卡在「加载会话中…」。 */
 watch(
   sessionId,
   (id) => {
     sessionStore.currentId = id
     if (id !== null) {
-		void loadExternalTools()
-      void sessionStore.loadMessages(id).catch(() => {
-        // 历史加载失败不阻塞界面；后续可加重试
-      })
-      // 加载会话配置项（模型/思考强度/mode；agent 不支持时为空，前端隐藏）
-      void sessionStore.loadConfigOptions(id)
-      // 加载可用 / 命令（agent 未通告时为空，前端不显示候选面板）
-      void sessionStore.loadSlashCommands(id)
+      void loadExternalTools()
+      void sessionStore.resolveSession(id)
     }
   },
   { immediate: true },
 )
+
+/** 解析失败标题（按原因分类：不存在 / 网络 / 其它） */
+const sessionResolveTitle = computed(() => {
+  switch (sessionStore.sessionResolve.status) {
+    case 'not_found':
+      return t('chat.sessionNotFound')
+    case 'network':
+      return t('chat.sessionNetworkError')
+    case 'error':
+      return t('chat.sessionLoadFailed')
+    default:
+      return ''
+  }
+})
+
+/** 解析失败态（非 idle/loading/ready 时非空），驱动错误面板渲染 */
+const sessionResolveError = computed(() => {
+  const st = sessionStore.sessionResolve.status
+  if (st === 'idle' || st === 'loading' || st === 'ready') {
+    return null
+  }
+  return {
+    title: sessionResolveTitle.value,
+    message: sessionStore.sessionResolve.message,
+  }
+})
+
+/** 重试解析：后端恢复 / 网络抖动后重新校验会话 */
+function onRetryResolve() {
+  const id = sessionId.value
+  if (id !== null) {
+    void sessionStore.resolveSession(id)
+  }
+}
+
+/** 错误态「新建会话」入口（不存在的会话无返回价值） */
+function onGoNewSession() {
+  void router.push({ name: 'new' })
+}
 
 /** 当前会话对象；null → 非会话态 */
 const current = computed(() => sessionStore.activeSession)
@@ -164,8 +201,31 @@ function onNewProjectFromHero() {
 </script>
 
 <template>
+  <!-- session 解析失败（后端未启动 / 会话不存在 / 其它）：错误面板优先于缓存内容，
+       避免「列表残留该会话但后端已不可达/已删除」时仍显示可输入的死会话 -->
+  <div
+    v-if="routeName === 'session' && sessionResolveError"
+    class="flex min-h-0 flex-1 flex-col items-center justify-center gap-4 px-6 text-center"
+  >
+    <div class="text-sm font-medium text-ink">{{ sessionResolveError.title }}</div>
+    <div
+      v-if="sessionResolveError.message"
+      class="max-w-md break-words text-xs text-ink-muted"
+    >
+      {{ sessionResolveError.message }}
+    </div>
+    <div class="flex items-center gap-3">
+      <n-button size="small" @click="onRetryResolve">
+        {{ t('chat.retry') }}
+      </n-button>
+      <n-button size="small" secondary @click="onGoNewSession">
+        {{ t('chat.newChatTitle') }}
+      </n-button>
+    </div>
+  </div>
+
   <!-- 已有会话：对话列表 + bar 输入（agent 已锁定，无切换 tab） -->
-  <template v-if="routeName === 'session' && current">
+  <template v-else-if="routeName === 'session' && current">
     <div class="flex min-h-0 flex-1 flex-col">
       <!-- 会话头部：Agent 标签（左）+ 标题 + 右侧面板开关（最右） -->
       <div class="flex items-center gap-2 border-b border-divider px-4 py-2.5">
@@ -255,7 +315,8 @@ function onNewProjectFromHero() {
     </div>
   </template>
 
-  <!-- session 态但会话对象尚未解析（转正补列表前的瞬时窗口/会话不存在）：加载占位，避免误入欢迎页 -->
+
+  <!-- session 态但会话尚未解析（转正补列表前的瞬时窗口）：加载占位，避免误入欢迎页 -->
   <div
     v-else-if="routeName === 'session'"
     class="flex min-h-0 flex-1 items-center justify-center text-sm text-ink-muted"

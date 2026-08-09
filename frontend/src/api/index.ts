@@ -254,10 +254,14 @@ export async function fetchSessionsByWorkspace(
   return data.sessions
 }
 
-/** GET /api/v1/sessions/:id — 会话详情 */
-export async function fetchSession(sessionId: number): Promise<ChatSession> {
+/** GET /api/v1/sessions/:id — 会话详情；signal 可用于超时/离开页面时中止请求 */
+export async function fetchSession(
+  sessionId: number,
+  signal?: AbortSignal,
+): Promise<ChatSession> {
   const data = await http.get<{ session: ChatSession }>(
     `/api/v1/sessions/${sessionId}`,
+    { signal },
   )
   return data.session
 }

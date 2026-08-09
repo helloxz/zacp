@@ -52,6 +52,11 @@ export default {
     creatingSession: '正在创建会话…',
     agentNotRunning: '未运行，点击启动',
     loadingSession: '加载会话中…',
+    // /sessions/:id 解析失败（后端未启动 / 会话不存在 / 其它）
+    sessionNotFound: '会话不存在，可能已被删除',
+    sessionNetworkError: '无法连接后端服务',
+    sessionLoadFailed: '会话加载失败',
+    retry: '重试',
     configUpdateFailed: '配置更新失败',
     reasoning: '思考过程',
     reasoningThinking: '思考中',
