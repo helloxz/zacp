@@ -122,3 +122,10 @@ type DirectoryListDTO struct {
 	// Entries 仅子文件夹（隐藏目录与 ignoredDirNames 大目录由后端过滤）。
 	Entries []DirectoryEntryDTO `json:"entries"`
 }
+
+// ExternalToolDTO 表示当前平台可启动的本地工具。
+// 工具 ID 是服务端白名单键，Label 仅用于前端菜单展示。
+type ExternalToolDTO struct {
+	ID    string `json:"id"`
+	Label string `json:"label"`
+}

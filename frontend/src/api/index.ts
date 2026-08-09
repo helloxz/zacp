@@ -26,6 +26,7 @@ import type {
   ChatSession,
   ConfigOption,
   DirectoryList,
+  ExternalTool,
   FileContent,
   FileEntry,
   GitStatus,
@@ -54,6 +55,12 @@ export async function fetchAgents(): Promise<Agent[]> {
 export async function fetchManageAgents(): Promise<ManageAgent[]> {
   const data = await http.get<{ agents: ManageAgent[] }>('/api/v1/agents/manage')
   return data.agents
+}
+
+/** GET /api/v1/tools — 当前平台已安装且在白名单中的本地工具。 */
+export async function fetchExternalTools(): Promise<ExternalTool[]> {
+	const data = await http.get<{ tools: ExternalTool[] }>('/api/v1/tools')
+	return data.tools
 }
 
 /**
@@ -253,6 +260,13 @@ export async function fetchSession(sessionId: number): Promise<ChatSession> {
     `/api/v1/sessions/${sessionId}`,
   )
   return data.session
+}
+
+/** POST /api/v1/sessions/:id/open-tool — 在当前会话工作区启动本地工具。 */
+export async function openSessionTool(sessionId: number, tool: string): Promise<void> {
+	await http.post(`/api/v1/sessions/${sessionId}/open-tool`, {
+		body: { tool },
+	})
 }
 
 /** POST /api/v1/sessions — 创建会话；workspaceId 缺省时后端回退默认工作区 */

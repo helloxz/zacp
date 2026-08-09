@@ -22,6 +22,7 @@ import (
 	"github.com/helloxz/zacp/internal/service"
 	"github.com/helloxz/zacp/internal/store"
 	"github.com/helloxz/zacp/internal/version"
+	"github.com/helloxz/zacp/internal/web"
 	"github.com/helloxz/zacp/internal/ws"
 )
 
@@ -201,6 +202,7 @@ Examples:
 	}
 	fileSvc := service.NewFileService(workspaceRepo, cfg.Session.DefaultCwd)
 	gitSvc := service.NewGitService(workspaceRepo)
+	toolSvc := service.NewToolService(sessionRepo)
 
 	// 创建 Handler
 	workspaceHandler := handlers.NewWorkspaceHandler(workspaceSvc)
@@ -208,6 +210,7 @@ Examples:
 	chatHandler := &handlers.ChatHandler{Mgr: mgr}
 	fileHandler := handlers.NewFileHandler(fileSvc)
 	gitHandler := handlers.NewGitHandler(gitSvc)
+	toolHandler := handlers.NewToolHandler(toolSvc)
 	agentManageHandler := &handlers.AgentManageHandler{
 		Mgr:        mgr,
 		ConfigPath: agentCfgPath,
@@ -219,7 +222,7 @@ Examples:
 		gin.SetMode(cfg.Server.Mode)
 	}
 
-	engine := router.New(workspaceHandler, sessionHandler, chatHandler, fileHandler, gitHandler, agentManageHandler, wsHandler, eventBridge)
+	engine := router.New(workspaceHandler, sessionHandler, chatHandler, fileHandler, gitHandler, agentManageHandler, toolHandler, wsHandler, eventBridge)
 
 	// Graceful shutdown on signal.
 	go func() {
@@ -253,6 +256,20 @@ Examples:
 	// 无论配置里写的是 :8680 还是 0.0.0.0:8680，用户都能直接打开。
 	fmt.Printf("\nzacp is running at:  http://%s/\n", normalizeAddr(listenAddr))
 	fmt.Println("Press Ctrl+C to stop.")
+	// 生产单二进制内嵌前端时自动打开本机浏览器；开发模式前端由 Vite 独立提供，
+	// 不自动打开后端端口，避免直接落到没有静态资源的 404 页面。
+	if web.StaticEnabled() {
+		go func() {
+			url, err := web.OpenLocalBrowserWhenReady(listenAddr, 5*time.Second)
+			if err != nil {
+				log.Warn("failed to open local browser", "err", err)
+				return
+			}
+			if url != "" {
+				log.Info("local browser opened", "url", url)
+			}
+		}()
+	}
 	if err := engine.Run(listenAddr); err != nil {
 		log.Error("http server failed", "err", err)
 		os.Exit(1)

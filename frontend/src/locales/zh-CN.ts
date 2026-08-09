@@ -75,6 +75,9 @@ export default {
     assistant: 'Agent',
     errorTitle: '出错了',
     backToBottom: '回到底部',
+    openTool: '打开本地工具',
+    toolOpened: '已启动本地工具',
+    toolOpenFailed: '启动本地工具失败，请检查工具是否已安装',
   },
   tool: {
     running: '执行中',

@@ -1,12 +1,18 @@
 <script setup lang="ts">
-import { computed, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute } from 'vue-router'
-import { NIcon } from 'naive-ui'
-import { CaretBackOutline, CaretForwardOutline } from '@vicons/ionicons5'
+import { NIcon, useMessage, type DropdownOption } from 'naive-ui'
+import {
+	CaretBackOutline,
+	CaretForwardOutline,
+	TerminalOutline,
+} from '@vicons/ionicons5'
+import { fetchExternalTools, openSessionTool } from '@/api'
 import { useAgentStore } from '@/stores/agent'
 import { useSessionStore } from '@/stores/session'
 import { useAppStore } from '@/stores/app'
+import type { ExternalTool } from '@/types/models'
 import WelcomeHero from '@/components/chat/WelcomeHero.vue'
 import NewSessionPane from '@/components/chat/NewSessionPane.vue'
 import MessageList from '@/components/chat/MessageList.vue'
@@ -20,6 +26,51 @@ const route = useRoute()
 const agentStore = useAgentStore()
 const sessionStore = useSessionStore()
 const appStore = useAppStore()
+
+const message = useMessage()
+const externalTools = ref<ExternalTool[]>([])
+const externalToolsLoaded = ref(false)
+const externalToolOpening = ref<string | null>(null)
+let externalToolsLoading = false
+
+/** 工具列表是本机全局能力；首次进入真实 Session 时加载一次，避免每次切会话重复探测。 */
+async function loadExternalTools() {
+	if (externalToolsLoaded.value || externalToolsLoading) return
+	externalToolsLoading = true
+	try {
+		externalTools.value = await fetchExternalTools()
+	} catch {
+		// 工具探测失败不阻塞对话页面；菜单保持隐藏，点击其它功能仍正常。
+		externalTools.value = []
+	} finally {
+		externalToolsLoaded.value = true
+		externalToolsLoading = false
+	}
+}
+
+const externalToolOptions = computed<DropdownOption[]>(() =>
+	externalTools.value.map((tool) => ({
+		key: tool.id,
+		label: tool.label,
+	})),
+)
+
+/** 点击菜单后仅提交白名单 ID；目录由后端从当前 Session 解析，前端不传路径。 */
+async function onExternalToolSelect(key: string | number) {
+	const session = current.value
+	const toolID = String(key)
+	if (!session || !toolID || externalToolOpening.value !== null) return
+
+	externalToolOpening.value = toolID
+	try {
+		await openSessionTool(session.id, toolID)
+		message.success(t('chat.toolOpened'))
+	} catch {
+		message.error(t('chat.toolOpenFailed'))
+	} finally {
+		externalToolOpening.value = null
+	}
+}
 
 /** 右侧面板折叠按钮主题：纯灰图标、无 hover 背景（不用 quaternary/primary）；暗色下换亮一档 */
 const toggleBtnTheme = computed(() =>
@@ -63,6 +114,7 @@ watch(
   (id) => {
     sessionStore.currentId = id
     if (id !== null) {
+		void loadExternalTools()
       void sessionStore.loadMessages(id).catch(() => {
         // 历史加载失败不阻塞界面；后续可加重试
       })
@@ -125,6 +177,27 @@ function onNewProjectFromHero() {
         <span class="min-w-0 flex-1 truncate text-sm font-medium text-ink">
           {{ current.title || t('chat.newChatTitle') }}
         </span>
+        <!-- 本地工具：后端仅返回当前平台已安装的白名单工具；悬停展开，点击直接启动。 -->
+        <n-dropdown
+          v-if="externalToolsLoaded && externalTools.length"
+          trigger="hover"
+          placement="bottom-end"
+          :options="externalToolOptions"
+          @select="onExternalToolSelect"
+        >
+          <n-button
+            text
+            circle
+            size="small"
+            :theme-overrides="toggleBtnTheme"
+            :title="t('chat.openTool')"
+            :disabled="externalToolOpening !== null"
+          >
+            <template #icon>
+              <n-icon><TerminalOutline /></n-icon>
+            </template>
+          </n-button>
+        </n-dropdown>
         <!-- 右侧面板（信息|文件|Git）展开/收起：箭头随状态指向收起方向，灰色系无 hover 背景 -->
         <n-button
           text

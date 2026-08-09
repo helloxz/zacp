@@ -48,6 +48,12 @@ export interface Workspace {
   updatedAt: string
 }
 
+/** 可由后端启动的本地工具（GET /api/v1/tools）。 */
+export interface ExternalTool {
+  id: string
+  label: string
+}
+
 /**
  * 文件树条目（GET /api/v1/workspaces/:id/files → `{ path, entries: FileEntry[] }`）
  * path 为相对工作区根的路径（`/` 分隔）。

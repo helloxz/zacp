@@ -20,6 +20,7 @@ func New(
 	fileHandler *handlers.FileHandler,
 	gitHandler *handlers.GitHandler,
 	agentManageHandler *handlers.AgentManageHandler,
+	toolHandler *handlers.ToolHandler,
 	wsHandler *ws.Handler,
 	eventBridge *ws.EventBridge,
 ) *gin.Engine {
@@ -37,6 +38,9 @@ func New(
 		// 注意：/agents/manage 为静态段，与 /agents/:agentId/status 无路由冲突
 		v1.GET("/agents/manage", agentManageHandler.ListManageAgents)
 		v1.PUT("/agents/:agentId", agentManageHandler.SetAgentEnabled)
+
+		// 本地工具：只返回后端白名单中当前平台已安装的工具。
+		v1.GET("/tools", toolHandler.ListTools)
 
 		// 工作目录管理
 		v1.GET("/workspaces", workspaceHandler.ListWorkspaces)
@@ -64,6 +68,7 @@ func New(
 		v1.DELETE("/sessions/:id", sessionHandler.DeleteSession)
 		// 草稿会话释放（切 tab / 离开空态时释放旧隐式草稿）
 		v1.DELETE("/sessions/:id/draft", sessionHandler.DeleteDraftSession)
+		v1.POST("/sessions/:id/open-tool", toolHandler.OpenSessionTool)
 		v1.GET("/workspaces/:id/sessions", sessionHandler.ListSessions)
 
 		// 消息管理

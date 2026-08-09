@@ -64,6 +64,9 @@ export default {
     assistant: 'Agent',
     errorTitle: 'Something went wrong',
     backToBottom: 'Back to bottom',
+    openTool: 'Open local tool',
+    toolOpened: 'Local tool started',
+    toolOpenFailed: 'Failed to start local tool; check that it is installed',
   },
   tool: {
     running: 'Running',
