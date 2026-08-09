@@ -416,6 +416,7 @@ func (s *SessionService) SendMessage(ctx context.Context, sessionID uint, conten
 }
 
 // GetMessages 获取会话消息（分页从最新消息端计算，返回窗口内升序结果）。
+// 仅分页历史接口使用瘦身投影；增量接口 GetMessagesAfter 保持原始消息不变。
 func (s *SessionService) GetMessages(sessionID uint, limit, offset int) ([]model.Message, error) {
 	if limit <= 0 {
 		limit = 50
@@ -423,7 +424,16 @@ func (s *SessionService) GetMessages(sessionID uint, limit, offset int) ([]model
 	if offset < 0 {
 		offset = 0
 	}
-	return s.msgRepo.ListBySessionPaginated(sessionID, limit, offset)
+	messages, err := s.msgRepo.ListBySessionPaginated(sessionID, limit, offset)
+	if err != nil {
+		return nil, fmt.Errorf("list paginated messages: %w", err)
+	}
+
+	latestAssistantID, err := s.msgRepo.LatestAssistantID(sessionID)
+	if err != nil {
+		return nil, fmt.Errorf("find latest assistant message: %w", err)
+	}
+	return slimHistoricalMessages(messages, latestAssistantID), nil
 }
 
 // GetMessagesAfter 获取指定消息 ID 之后新增的消息。

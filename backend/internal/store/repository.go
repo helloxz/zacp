@@ -302,6 +302,21 @@ func (r *MessageRepository) ListBySessionAfterID(sessionID, afterID uint) ([]mod
 	return messages, err
 }
 
+// LatestAssistantID 返回会话中最新 assistant 消息的 ID；没有 assistant 消息时返回 0。
+// 只查询主键，不加载 events/tool_details，避免历史消息瘦身判断再次读取大字段。
+func (r *MessageRepository) LatestAssistantID(sessionID uint) (uint, error) {
+	var row struct {
+		ID uint
+	}
+	err := r.db.Model(&model.Message{}).
+		Select("id").
+		Where("session_id = ? AND role = ?", sessionID, "assistant").
+		Order("id DESC").
+		Limit(1).
+		Scan(&row).Error
+	return row.ID, err
+}
+
 // CountBySession 统计会话消息数量
 func (r *MessageRepository) CountBySession(sessionID uint) (int64, error) {
 	var count int64
