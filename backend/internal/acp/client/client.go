@@ -55,6 +55,11 @@ type Bridge struct {
 
 	mu              sync.Mutex
 	eventsBySession map[string][]Event
+	// mutedSessions 会话级静音集合：session/load 恢复期间 agent 会把磁盘会话文件
+	// 里的历史上下文回放成 session/update 通知（agent_message_chunk 等），这些是
+	// 历史回放、不是本轮输出。静音期间该 session 的 push 事件直接丢弃（不入缓存、
+	// 不触发 onEvent 广播），否则前端会把历史消息追加到当前 turn 的占位消息上。
+	mutedSessions map[string]bool
 	// onEvent is optional live callback (e.g. print to stdout).
 	onEvent func(Event)
 	// configOptionsHandler 接收 agent 经 session/update 通知下发的 configOptions
@@ -81,6 +86,7 @@ func New(log *slog.Logger, autoApprove bool) *Bridge {
 		log:             log,
 		autoApprove:     autoApprove,
 		eventsBySession: make(map[string][]Event),
+		mutedSessions:   make(map[string]bool),
 	}
 }
 
@@ -155,8 +161,26 @@ func (b *Bridge) AgentText(sessionID string) string {
 	return sb.String()
 }
 
+// SetMuted 设置/解除指定 ACP session 的事件静音（见 mutedSessions 字段注释）。
+// 静音期间该 session 的 push 事件被丢弃：不入缓存、不触发 onEvent 广播。
+func (b *Bridge) SetMuted(sessionID string, muted bool) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if muted {
+		b.mutedSessions[sessionID] = true
+	} else {
+		delete(b.mutedSessions, sessionID)
+	}
+}
+
 func (b *Bridge) push(e Event) {
 	b.mu.Lock()
+	if b.mutedSessions[e.SessionID] {
+		// 会话恢复（session/load）回放期间：事件是历史回放、不是本轮输出，
+		// 直接丢弃（不入缓存、不广播），历史内容已由 DB 持久化，无损失。
+		b.mu.Unlock()
+		return
+	}
 	b.eventsBySession[e.SessionID] = append(b.eventsBySession[e.SessionID], e)
 	fn := b.onEvent
 	b.mu.Unlock()

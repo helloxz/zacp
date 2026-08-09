@@ -1228,6 +1228,14 @@ func (c *AgentConnection) LoadSession(ctx context.Context, sessionID acp.Session
 		return fmt.Errorf("agent not started")
 	}
 
+	// 会话恢复（session/load）期间，agent 会把磁盘会话文件里的历史上下文回放成
+	// session/update 通知（如 agent_message_chunk，内容是历史轮次的 AI 消息）。
+	// 这些是历史回放、不是本轮输出：先对该 session 静音（见 client.Bridge.SetMuted），
+	// 期间事件丢弃不入缓存、不广播，避免前端把历史消息追加到当前 turn 的占位消息上
+	//（表现为「用户发送后立即显示上一轮 AI 消息」）；历史内容已由 DB 持久化，无损失。
+	c.bridge.SetMuted(string(sessionID), true)
+	defer c.bridge.SetMuted(string(sessionID), false)
+
 	// 会话恢复属于活跃操作：先刷新空闲计时再开始耗时操作
 	c.lastUsed = time.Now()
 
