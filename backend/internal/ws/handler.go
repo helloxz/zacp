@@ -4,29 +4,69 @@ import (
 	"context"
 	"log/slog"
 	"net/http"
+	"strings"
 
 	"github.com/coder/websocket"
+
+	"github.com/helloxz/zacp/internal/auth"
 )
 
-// Handler WebSocket HTTP 处理器
+// wsAuthProtocolPrefix WebSocket 子协议前缀，登录 token 经它携带：
+// 浏览器 WebSocket 无法设置自定义 header（Authorization 带不过去），
+// 而把 token 放进 ?token= 会进访问日志——子协议由浏览器只在握手时发送、
+// 不回显到 URL，是折中方案。格式："zacp-auth.<token>"（token 为 hex，
+// 满足 RFC 7230 tchar 子协议字符集）。
+const wsAuthProtocolPrefix = "zacp-auth."
+
+// Handler WebSocket  HTTP 处理器
 type Handler struct {
-	hub *Hub
-	log *slog.Logger
+	hub     *Hub
+	log     *slog.Logger
+	authSvc *auth.Service // 认证服务；nil 或未启用时不校验握手
 }
 
 // NewHandler 创建 WebSocket 处理器
-func NewHandler(hub *Hub, log *slog.Logger) *Handler {
+// authSvc 可为 nil（认证未启用时保持原有行为）。
+func NewHandler(hub *Hub, log *slog.Logger, authSvc *auth.Service) *Handler {
 	return &Handler{
-		hub: hub,
-		log: log,
+		hub:     hub,
+		log:     log,
+		authSvc: authSvc,
 	}
+}
+
+// authSubprotocol 从握手请求提取并校验登录 token（子协议形式 "zacp-auth.<token>"）。
+// 返回（token 校验通过后的完整子协议值, 是否放行）：
+//   - 认证未启用：放行（保持默认无需登录）；
+//   - 认证启用且 token 有效：放行，同时把客户端协议值回传（握手必须回显客户端协议，
+//     否则浏览器按 RFC 6455 判定握手失败）；
+//   - 其余：拒绝。
+func (h *Handler) authSubprotocol(r *http.Request) (string, bool) {
+	if h.authSvc == nil || !h.authSvc.Enabled() {
+		return "", true
+	}
+	proto := r.Header.Get("Sec-WebSocket-Protocol")
+	token := strings.TrimPrefix(proto, wsAuthProtocolPrefix)
+	if token == proto || token == "" || !h.authSvc.ValidateMain(token) {
+		return "", false
+	}
+	return proto, true
 }
 
 // ServeHTTP 处理 WebSocket 升级请求
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request, bridge *EventBridge) {
-	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{
-		InsecureSkipVerify: true, // 开发环境允许所有 Origin，生产环境需要配置
-	})
+	proto, ok := h.authSubprotocol(r)
+	if !ok {
+		h.log.Warn("websocket rejected: invalid auth token", "remote", r.RemoteAddr)
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	opts := &websocket.AcceptOptions{InsecureSkipVerify: true} // 开发环境允许所有 Origin
+	if proto != "" {
+		// 回显客户端子协议，浏览器才会确认握手成功
+		opts.Subprotocols = []string{proto}
+	}
+	conn, err := websocket.Accept(w, r, opts)
 	if err != nil {
 		h.log.Error("websocket accept error", "error", err)
 		return
@@ -48,9 +88,17 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request, bridge *Even
 // ServeHTTPWithSession 处理带会话绑定的 WebSocket 升级请求
 func (h *Handler) ServeHTTPWithSession(sessionID, agentID string, bridge *EventBridge) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{
-			InsecureSkipVerify: true,
-		})
+		proto, ok := h.authSubprotocol(r)
+		if !ok {
+			h.log.Warn("websocket rejected: invalid auth token", "remote", r.RemoteAddr)
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		opts := &websocket.AcceptOptions{InsecureSkipVerify: true}
+		if proto != "" {
+			opts.Subprotocols = []string{proto}
+		}
+		conn, err := websocket.Accept(w, r, opts)
 		if err != nil {
 			h.log.Error("websocket accept error", "error", err)
 			return

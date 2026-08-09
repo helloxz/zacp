@@ -4,12 +4,14 @@ import { useI18n } from 'vue-i18n'
 import {
   CloseOutline,
   InformationCircleOutline,
+  PersonOutline,
   ServerOutline,
   SettingsOutline,
 } from '@vicons/ionicons5'
 import AgentSettings from '@/components/shell/AgentSettings.vue'
 import SystemSettings from '@/components/shell/SystemSettings.vue'
 import AboutSettings from '@/components/shell/AboutSettings.vue'
+import UserSettings from '@/components/shell/UserSettings.vue'
 
 /**
  * 设置弹窗：左侧菜单（智能体 / 系统设置 / 关于）+ 右侧内容区。
@@ -22,20 +24,22 @@ const emit = defineEmits<{ (e: 'update:show', v: boolean): void }>()
 
 const { t } = useI18n()
 
-type MenuKey = 'agent' | 'system' | 'about'
+type MenuKey = 'user' | 'agent' | 'system' | 'about'
 
 /** 当前选中的菜单 key */
 const activeKey = ref<MenuKey>('agent')
 
-/** 左侧菜单项：key + 文案 + 图标 */
+/** 左侧菜单项：key + 文案 + 图标（智能体第一，登录认证第二） */
 const menus = computed(() => [
   { key: 'agent' as const, label: t('settings.agent.title'), icon: ServerOutline },
+  { key: 'user' as const, label: t('settings.user.title'), icon: PersonOutline },
   { key: 'system' as const, label: t('settings.system.title'), icon: SettingsOutline },
   { key: 'about' as const, label: t('settings.about.title'), icon: InformationCircleOutline },
 ])
 
 /** 菜单 key → 内容组件映射 */
-const views: Record<MenuKey, typeof AgentSettings> = {
+const views: Record<MenuKey, typeof UserSettings> = {
+  user: UserSettings,
   agent: AgentSettings,
   system: SystemSettings,
   about: AboutSettings,

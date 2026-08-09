@@ -18,6 +18,7 @@ import (
 	"github.com/helloxz/zacp/internal/acp/providers"
 	"github.com/helloxz/zacp/internal/api/handlers"
 	"github.com/helloxz/zacp/internal/api/router"
+	"github.com/helloxz/zacp/internal/auth"
 	"github.com/helloxz/zacp/internal/config"
 	"github.com/helloxz/zacp/internal/service"
 	"github.com/helloxz/zacp/internal/store"
@@ -105,6 +106,16 @@ Examples:
 		agentCfgPath = abs
 	}
 
+	// 创建认证服务（单用户账号认证）：
+	// 启用状态由 config.toml [auth].password_hash 是否为空决定（缺省=关闭，老用户零影响）；
+	// 凭证变更由设置页写回同一配置文件（agentCfgPath），热生效无需重启。
+	authSvc := auth.NewService(cfg, agentCfgPath, log)
+	if authSvc.Enabled() {
+		log.Info("auth enabled", "username", authSvc.Username())
+	} else {
+		log.Info("auth disabled (no password set in config)")
+	}
+
 	// 合成最终监听地址：--addr > ZACP_ADDR 环境变量 > TOML server.addr > :8680
 	listenAddr := *addr
 	if listenAddr == "" {
@@ -180,7 +191,7 @@ Examples:
 	log.Info("websocket hub started")
 
 	// 创建 WebSocket Handler
-	wsHandler := ws.NewHandler(wsHub, log)
+	wsHandler := ws.NewHandler(wsHub, log, authSvc)
 
 	// 创建 EventBridge
 	eventBridge := ws.NewEventBridge(wsHandler, mgr, sessionRepo, messageRepo, log)
@@ -208,13 +219,14 @@ Examples:
 	workspaceHandler := handlers.NewWorkspaceHandler(workspaceSvc)
 	sessionHandler := handlers.NewSessionHandler(sessionSvc, eventBridge)
 	chatHandler := &handlers.ChatHandler{Mgr: mgr}
-	fileHandler := handlers.NewFileHandler(fileSvc)
+	fileHandler := handlers.NewFileHandler(fileSvc, authSvc)
 	gitHandler := handlers.NewGitHandler(gitSvc)
 	toolHandler := handlers.NewToolHandler(toolSvc)
 	agentManageHandler := &handlers.AgentManageHandler{
 		Mgr:        mgr,
 		ConfigPath: agentCfgPath,
 	}
+	authHandler := handlers.NewAuthHandler(authSvc)
 
 	// gin mode 优先级：GIN_MODE 环境变量（gin 包 init 已读取）> TOML server.mode > 默认 debug。
 	// GIN_MODE 显式设置时以环境变量为准（不覆盖）；否则以配置为准。
@@ -222,7 +234,7 @@ Examples:
 		gin.SetMode(cfg.Server.Mode)
 	}
 
-	engine := router.New(workspaceHandler, sessionHandler, chatHandler, fileHandler, gitHandler, agentManageHandler, toolHandler, wsHandler, eventBridge)
+	engine := router.New(workspaceHandler, sessionHandler, chatHandler, fileHandler, gitHandler, agentManageHandler, toolHandler, authHandler, wsHandler, eventBridge, authSvc)
 
 	// Graceful shutdown on signal.
 	go func() {

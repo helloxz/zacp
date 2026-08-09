@@ -19,6 +19,7 @@ export { ApiError, type ApiErrorBody, type RequestOptions, type HttpMethod } fro
 import { http } from './http'
 import { ApiError, type ApiErrorBody } from './types'
 import { apiUrl } from '@/config/env'
+import { readAuthToken } from '@/utils/authStorage'
 import type {
   Agent,
   AvailableCommand,
@@ -197,6 +198,11 @@ export async function uploadFiles(
   return new Promise<FileEntry[]>((resolve, reject) => {
     const xhr = new XMLHttpRequest()
     xhr.open('POST', apiUrl(`/api/v1/workspaces/${workspaceId}/files/upload`))
+    // 上传走 XHR，无法复用 http.ts 的 fetch 封装：这里手动带登录 token
+    const token = readAuthToken()
+    if (token) {
+      xhr.setRequestHeader('Authorization', `Bearer ${token}`)
+    }
     xhr.upload.onprogress = (e) => {
       if (e.lengthComputable && onProgress) {
         onProgress(e.loaded / e.total)
@@ -383,4 +389,57 @@ export async function setConfigOption(
   await http.post(`/api/v1/sessions/${sessionId}/config-options`, {
     body: { optionId, valueId },
   })
+}
+
+// ---------------------------------------------------------------------------
+// 账号认证（单用户登录保护，可选）
+// ---------------------------------------------------------------------------
+
+/** POST /api/v1/auth/login — 登录，成功返回主 token（7 天，后端内存存储） */
+export interface LoginResult {
+  token: string
+  tokenType: string
+  expiresIn: number
+  username: string
+}
+
+export async function login(username: string, password: string): Promise<LoginResult> {
+  return http.post<LoginResult>('/api/v1/auth/login', {
+    body: { username, password },
+  })
+}
+
+/** GET /api/v1/auth/status — 认证启用状态（免认证；前端守卫据此决定是否拦截） */
+export interface AuthStatus {
+  enabled: boolean
+  username: string
+}
+
+export async function fetchAuthStatus(): Promise<AuthStatus> {
+  return http.get<AuthStatus>('/api/v1/auth/status')
+}
+
+/** PUT /api/v1/auth/credentials — 修改用户名/密码；password 为空 = 关闭登录保护 */
+export async function updateCredentials(
+  username: string,
+  password: string,
+): Promise<AuthStatus> {
+  return http.put<AuthStatus>('/api/v1/auth/credentials', {
+    body: { username, password },
+  })
+}
+
+/**
+ * POST /api/v1/workspaces/:id/files/preview-token — 换取文件预览直链。
+ *
+ * 返回完整 URL（含 12 小时资源 token，绑定 workspace+path），供 <img src> 等
+ * 无法携带自定义 header 的场景使用；资源 token 与登录 token 分离，
+ * 即使出现在访问日志中也不会泄露登录态。
+ */
+export async function fetchPreviewUrl(workspaceId: number, path: string): Promise<string> {
+  const data = await http.post<{ url: string }>(
+    `/api/v1/workspaces/${workspaceId}/files/preview-token`,
+    { body: { path } },
+  )
+  return apiUrl(data.url)
 }

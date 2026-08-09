@@ -1,6 +1,10 @@
 import { reactive } from 'vue'
 import { wsUrl } from '@/config/env'
 import type { WsClientMessage, WsServerMessage } from '@/types/ws'
+import { readAuthToken } from '@/utils/authStorage'
+
+/** WebSocket 子协议前缀（与后端 ws/handler.go 的 wsAuthProtocolPrefix 保持一致） */
+const WS_AUTH_PROTOCOL_PREFIX = 'zacp-auth.'
 
 export type SocketStatus = 'idle' | 'connecting' | 'open' | 'closed'
 
@@ -28,12 +32,16 @@ let reconnectTimer: number | undefined
 let reconnectAttempts = 0
 let heartbeatTimer: number | undefined
 let manuallyClosed = false
+/** 连续握手失败计数（从未 open 就被关闭；open 时清零，见 onclose 兜底逻辑） */
+let handshakeFailures = 0
 
 /** 消息订阅者集合（session store 注册） */
 const listeners = new Set<(msg: WsServerMessage) => void>()
 
 const MAX_RECONNECT_MS = 30_000
 const HEARTBEAT_MS = 30_000
+/** 连续握手失败上限：超过即视为登录 token 已失效，清登录态跳转登录页 */
+const MAX_HANDSHAKE_FAILURES = 3
 
 /** 指数退避重连（不打断已在排队的重连） */
 function scheduleReconnect() {
@@ -68,11 +76,19 @@ export function connect() {
   if (manuallyClosed || ws) {
     return
   }
+  // 认证启用但本地无 token（未登录/已被登出）：不建连，等登录成功后由页面手动 connect。
+  // 注意：这里只按「有无 token」判断；token 是否有效由后端握手校验（401 时 onclose 处理）。
+  const token = readAuthToken()
+  if (!token) {
+    return
+  }
   state.status = 'connecting'
   state.error = null
   let socket: WebSocket
   try {
-    socket = new WebSocket(wsUrl('/api/v1/ws'))
+    // 登录 token 经 WebSocket 子协议携带（浏览器 WS 无法设自定义 header，
+    // 放 URL query 会进访问日志）；后端校验通过后回显该子协议完成握手。
+    socket = new WebSocket(wsUrl('/api/v1/ws'), [`${WS_AUTH_PROTOCOL_PREFIX}${token}`])
   } catch (e) {
     state.error = e instanceof Error ? e.message : String(e)
     scheduleReconnect()
@@ -84,6 +100,7 @@ export function connect() {
     if (ws !== socket) return // 已被新连接替换
     state.status = 'open'
     reconnectAttempts = 0
+    handshakeFailures = 0
     heartbeatTimer = window.setInterval(() => {
       send({ type: 'ping' })
     }, HEARTBEAT_MS)
@@ -104,6 +121,25 @@ export function connect() {
     if (heartbeatTimer !== undefined) {
       window.clearInterval(heartbeatTimer)
       heartbeatTimer = undefined
+    }
+    // 认证启用后本地 token 已无（401 拦截登出 / 凭证变更清 token）：
+    // 不再重连，避免无效握手无限循环；重新登录后由页面手动 connect。
+    if (!readAuthToken()) {
+      return
+    }
+    // 连续握手失败兜底：服务重启后内存 token 全部失效（localStorage 里仍是旧 token），
+    // 每次握手都会 401——浏览器 WS 无法拿到 HTTP 状态码，只能凭「从未 open 过就关闭」
+    // 累计判断。连续 N 次失败视为 token 已失效：清登录态，由 HTTP 层 401 拦截跳转登录页，
+    // 避免每 30s 一次的无效握手无限刷后端日志。
+    handshakeFailures += 1
+    if (handshakeFailures >= MAX_HANDSHAKE_FAILURES) {
+      handshakeFailures = 0
+      void import('@/stores/auth').then(({ useAuthStore }) => {
+        useAuthStore().forceLogout()
+        const redirect = encodeURIComponent(window.location.pathname + window.location.search)
+        window.location.assign(`/login?redirect=${redirect}`)
+      })
+      return
     }
     scheduleReconnect()
   }

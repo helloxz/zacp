@@ -2,12 +2,15 @@ package handlers
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
+	"net/url"
 	"os"
 	"strconv"
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/helloxz/zacp/internal/auth"
 	"github.com/helloxz/zacp/internal/service"
 )
 
@@ -17,6 +20,8 @@ import (
 // 保证任何读写都落在 workspace.Path 之内（含 symlink 逃逸防护）。
 type FileHandler struct {
 	svc *service.FileService
+	// authSvc 用于签发/校验文件直链资源 token（预览换 12 小时短 token）。
+	authSvc *auth.Service
 }
 
 type renameFileRequest struct {
@@ -25,8 +30,10 @@ type renameFileRequest struct {
 }
 
 // NewFileHandler 创建文件处理器。
-func NewFileHandler(svc *service.FileService) *FileHandler {
-	return &FileHandler{svc: svc}
+// authSvc 可为 nil（认证未启用时 preview-token 端点也应可用，但默认不开放直链——
+// 见 PreviewToken 中的说明）。
+func NewFileHandler(svc *service.FileService, authSvc *auth.Service) *FileHandler {
+	return &FileHandler{svc: svc, authSvc: authSvc}
 }
 
 // ListFiles GET /api/v1/workspaces/:id/files?path=<相对目录>
@@ -140,6 +147,43 @@ func (h *FileHandler) Upload(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"files": results})
+}
+
+// PreviewToken POST /api/v1/workspaces/:id/files/preview-token
+//
+// 换取文件直链（raw URL + 12 小时资源 token，绑定 workspace+path）。
+// 直链供 <img src> 等无法携带自定义 header 的场景使用；资源 token 与主登录 token
+// 分离，即使出现在访问日志中也不会泄露登录态。
+// 请求体 {"path":"<相对路径>"}，返回 {"url":"<相对路径，含 ?token=>"}。
+type previewTokenRequest struct {
+	Path string `json:"path"`
+}
+
+func (h *FileHandler) PreviewToken(c *gin.Context) {
+	if h.authSvc == nil {
+		writeError(c, http.StatusBadRequest, "preview_token_unavailable", "直链服务不可用")
+		return
+	}
+	id, err := parseWorkspaceID(c)
+	if err != nil {
+		writeError(c, http.StatusBadRequest, "invalid_workspace_id", err.Error())
+		return
+	}
+	var req previewTokenRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		writeError(c, http.StatusBadRequest, "invalid_request", err.Error())
+		return
+	}
+	// 先做与 RawFile 一致的路径合法性/存在性校验（防穿越），
+	// 再以原始相对路径签发绑定 token，保证直链校验与 raw 端点拿到的 path 一致。
+	if _, err := h.svc.ResolveFile(id, req.Path); err != nil {
+		writeFileError(c, err)
+		return
+	}
+	token := h.authSvc.IssueResourceToken(strconv.FormatUint(uint64(id), 10), req.Path)
+	url := fmt.Sprintf("/api/v1/workspaces/%d/files/raw?path=%s&token=%s",
+		id, url.QueryEscape(req.Path), token)
+	c.JSON(http.StatusOK, gin.H{"url": url})
 }
 
 // RawFile GET /api/v1/workspaces/:id/files/raw?path=<相对路径>

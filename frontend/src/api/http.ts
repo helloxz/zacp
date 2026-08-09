@@ -1,4 +1,5 @@
 import { apiUrl } from '@/config/env'
+import { clearAuthToken, readAuthToken } from '@/utils/authStorage'
 import { ApiError, type HttpMethod, type RequestOptions } from './types'
 
 /**
@@ -57,6 +58,30 @@ async function parseError(res: Response): Promise<ApiError> {
 }
 
 /**
+ * 认证免跳转路径：这些端点的 401 属于正常业务返回（登录失败 / 状态查询），
+ * 不应触发「清 token 跳登录」的全局拦截。
+ */
+const AUTH_FREE_PATHS = ['/api/v1/auth/login', '/api/v1/auth/status']
+
+/**
+ * 401 全局拦截：清空本地 token 并整页跳转登录页（带回跳地址）。
+ * 用 window.location 而非 vue-router：http.ts 在请求层，避免与 router 循环依赖；
+ * 整页刷新也能让所有已挂载组件以干净状态重建。
+ */
+function handleUnauthorized(): void {
+  clearAuthToken()
+  // 动态 import 打破与 stores/auth（auth store → api → http）的静态循环依赖
+  void import('@/stores/auth').then(({ useAuthStore }) => {
+    useAuthStore().forceLogout()
+  })
+  if (window.location.pathname.startsWith('/login')) {
+    return // 已在登录页：仅清 token，不重复跳转
+  }
+  const redirect = encodeURIComponent(window.location.pathname + window.location.search)
+  window.location.assign(`/login?redirect=${redirect}`)
+}
+
+/**
  * 底层请求：自动拼接 `VITE_API_BASE_URL` + 路径。
  *
  * @param path 仅写后端路径即可，例如 `/api/v1/agents`（可省略前导 `/`）
@@ -80,6 +105,12 @@ export async function request<T = unknown>(
     method,
     signal,
     headers: { ...headers },
+  }
+
+  // 登录 token：存在则统一带 Authorization Bearer（认证未启用时后端直接忽略）
+  const token = readAuthToken()
+  if (token) {
+    ;(init.headers as Record<string, string>)['Authorization'] = `Bearer ${token}`
   }
 
   if (body !== undefined && body !== null && method !== 'GET') {
@@ -115,6 +146,10 @@ export async function request<T = unknown>(
   }
 
   if (!res.ok) {
+    // 认证失败：清 token 并跳登录（登录/状态接口除外）
+    if (res.status === 401 && !AUTH_FREE_PATHS.some((p) => path.startsWith(p))) {
+      handleUnauthorized()
+    }
     throw await parseError(res)
   }
 

@@ -1,4 +1,5 @@
 import { createRouter, createWebHistory } from 'vue-router'
+import { useAuthStore } from '@/stores/auth'
 import { useSessionStore } from '@/stores/session'
 
 /**
@@ -8,12 +9,18 @@ import { useSessionStore } from '@/stores/session'
  * - `/`           无项目首屏 / 空态引导（有项目时由守卫自动跳转）
  * - `/new`        新建会话空态（agent tab 选择 + 隐式草稿预览配置项；?workspaceId=X 预选项目）
  * - `/sessions/:id` 已有会话（对话列表；agent 已锁定，无 tab）
+ * - `/login`      登录页（仅后端启用登录保护且未登录时可达）
  *
  * 壳层设计：三者共享 ShellPage（AppShell + ChatPane），ChatPane 按 route 分流状态。
  */
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
   routes: [
+    {
+      path: '/login',
+      name: 'login',
+      component: () => import('@/pages/LoginPage.vue'),
+    },
     {
       path: '/',
       name: 'home',
@@ -32,6 +39,37 @@ const router = createRouter({
       component: () => import('@/pages/ShellPage.vue'),
     },
   ],
+})
+
+/**
+ * 认证守卫：登录保护的开关状态来自后端（免认证接口），后端未启用时本守卫完全放行。
+ *
+ * 规则：
+ * - 启用且未登录 → 除 /login 外全部重定向到 /login?redirect=<原地址>（登录后回跳）；
+ * - 已登录访问 /login → 回首页；
+ * - 未启用访问 /login → 无需登录，回首页。
+ *
+ * 注意：守卫先于首页兜底逻辑执行；未登录时首页的 loadInitial 不会被触发
+ * （后端会 401，也没必要加载）。
+ */
+router.beforeEach(async (to) => {
+  const authStore = useAuthStore()
+  await authStore.ensureStatus()
+
+  if (to.name === 'login') {
+    if (authStore.enabled && !authStore.hasToken) {
+      return true // 需要登录：停留登录页
+    }
+    return { name: 'home', replace: true } // 已登录或未启用：无需登录页
+  }
+  if (authStore.enabled && !authStore.hasToken) {
+    return {
+      name: 'login',
+      query: { redirect: to.fullPath },
+      replace: true,
+    }
+  }
+  return true
 })
 
 /**

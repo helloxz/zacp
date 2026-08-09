@@ -1,7 +1,7 @@
 /** English UI copy */
 export default {
   common: {
-    appName: 'zacp',
+    appName: 'Zacp',
     loading: 'Loading…',
     confirm: 'Confirm',
     cancel: 'Cancel',
@@ -104,6 +104,29 @@ export default {
     close: 'Close',
     switchToDark: 'Switch to dark mode',
     switchToLight: 'Switch to light mode',
+    user: {
+      title: 'Login',
+      subtitle: 'Login protection & credentials',
+      statusLabel: 'Current status',
+      enabled: 'Login protection enabled',
+      disabled: 'Login protection disabled',
+      usernameLabel: 'Username',
+      usernamePlaceholder: 'Enter login username',
+      passwordLabel: 'Password',
+      passwordPlaceholder: 'New password',
+      passwordHint:
+        'Saving with an empty password turns off login protection (no login required).',
+      save: 'Save',
+      saving: 'Saving…',
+      saveFailed: 'Save failed, please retry',
+      enabledHint: 'Enabled: use the latest password next time',
+      disabledHint: 'No login required right now',
+      confirmDisableTitle: 'Turn off login protection?',
+      confirmDisableContent:
+        'Anyone will be able to access this service without logging in. Continue?',
+      reLogin: 'Login protection is on, please sign in with the new password',
+      disabledNow: 'Login protection turned off',
+    },
     agent: {
       title: 'Agents',
       desc: 'Manage the connected ACP agents; enabled ones show up when creating a session',
@@ -138,6 +161,17 @@ export default {
       feedback: 'Feedback',
       moreProducts: 'More Products',
     },
+  },
+  login: {
+    title: 'Sign in to Zacp',
+    subtitle: 'Enter your username and password to continue',
+    username: 'Username',
+    password: 'Password',
+    submit: 'Sign in',
+    success: 'Signed in',
+    failed: 'Invalid username or password',
+    usernameRequired: 'Please enter a username',
+    passwordRequired: 'Please enter a password',
   },
   locale: {
     zhCN: '简体中文',

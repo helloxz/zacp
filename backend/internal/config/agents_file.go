@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 )
 
 // 本文件实现 config.toml 中 [[agents]] 段的增量读写：
@@ -35,6 +36,11 @@ var (
 	enabledKeyRe = regexp.MustCompile(`(?i)^\s*enabled\s*=`)
 )
 
+// configWriteMu 串行化 config.toml 的所有写回（agents 开关与 auth 凭证两个设置入口）。
+// 两个写回都是「读旧值 → 行级修改 → 原子写」，若不互斥，并发保存会基于旧内容各自写回、
+// 后写者静默覆盖前写者的修改。单用户场景并发概率极低，但一把互斥锁的成本可忽略。
+var configWriteMu sync.Mutex
+
 // ReadAgents 从配置文件解析 [[agents]] 列表（保持书写顺序）。
 // 文件不存在时返回空列表；解析失败返回错误。
 func ReadAgents(configPath string) ([]AgentConfig, error) {
@@ -61,6 +67,8 @@ func ReadAgents(configPath string) ([]AgentConfig, error) {
 // agent 的其它字段（command/args 等）在「不存在时追加」场景下作为模板使用。
 // 注意：本函数只做增量行级编辑，不重新序列化整个文件，用户手写注释得以保留。
 func SetAgentEnabled(configPath string, agent AgentConfig, enabled bool) error {
+	configWriteMu.Lock()
+	defer configWriteMu.Unlock()
 	agent.Enabled = enabled
 
 	raw, err := os.ReadFile(configPath)

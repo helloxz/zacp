@@ -18,6 +18,7 @@ type Config struct {
 	Session  SessionConfig  `mapstructure:"session"`
 	Database DatabaseConfig `mapstructure:"database"`
 	Agents   []AgentConfig  `mapstructure:"agents"`
+	Auth     AuthConfig     `mapstructure:"auth"`
 }
 
 // ServerConfig HTTP 服务配置。
@@ -54,6 +55,18 @@ type AgentConfig struct {
 	Cwd       string   `mapstructure:"cwd"` // 空则用 session.default_cwd
 	// Env 额外环境变量（key=value 格式），不在此处写密钥。
 	Env []string `mapstructure:"env"`
+}
+
+// AuthConfig 单用户账号认证配置。
+//
+// 关键语义：PasswordHash 为空 = 认证关闭（默认，保持无需登录的现状，老用户零影响）；
+// PasswordHash 非空 = 认证启用。由设置页「用户设置」写回（见 SetAuthCredentials）。
+type AuthConfig struct {
+	// Username 登录用户名（认证启用时必填）。
+	Username string `mapstructure:"username"`
+	// PasswordHash 密码哈希（格式 "sha256$<hex>"，由 internal/auth.HashPassword 生成）。
+	// 为空表示不启用认证。
+	PasswordHash string `mapstructure:"password_hash"`
 }
 
 // DefaultConfig 返回默认配置。
@@ -167,6 +180,11 @@ func validate(cfg *Config) error {
 		if a.Enabled && a.Command == "" {
 			return fmt.Errorf("agents[%d] '%s' is enabled but command is empty", i, a.ID)
 		}
+	}
+
+	// auth 校验：启用认证时必须配置用户名（密码哈希由设置页写回，格式不在启动时强校验）
+	if cfg.Auth.PasswordHash != "" && strings.TrimSpace(cfg.Auth.Username) == "" {
+		return fmt.Errorf("auth.username is required when auth.password_hash is set")
 	}
 	return nil
 }

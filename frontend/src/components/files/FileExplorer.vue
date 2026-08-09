@@ -12,7 +12,7 @@
  *
  * 数据根 = 当前会话所属 workspace；无会话时用默认 workspace。
  */
-import { computed, h, nextTick, onMounted, ref, watch } from 'vue'
+import { computed, h, onMounted, ref, watch } from 'vue'
 import {
   NIcon,
   useMessage,
@@ -25,7 +25,7 @@ import {
   ImageOutline,
   RefreshOutline,
 } from '@vicons/ionicons5'
-import { fetchFiles, fileRawUrl, renameFile, uploadFiles } from '@/api'
+import { fetchFiles, fetchPreviewUrl, renameFile, uploadFiles } from '@/api'
 import type { FileEntry } from '@/types/models'
 import { useSessionStore } from '@/stores/session'
 import { useAppStore } from '@/stores/app'
@@ -78,13 +78,32 @@ const uploadProgress = ref(0)
 const uploadingName = ref('')
 
 const previewEntry = ref<FileEntry | null>(null)
-const previewSrc = computed(() =>
-  previewEntry.value && workspaceId.value
-    ? fileRawUrl(workspaceId.value, previewEntry.value.path)
-    : '',
-)
+/** 预览直链（异步换取：12 小时资源 token，绑定 workspace+path，不进日志泄露主 token） */
+const previewSrc = ref('')
 /** 隐藏的 n-image anchor：负责承载预览源，程序化触发原生预览（naive-ui expose showPreview） */
 const previewImgRef = ref<{ showPreview: () => void } | null>(null)
+
+/**
+ * 为当前 previewEntry 换取短 token 直链；失败置空（图片预览留白，不阻断其它操作）。
+ * 每次预览都签发新 token（12h 过期后由后端内存懒清理），无需客户端缓存。
+ */
+async function refreshPreviewUrl() {
+  const entry = previewEntry.value
+  if (!entry || !workspaceId.value) {
+    previewSrc.value = ''
+    return
+  }
+  try {
+    previewSrc.value = await fetchPreviewUrl(workspaceId.value, entry.path)
+  } catch {
+    previewSrc.value = ''
+  }
+}
+
+// 切换预览目标或切换项目时，重新换取对应文件的直链
+watch([previewEntry, workspaceId], () => {
+  void refreshPreviewUrl()
+})
 
 // ---------------------------------------------------------------------------
 // 右键菜单（重命名 / 复制名称）
@@ -507,8 +526,8 @@ async function onSelect(keys: Array<string | number>) {
   const e = node?.raw
   if (e && !e.isDir && isImageEntry(e)) {
     previewEntry.value = e
-    // 等 src 生效后再触发预览，保证预览层能取到图
-    await nextTick()
+    // 等短 token 直链就绪后再触发预览，保证预览层能取到图
+    await refreshPreviewUrl()
     previewImgRef.value?.showPreview()
   }
 }

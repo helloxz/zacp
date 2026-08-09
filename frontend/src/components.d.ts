@@ -63,6 +63,7 @@ declare module 'vue' {
     SystemSettings: typeof import('./components/shell/SystemSettings.vue')['default']
     ToolCallCard: typeof import('./components/chat/ToolCallCard.vue')['default']
     UserFooter: typeof import('./components/shell/UserFooter.vue')['default']
+    UserSettings: typeof import('./components/shell/UserSettings.vue')['default']
     WelcomeHero: typeof import('./components/chat/WelcomeHero.vue')['default']
   }
 }

@@ -8,6 +8,7 @@ import (
 
 	"github.com/helloxz/zacp/internal/api/handlers"
 	"github.com/helloxz/zacp/internal/api/middleware"
+	"github.com/helloxz/zacp/internal/auth"
 	"github.com/helloxz/zacp/internal/web"
 	"github.com/helloxz/zacp/internal/ws"
 )
@@ -21,8 +22,10 @@ func New(
 	gitHandler *handlers.GitHandler,
 	agentManageHandler *handlers.AgentManageHandler,
 	toolHandler *handlers.ToolHandler,
+	authHandler *handlers.AuthHandler,
 	wsHandler *ws.Handler,
 	eventBridge *ws.EventBridge,
+	authSvc *auth.Service,
 ) *gin.Engine {
 	r := gin.Default()
 	// 跨域访问（前端 dev 直连后端；开发默认允许所有来源，见 middleware.CORS）
@@ -31,66 +34,83 @@ func New(
 
 	v1 := r.Group("/api/v1")
 	{
-		// Agent 管理
-		v1.GET("/agents", chatHandler.ListAgents)
-		v1.GET("/agents/:agentId/status", chatHandler.GetAgentStatus)
-		// 设置页智能体管理（全量目录 + 开关，见 handlers.AgentManageHandler）
-		// 注意：/agents/manage 为静态段，与 /agents/:agentId/status 无路由冲突
-		v1.GET("/agents/manage", agentManageHandler.ListManageAgents)
-		v1.PUT("/agents/:agentId", agentManageHandler.SetAgentEnabled)
+		// ---- 免认证端点（登录前可达） ----
+		v1.POST("/auth/login", authHandler.Login)
+		v1.GET("/auth/status", authHandler.Status)
 
-		// 本地工具：只返回后端白名单中当前平台已安装的工具。
-		v1.GET("/tools", toolHandler.ListTools)
+		// 文件直链：双模式校验（Authorization 主 token 或 ?token= 资源 token），
+		// 见 middleware.FileRaw；不能放进认证组，因为 <img src> 直链只带资源 token。
+		v1.GET("/workspaces/:id/files/raw", middleware.FileRaw(authSvc), fileHandler.RawFile)
 
-		// 工作目录管理
-		v1.GET("/workspaces", workspaceHandler.ListWorkspaces)
-		v1.POST("/workspaces", workspaceHandler.CreateWorkspace)
-		v1.GET("/workspaces/:id", workspaceHandler.GetWorkspace)
-		v1.DELETE("/workspaces/:id", workspaceHandler.DeleteWorkspace)
-
-		// 工作区文件：浏览 / 上传 / 重命名 / 原始内容（图片预览、下载）
-		v1.GET("/workspaces/:id/files", fileHandler.ListFiles)
-		v1.POST("/workspaces/:id/files/upload", fileHandler.Upload)
-		v1.PATCH("/workspaces/:id/files/rename", fileHandler.RenameFile)
-		v1.GET("/workspaces/:id/files/raw", fileHandler.RawFile)
-		v1.GET("/workspaces/:id/files/content", fileHandler.ReadFileContent)
-		v1.PUT("/workspaces/:id/files/content", fileHandler.WriteFileContent)
-		v1.GET("/workspaces/:id/git/status", gitHandler.Status)
-
-		// 目录浏览（新建项目弹窗用）：列出任意绝对路径下的子文件夹，与 workspace 无关
-		v1.GET("/fs/directories", fileHandler.ListDirectories)
-
-		// 会话管理
-		v1.POST("/sessions", sessionHandler.CreateSession)
-		v1.GET("/sessions", sessionHandler.ListRecentSessions)
-		v1.GET("/sessions/:id", sessionHandler.GetSession)
-		v1.PATCH("/sessions/:id", sessionHandler.RenameSession)
-		v1.DELETE("/sessions/:id", sessionHandler.DeleteSession)
-		// 草稿会话释放（切 tab / 离开空态时释放旧隐式草稿）
-		v1.DELETE("/sessions/:id/draft", sessionHandler.DeleteDraftSession)
-		v1.POST("/sessions/:id/open-tool", toolHandler.OpenSessionTool)
-		v1.GET("/workspaces/:id/sessions", sessionHandler.ListSessions)
-
-		// 消息管理
-		v1.POST("/sessions/:id/messages", sessionHandler.SendMessage)
-		v1.GET("/sessions/:id/messages", middleware.Gzip(), sessionHandler.GetMessages)
-
-		// 会话配置项（模型/思考强度/mode 等，agent 支持才返回非空）
-		v1.GET("/sessions/:id/config-options", sessionHandler.GetConfigOptions)
-		v1.POST("/sessions/:id/config-options", sessionHandler.SetConfigOption)
-		v1.GET("/sessions/:id/slash-commands", sessionHandler.GetSlashCommands)
-
-		// Chat（兼容旧 demo）
-		v1.POST("/chat", chatHandler.Chat)
-		v1.POST("/cancel", chatHandler.Cancel)
-
-		// WebSocket 连接
+		// WebSocket 主通道：token 经 Sec-WebSocket-Protocol 子协议携带
+		// （浏览器 WebSocket 无法设置自定义 header），由 wsHandler 内部校验，
+		// 故放在认证组之外。
 		v1.GET("/ws", func(c *gin.Context) {
 			wsHandler.ServeHTTP(c.Writer, c.Request, eventBridge)
 		})
 
-		// 版本信息（构建时注入，前端设置页展示用）
-		v1.GET("/version", handlers.GetVersion)
+		// ---- 需认证端点（认证未启用时中间件直接放行，保持默认无需登录） ----
+		authed := v1.Group("", middleware.RequireMain(authSvc))
+		{
+			// 账号认证：修改用户名/密码（写回 config.toml，热生效）
+			authed.PUT("/auth/credentials", authHandler.UpdateCredentials)
+
+			// Agent 管理
+			authed.GET("/agents", chatHandler.ListAgents)
+			authed.GET("/agents/:agentId/status", chatHandler.GetAgentStatus)
+			// 设置页智能体管理（全量目录 + 开关，见 handlers.AgentManageHandler）
+			// 注意：/agents/manage 为静态段，与 /agents/:agentId/status 无路由冲突
+			authed.GET("/agents/manage", agentManageHandler.ListManageAgents)
+			authed.PUT("/agents/:agentId", agentManageHandler.SetAgentEnabled)
+
+			// 本地工具：只返回后端白名单中当前平台已安装的工具。
+			authed.GET("/tools", toolHandler.ListTools)
+
+			// 工作目录管理
+			authed.GET("/workspaces", workspaceHandler.ListWorkspaces)
+			authed.POST("/workspaces", workspaceHandler.CreateWorkspace)
+			authed.GET("/workspaces/:id", workspaceHandler.GetWorkspace)
+			authed.DELETE("/workspaces/:id", workspaceHandler.DeleteWorkspace)
+
+			// 工作区文件：浏览 / 上传 / 重命名 / 内容读写 / 直链签发
+			authed.GET("/workspaces/:id/files", fileHandler.ListFiles)
+			authed.POST("/workspaces/:id/files/upload", fileHandler.Upload)
+			authed.PATCH("/workspaces/:id/files/rename", fileHandler.RenameFile)
+			authed.POST("/workspaces/:id/files/preview-token", fileHandler.PreviewToken)
+			authed.GET("/workspaces/:id/files/content", fileHandler.ReadFileContent)
+			authed.PUT("/workspaces/:id/files/content", fileHandler.WriteFileContent)
+			authed.GET("/workspaces/:id/git/status", gitHandler.Status)
+
+			// 目录浏览（新建项目弹窗用）：列出任意绝对路径下的子文件夹，与 workspace 无关
+			authed.GET("/fs/directories", fileHandler.ListDirectories)
+
+			// 会话管理
+			authed.POST("/sessions", sessionHandler.CreateSession)
+			authed.GET("/sessions", sessionHandler.ListRecentSessions)
+			authed.GET("/sessions/:id", sessionHandler.GetSession)
+			authed.PATCH("/sessions/:id", sessionHandler.RenameSession)
+			authed.DELETE("/sessions/:id", sessionHandler.DeleteSession)
+			// 草稿会话释放（切 tab / 离开空态时释放旧隐式草稿）
+			authed.DELETE("/sessions/:id/draft", sessionHandler.DeleteDraftSession)
+			authed.POST("/sessions/:id/open-tool", toolHandler.OpenSessionTool)
+			authed.GET("/workspaces/:id/sessions", sessionHandler.ListSessions)
+
+			// 消息管理
+			authed.POST("/sessions/:id/messages", sessionHandler.SendMessage)
+			authed.GET("/sessions/:id/messages", middleware.Gzip(), sessionHandler.GetMessages)
+
+			// 会话配置项（模型/思考强度/mode 等，agent 支持才返回非空）
+			authed.GET("/sessions/:id/config-options", sessionHandler.GetConfigOptions)
+			authed.POST("/sessions/:id/config-options", sessionHandler.SetConfigOption)
+			authed.GET("/sessions/:id/slash-commands", sessionHandler.GetSlashCommands)
+
+			// Chat（兼容旧 demo）
+			authed.POST("/chat", chatHandler.Chat)
+			authed.POST("/cancel", chatHandler.Cancel)
+
+			// 版本信息（构建时注入，前端设置页展示用）
+			authed.GET("/version", handlers.GetVersion)
+		}
 	}
 
 	// 嵌入前端产物时注册静态资源 + SPA fallback（未运行 scripts/build.sh 时跳过，
