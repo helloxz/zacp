@@ -135,6 +135,8 @@ export default {
       intro:
         'An ACP-based multi-agent web gateway that connects and drives various agents through one unified interface.',
       version: 'Version',
+      feedback: 'Feedback',
+      moreProducts: 'More Products',
     },
   },
   locale: {

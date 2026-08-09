@@ -141,6 +141,8 @@ export default {
       title: '关于',
       intro: '一个基于 ACP 协议的多 Agent Web 网关，通过统一界面连接并使用各类智能体。',
       version: '版本',
+      feedback: '问题反馈',
+      moreProducts: '更多产品',
     },
   },
   locale: {

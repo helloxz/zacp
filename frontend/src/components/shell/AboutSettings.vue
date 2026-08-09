@@ -14,6 +14,10 @@ const appVersion = pkg.version
 /** 外链地址：项目主页与作者 X（新窗口打开，noopener 防反向劫持） */
 const GITHUB_URL = 'https://github.com/helloxz/zacp'
 const X_URL = 'https://x.com/xiaozblog'
+
+/** 问题反馈 / 更多产品 文字外链（新窗口打开，noopener 防反向劫持） */
+const FEEDBACK_URL = 'https://github.com/helloxz/zacp/issues'
+const PRODUCTS_URL = 'https://www.xphub.dev/'
 </script>
 
 <template>
@@ -71,6 +75,27 @@ const X_URL = 'https://x.com/xiaozblog'
             d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231 5.451-6.231Zm-1.161 17.52h1.833L7.084 4.126H5.117l11.966 15.644Z"
           />
         </svg>
+      </a>
+    </div>
+
+    <!-- 问题反馈 / 更多产品：低调文字外链，与页面风格协调融合（新窗口打开） -->
+    <div class="flex items-center gap-2 text-xs text-ink-muted">
+      <a
+        :href="FEEDBACK_URL"
+        target="_blank"
+        rel="noopener noreferrer"
+        class="transition-colors hover:text-primary"
+      >
+        {{ t('settings.about.feedback') }}
+      </a>
+      <span aria-hidden="true">·</span>
+      <a
+        :href="PRODUCTS_URL"
+        target="_blank"
+        rel="noopener noreferrer"
+        class="transition-colors hover:text-primary"
+      >
+        {{ t('settings.about.moreProducts') }}
       </a>
     </div>
   </div>
