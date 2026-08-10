@@ -10,6 +10,9 @@
  *   其后为可编辑的相对路径；回车或点【进入】跳转，点【刷新】重载当前目录。
  *   输入校验拒绝绝对路径与 `..`（后端 resolveInWorkspace 另有硬校验兜底）。
  * - 拖拽上传：拖入列表 = 上传到当前目录（根目录时上传到项目根）。
+ * - 粘贴上传：焦点在列表区域时 Ctrl/Cmd+V 粘贴文件/截图，同样上传到当前目录。
+ *   仅 Chrome/Edge/Firefox 支持（Safari 剪贴板不向网页暴露文件）；
+ *   粘贴/拖拽单次统一上限 10 个文件，超过拒绝整批；截图自动命名并转 webp。
  * - 图片自动压缩转 webp（等比不裁剪，>5MB 降采样兜底），非图片原样直传。
  * - 单击图片文件 → n-image 原生预览；双击文本文件 → 编辑器；右键 →
  *   「重命名 / 复制名称」（文件另加「编辑」）。
@@ -424,6 +427,11 @@ async function onDrop(e: DragEvent) {
  * 单个文件上传原子成功/失败；批次中途失败时已落盘文件保留，最后统一汇总提示。
  */
 async function doUpload(files: File[], dir: string) {
+  // 数量上限统一约束（粘贴/拖拽）：超过则拒绝整批，避免部分成功造成困惑
+  if (files.length > MAX_UPLOAD_FILES) {
+    message.warning(`一次最多上传 ${MAX_UPLOAD_FILES} 个文件，请分批操作`)
+    return
+  }
   uploading.value = true
   uploadProgress.value = 0
   const ok: string[] = []
@@ -445,7 +453,7 @@ async function doUpload(files: File[], dir: string) {
         failed.push(`${file.name}（${err instanceof Error ? err.message : '未知错误'}）`)
       }
     }
-    if (ok.length) message.success(`已上传 ${ok.length} 个文件：${ok.join('、')}`)
+    if (ok.length) message.success(`已上传 ${ok.length} 个文件`)
     if (failed.length) message.error(`上传失败 ${failed.length} 个：${failed.join('；')}`)
     await reload()
   } finally {
@@ -453,6 +461,85 @@ async function doUpload(files: File[], dir: string) {
     uploadProgress.value = 0
     uploadingName.value = ''
   }
+}
+
+// ---------------------------------------------------------------------------
+// 粘贴上传：Ctrl/Cmd+V 在列表区域粘贴文件/截图，上传到当前目录
+// ---------------------------------------------------------------------------
+
+/** 单次上传操作的文件数量上限（粘贴与拖拽统一约束，超过拒绝整批） */
+const MAX_UPLOAD_FILES = 10
+
+/** 列表容器 ref：点击列表区域时聚焦容器，使 paste 事件能落到容器上 */
+const listRef = ref<HTMLElement | null>(null)
+
+/**
+ * 浏览器支持判定：仅 Chromium 系（Chrome/Edge）与 Firefox 支持从文件管理器
+ * 粘贴文件；Safari 剪贴板不向网页暴露文件（平台限制，无解），归为不支持。
+ */
+function isPasteSupported(): boolean {
+  const ua = navigator.userAgent
+  return /chrome|crios|edg\//i.test(ua) || /firefox/i.test(ua)
+}
+
+/** 焦点在可编辑元素（输入框/文本框/编辑器）内时不拦截，让文本粘贴正常工作 */
+function isEditableTarget(t: EventTarget | null): boolean {
+  const el = t as HTMLElement | null
+  if (!el || typeof el.closest !== 'function') return false
+  return !!el.closest('input, textarea, [contenteditable="true"]')
+}
+
+/**
+ * 从剪贴板提取可上传文件，两路来源：
+ * 1. clipboardData.files —— 文件管理器（Finder/资源管理器）复制文件后粘贴，
+ *    File 对象带原始文件名，可多选（Safari 此路为空，平台限制）。
+ * 2. clipboardData.items —— 剪贴板图片（截图/复制网页图片），剪贴板只有像素
+ *    数据、没有名称概念，需自动命名；剪贴板内容单一，只取第一个 image item。
+ * 其余类型（text/uri-list、text/plain 等）一律忽略：file:// 链接无法读取内容。
+ */
+function extractPastedFiles(e: ClipboardEvent): File[] {
+  const files = Array.from(e.clipboardData?.files ?? [])
+  if (files.length) return files
+
+  const items = Array.from(e.clipboardData?.items ?? [])
+  const item = items.find((i) => i.kind === 'file' && i.type.startsWith('image/'))
+  const raw = item?.getAsFile()
+  if (!raw) return []
+
+  // 截图自动命名：时间戳精确到秒防重名，扩展名按实际 mime 取
+  const ext = { 'image/jpeg': 'jpg', 'image/gif': 'gif', 'image/webp': 'webp' }[raw.type] ?? 'png'
+  const d = new Date()
+  const p = (n: number) => String(n).padStart(2, '0')
+  const name = `pasted-${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}.${ext}`
+  return [new File([raw], name, { type: raw.type })]
+}
+
+/** 列表区域粘贴：提取文件后上传到当前目录（行为与拖拽一致） */
+async function onPaste(e: ClipboardEvent) {
+  // 焦点在输入框等可编辑元素内时不拦截，文本粘贴照常工作
+  if (isEditableTarget(e.target)) return
+  const files = extractPastedFiles(e)
+  if (!files.length || !workspaceId.value || uploading.value) return
+
+  // 不支持的浏览器（如 Safari）：仅当确实提取到文件（截图场景）才提示；
+  // 文件管理器粘贴在 Safari 中剪贴板不可见、无法检测，只能靠拖拽兜底
+  if (!isPasteSupported()) {
+    e.preventDefault()
+    message.warning('当前浏览器不支持粘贴上传，请使用 Chrome/Edge/Firefox，或直接拖拽上传')
+    return
+  }
+
+  e.preventDefault()
+  await doUpload(files, currentDir.value)
+}
+
+/** 点击列表区域时聚焦容器：paste 事件派发给焦点元素，须让焦点落在容器上 */
+function onListMouseDown(e: MouseEvent) {
+  const t = e.target as HTMLElement | null
+  if (t && typeof t.closest === 'function' && t.closest('input, textarea, button, [contenteditable="true"]')) {
+    return
+  }
+  listRef.value?.focus({ preventScroll: true })
 }
 
 // ---------------------------------------------------------------------------
@@ -549,7 +636,7 @@ function encodeWebp(
         <n-input
           v-model:value="pathInput"
           size="small"
-          placeholder="相对路径，如 src/components"
+          placeholder="path"
           :disabled="listLoading"
           clearable
           @keydown.enter.prevent="enterPath"
@@ -584,13 +671,19 @@ function encodeWebp(
         </n-button>
       </div>
 
-      <!-- 文件列表（拖拽目标容器；右键条目弹菜单） -->
+      <!-- 文件列表（拖拽/粘贴上传目标容器；右键条目弹菜单）。
+           tabindex="-1" + 点击聚焦：paste 事件派发给焦点元素，需让焦点落在
+           容器上才能接收 Ctrl/Cmd+V；outline-none 去掉焦点框避免视觉干扰 -->
       <div
-        class="min-h-0 flex-1 overflow-auto px-1"
+        ref="listRef"
+        tabindex="-1"
+        class="min-h-0 flex-1 overflow-auto px-1 outline-none"
         @dragenter.prevent
         @dragover.prevent="onDragOver"
         @dragleave="onDragLeave"
         @drop.prevent="onDrop"
+        @paste="onPaste"
+        @mousedown="onListMouseDown"
       >
         <n-spin :show="listLoading">
           <!-- 返回上级：列表顶部 `...`（根目录不显示） -->

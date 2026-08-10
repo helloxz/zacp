@@ -44,10 +44,10 @@ var (
 	ErrInvalidPathSegments = errors.New("path contains . or .. segments")
 	// ErrCannotDeleteIgnoredDir 目标在受保护大目录（.git / node_modules 等）内，禁止删除。
 	ErrCannotDeleteIgnoredDir = errors.New("cannot delete ignored directory")
-	// ErrFileTooLarge 单文件超过大小上限（图片 5MB / 其他 20MB）。
+	// ErrFileTooLarge 单文件超过大小上限（图片 5MB / 其他 10MB）。
 	ErrFileTooLarge = errors.New("file too large")
 	// ErrFileTooLargeForEdit 文件超过文本编辑器可编辑上限（2MB）。
-	// 与 ErrFileTooLarge 分开：上传是 5MB/20MB 分档，编辑统一 2MB，消息文案不同。
+	// 与 ErrFileTooLarge 分开：上传是 5MB/10MB 分档，编辑统一 2MB，消息文案不同。
 	ErrFileTooLargeForEdit = errors.New("file too large for editing")
 	// ErrBinaryFile 内容含 NUL 字节，判定为二进制文件，拒绝在文本编辑器打开。
 	ErrBinaryFile = errors.New("binary file")
@@ -59,12 +59,14 @@ var (
 	ErrPathNotFound = errors.New("path not found")
 )
 
-// 上传大小上限（与前端压缩约定一致：图片 5MB，其余 20MB）。
+// 上传大小上限（与前端压缩约定一致：图片 5MB，其余 10MB）。
 const (
-	MaxImageSizeBytes = 5 << 20  // 5MB
-	MaxOtherSizeBytes = 20 << 20 // 20MB
-	// MaxUploadBodyBytes 单次上传请求体上限（3 张 5MB 图片 + multipart 开销）。
-	MaxUploadBodyBytes = 25 << 20 // 25MB
+	MaxImageSizeBytes = 5 << 20 // 5MB
+	MaxOtherSizeBytes = 10 << 20 // 10MB
+	// MaxUploadBodyBytes 单次上传请求体上限（10MB 单文件 + multipart 开销余量）。
+	// 余量必须大于 0：multipart 的 boundary/表单头占数百字节，若上限等于单文件
+	// 上限，恰好 10MB 的文件会因请求体超限被 413 拒绝，造成「文件不大却传不了」。
+	MaxUploadBodyBytes = 11 << 20 // 11MB
 	// MaxEditableSizeBytes 编辑器可打开/写入的文件大小上限（2MB）。
 	// 超过该上限的文件拒绝读/写：避免把超大文件整读进内存、拖垮前端编辑器渲染。
 	MaxEditableSizeBytes = 2 << 20 // 2MB
@@ -314,7 +316,7 @@ func (s *FileService) UploadFiles(workspaceID uint, relDir string, files []Uploa
 		if name == "" || name == "." || name == ".." {
 			return nil, ErrInvalidFileName
 		}
-		// 大小分档：图片 5MB，其他 20MB（与前端压缩约定一致）
+		// 大小分档：图片 5MB，其他 10MB（与前端压缩约定一致）
 		limit := int64(MaxOtherSizeBytes)
 		if strings.HasPrefix(f.MimeType, "image/") || isImageExt(name) {
 			limit = MaxImageSizeBytes

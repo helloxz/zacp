@@ -146,7 +146,7 @@ func (h *FileHandler) Upload(c *gin.Context) {
 	if err := c.Request.ParseMultipartForm(4 << 20); err != nil {
 		var maxErr *http.MaxBytesError
 		if errors.As(err, &maxErr) {
-			writeError(c, http.StatusRequestEntityTooLarge, "upload_body_too_large", "上传内容超过 25MB 上限")
+			writeError(c, http.StatusRequestEntityTooLarge, "upload_body_too_large", "上传内容超过 11MB 上限")
 			return
 		}
 		writeError(c, http.StatusBadRequest, "invalid_multipart", "multipart 表单解析失败")
@@ -325,7 +325,7 @@ func writeFileError(c *gin.Context, err error) {
 	case errors.Is(err, service.ErrInvalidFileName):
 		writeError(c, http.StatusBadRequest, "invalid_file_name", "文件名不合法")
 	case errors.Is(err, service.ErrFileTooLarge):
-		writeError(c, http.StatusRequestEntityTooLarge, "file_too_large", "文件超过大小上限（图片 5MB / 其他 20MB）")
+		writeError(c, http.StatusRequestEntityTooLarge, "file_too_large", "文件超过大小上限（图片 5MB / 其他 10MB）")
 	case errors.Is(err, service.ErrFileTooLargeForEdit):
 		writeError(c, http.StatusRequestEntityTooLarge, "file_too_large", "文件超过 2MB，不支持文本编辑")
 	case errors.Is(err, service.ErrBinaryFile):
