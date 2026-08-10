@@ -133,6 +133,16 @@ export async function renameFile(
   return data.file
 }
 
+/**
+ * DELETE /api/v1/workspaces/:id/files — 删除文件或目录（目录递归删除）。
+ *
+ * 仅登录认证启用时后端放行（否则 403）；路径含 `.`/`..` 段、根路径、
+ * .git / node_modules 等受保护目录由后端拒绝。
+ */
+export async function deleteFile(workspaceId: number, path: string): Promise<void> {
+  await http.delete(`/api/v1/workspaces/${workspaceId}/files`, { body: { path } })
+}
+
 /** GET /api/v1/workspaces/:id/files/raw?path=... — 文件原始内容 URL（图片预览 / 下载直链） */
 export function fileRawUrl(workspaceId: number, path: string): string {
   return apiUrl(

@@ -78,6 +78,41 @@ func (h *FileHandler) RenameFile(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"file": file})
 }
 
+type deleteFileRequest struct {
+	Path string `json:"path"`
+}
+
+// Delete DELETE /api/v1/workspaces/:id/files
+//
+// 删除工作区内的文件或目录（目录递归删除，不可恢复）。
+// 请求体为 {"path":"src/old.txt"}。
+//
+// 安全前置：删除是破坏性操作，未启用登录认证（Auth.PasswordHash 未配置）时
+// 一律 403 拒绝，防止无认证部署下被任意调用方直接删文件。
+// 路径防穿透（`.` / `..` 段、根路径、绝对路径、symlink 逃逸、.git 等
+// 受保护目录）由 FileService.DeleteFile 严格校验。
+func (h *FileHandler) Delete(c *gin.Context) {
+	id, err := parseWorkspaceID(c)
+	if err != nil {
+		writeError(c, http.StatusBadRequest, "invalid_workspace_id", err.Error())
+		return
+	}
+	if h.authSvc == nil || !h.authSvc.Enabled() {
+		writeError(c, http.StatusForbidden, "auth_required", "未启用登录认证，禁止删除文件")
+		return
+	}
+	var req deleteFileRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		writeError(c, http.StatusBadRequest, "invalid_request", err.Error())
+		return
+	}
+	if err := h.svc.DeleteFile(id, req.Path); err != nil {
+		writeFileError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"deleted": true})
+}
+
 // ListDirectories GET /api/v1/fs/directories?path=<绝对路径>
 //
 // 新建项目弹窗的目录浏览：列出 path 下的子文件夹（仅文件夹，隐藏目录/大目录
@@ -277,6 +312,12 @@ func writeFileError(c *gin.Context, err error) {
 		writeError(c, http.StatusBadRequest, "path_outside_workspace", "路径超出工作区范围")
 	case errors.Is(err, service.ErrCannotRenameRoot):
 		writeError(c, http.StatusBadRequest, "cannot_rename_root", "不能重命名工作区根目录")
+	case errors.Is(err, service.ErrCannotDeleteRoot):
+		writeError(c, http.StatusBadRequest, "cannot_delete_root", "不能删除工作区根目录")
+	case errors.Is(err, service.ErrInvalidPathSegments):
+		writeError(c, http.StatusBadRequest, "invalid_path_segments", "路径包含 . 或 .. 段，禁止删除")
+	case errors.Is(err, service.ErrCannotDeleteIgnoredDir):
+		writeError(c, http.StatusBadRequest, "cannot_delete_ignored_dir", "该目录受保护（.git、node_modules 等），禁止删除")
 	case errors.Is(err, service.ErrNotDirectory):
 		writeError(c, http.StatusBadRequest, "not_directory", "路径类型不匹配（目录 / 文件不符）")
 	case errors.Is(err, service.ErrFileExists):

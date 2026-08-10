@@ -76,6 +76,7 @@ func New(
 			authed.GET("/workspaces/:id/files", fileHandler.ListFiles)
 			authed.POST("/workspaces/:id/files/upload", fileHandler.Upload)
 			authed.PATCH("/workspaces/:id/files/rename", fileHandler.RenameFile)
+			authed.DELETE("/workspaces/:id/files", fileHandler.Delete)
 			authed.POST("/workspaces/:id/files/preview-token", fileHandler.PreviewToken)
 			authed.GET("/workspaces/:id/files/content", fileHandler.ReadFileContent)
 			authed.PUT("/workspaces/:id/files/content", fileHandler.WriteFileContent)

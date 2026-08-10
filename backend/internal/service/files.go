@@ -38,6 +38,12 @@ var (
 	ErrInvalidFileName = errors.New("invalid file name")
 	// ErrCannotRenameRoot 不允许重命名工作区根目录。
 	ErrCannotRenameRoot = errors.New("cannot rename workspace root")
+	// ErrCannotDeleteRoot 不允许删除工作区根目录。
+	ErrCannotDeleteRoot = errors.New("cannot delete workspace root")
+	// ErrInvalidPathSegments 路径含 `.` 或 `..` 段（删除接口严格拒绝，不做 Clean 放行）。
+	ErrInvalidPathSegments = errors.New("path contains . or .. segments")
+	// ErrCannotDeleteIgnoredDir 目标在受保护大目录（.git / node_modules 等）内，禁止删除。
+	ErrCannotDeleteIgnoredDir = errors.New("cannot delete ignored directory")
 	// ErrFileTooLarge 单文件超过大小上限（图片 5MB / 其他 20MB）。
 	ErrFileTooLarge = errors.New("file too large")
 	// ErrFileTooLargeForEdit 文件超过文本编辑器可编辑上限（2MB）。
@@ -439,6 +445,101 @@ func (s *FileService) RenameFile(workspaceID uint, relPath, newName string) (*mo
 		parentRel = ""
 	}
 	return fileEntryFromInfo(pathJoin(parentRel, newName), info), nil
+}
+
+// DeleteFile 删除工作区内的文件或目录（目录递归删除）。
+//
+// 防御要点（删除不可逆，校验比浏览/重命名更严格）：
+//  1. 原始路径段检查：任一段为 `.` 或 `..`（含 `\` 转义变体）直接拒绝，
+//     不做 Clean 后放行——与浏览接口的「Clean 后校验」策略不同，杜绝
+//     通过 `a/../b` 之类变相改写路径；
+//  2. 拒绝根路径（空 / `/` / `.` / `..`）——删除工作区根是灾难操作；
+//  3. 拒绝 ignoredDirNames 中的目录（.git / node_modules 等）任意层级——
+//     UI 对其隐藏，删除接口也应保持一致边界，防止绕过 UI 直接删掉 .git；
+//  4. 绝对路径 / Clean 后越界 → ErrPathOutsideWorkspace；
+//  5. 条目与父目录 EvalSymlinks 后必须在工作区根内（symlink 逃逸防护），
+//     但实际删除使用词法路径 os.RemoveAll：删除的是 symlink 条目本身，
+//     RemoveAll 不跟随 symlink，不会误删工作区外的真实目标。
+func (s *FileService) DeleteFile(workspaceID uint, relPath string) error {
+	ws, err := s.workspaceRepo.GetByID(workspaceID)
+	if err != nil {
+		return fmt.Errorf("load workspace: %w", err)
+	}
+	root, err := filepath.Abs(ws.Path)
+	if err != nil {
+		return fmt.Errorf("resolve workspace path: %w", err)
+	}
+	realRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return fmt.Errorf("resolve workspace root: %w", err)
+	}
+
+	// 注意：不做 TrimSpace——文件名首尾空格是合法字符（ListFiles 原样返回），
+	// 删除是精确操作，trim 会改变目标身份导致误删其它文件。
+	rel := relPath
+	// 1) 根路径拒绝（空 / `/` / `.` / `..` 各种写法）
+	if rel == "" || rel == "/" || rel == "." || rel == ".." {
+		return ErrCannotDeleteRoot
+	}
+	// 2) 原始路径段检查：`.` / `..` 段一律拒绝（`\` 先转 `/` 再拆，覆盖 Windows 风格输入）
+	for _, seg := range strings.Split(strings.ReplaceAll(rel, "\\", "/"), "/") {
+		if seg == "." || seg == ".." {
+			return ErrInvalidPathSegments
+		}
+	}
+	if filepath.IsAbs(rel) {
+		return ErrPathOutsideWorkspace
+	}
+	clean := filepath.Clean(rel)
+	if clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
+		return ErrPathOutsideWorkspace
+	}
+
+	// 3) 受保护大目录（.git / node_modules 等）任意层级都拒绝删除
+	for _, seg := range strings.Split(clean, string(filepath.Separator)) {
+		if ignoredDirNames[seg] {
+			return ErrCannotDeleteIgnoredDir
+		}
+	}
+
+	source := filepath.Join(root, clean)
+	// 确认存在（删除接口不返回条目信息，Lstat 仅做存在性检查）
+	if _, err := os.Lstat(source); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return ErrPathNotFound
+		}
+		return fmt.Errorf("stat source path: %w", err)
+	}
+	// 4) 父目录真实路径必须在工作区根内
+	parent := filepath.Dir(source)
+	parentReal, err := filepath.EvalSymlinks(parent)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return ErrPathNotFound
+		}
+		return fmt.Errorf("resolve source directory: %w", err)
+	}
+	if !pathWithin(parentReal, realRoot) {
+		return ErrPathOutsideWorkspace
+	}
+	// 5) 条目自身 real 校验：symlink 指向工作区外则拒绝。
+	//    悬空 symlink（EvalSymlinks 报 ENOENT）放行——条目自身存在（前面
+	//    Lstat 已验证）且其父目录已在工作区内，词法 RemoveAll 删除链接本身安全，
+	//    否则用户无法清理断链。
+	sourceReal, err := filepath.EvalSymlinks(source)
+	if err != nil {
+		if !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("resolve source path: %w", err)
+		}
+	} else if !pathWithin(sourceReal, realRoot) {
+		return ErrPathOutsideWorkspace
+	}
+
+	// 词法路径执行删除：RemoveAll 对文件与目录通用，且不跟随 symlink
+	if err := os.RemoveAll(source); err != nil {
+		return fmt.Errorf("delete %s: %w", clean, err)
+	}
+	return nil
 }
 
 func validateFileName(name string) error {

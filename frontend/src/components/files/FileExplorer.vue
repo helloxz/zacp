@@ -25,7 +25,7 @@ import {
   RefreshOutline,
   ArrowForwardOutline,
 } from '@vicons/ionicons5'
-import { fetchFiles, fetchPreviewUrl, renameFile, uploadFiles } from '@/api'
+import { fetchFiles, fetchPreviewUrl, renameFile, deleteFile, uploadFiles } from '@/api'
 import type { FileEntry } from '@/types/models'
 import { useSessionStore } from '@/stores/session'
 import { copyText } from '@/utils/clipboard'
@@ -168,7 +168,7 @@ const ctxMenuShow = ref(false)
 const ctxMenuX = ref(0)
 const ctxMenuY = ref(0)
 const ctxMenuEntry = ref<FileEntry | null>(null)
-/** 右键菜单：文件多一个「编辑」项（目录不可编辑） */
+/** 右键菜单：文件多一个「编辑」项（目录不可编辑）；删除项固定放最后 */
 const ctxOptions = computed<DropdownOption[]>(() => {
   const options: DropdownOption[] = [
     { key: 'rename', label: '重命名' },
@@ -177,6 +177,8 @@ const ctxOptions = computed<DropdownOption[]>(() => {
   if (ctxMenuEntry.value && !ctxMenuEntry.value.isDir) {
     options.unshift({ key: 'edit', label: '编辑' })
   }
+  // 删除不可逆，标红且放最底部；class 通过 props 透传到 dropdown 条目 DOM
+  options.push({ key: 'delete', label: '删除', props: { class: 'text-red-500!' } })
   return options
 })
 const renameModalVisible = ref(false)
@@ -206,6 +208,12 @@ async function onCtxSelect(key: string | number) {
     renameTarget.value = { workspaceId: workspaceId.value, entry }
     renameValue.value = entry.name
     renameModalVisible.value = true
+    return
+  }
+  if (key === 'delete') {
+    deleteTarget.value = { workspaceId: workspaceId.value, entry }
+    deleteValue.value = ''
+    deleteModalVisible.value = true
     return
   }
   if (key !== 'copy-name') return
@@ -271,6 +279,54 @@ async function onRenameConfirm() {
   } finally {
     renaming.value = false
     renameTarget.value = null
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 删除（右键菜单 → 输入名称二次确认；不可逆操作）
+// ---------------------------------------------------------------------------
+
+const deleteModalVisible = ref(false)
+const deleteValue = ref('')
+const deleting = ref(false)
+const deleteTarget = ref<{ workspaceId: number; entry: FileEntry } | null>(null)
+
+/** 弹窗显示状态变化：关闭时清理目标状态，避免残留指向旧条目 */
+function onDeleteModalShow(show: boolean) {
+  if (!show) {
+    deleteTarget.value = null
+    deleteValue.value = ''
+  }
+}
+
+/** 输入名称与目标条目完全一致才允许确认（防手滑误删，VS Code 同款模式） */
+const deleteConfirmDisabled = computed(
+  () => deleteValue.value !== deleteTarget.value?.entry.name,
+)
+
+async function onDeleteConfirm() {
+  const target = deleteTarget.value
+  if (!target) return
+  if (deleteConfirmDisabled.value) return
+  if (target.workspaceId !== workspaceId.value) {
+    deleteModalVisible.value = false
+    deleteTarget.value = null
+    message.warning('工作区已切换，请重新选择文件')
+    return
+  }
+
+  deleting.value = true
+  try {
+    await deleteFile(target.workspaceId, target.entry.path)
+    deleteModalVisible.value = false
+    message.success(`已删除「${target.entry.name}」`)
+    await reload()
+  } catch (err) {
+    message.error(err instanceof Error ? err.message : '删除失败')
+  } finally {
+    deleting.value = false
+    deleteTarget.value = null
+    deleteValue.value = ''
   }
 }
 
@@ -634,6 +690,45 @@ function encodeWebp(
         </n-space>
       </template>
     </n-modal>
+    <!-- 删除确认弹窗：必须输入与目标完全一致的名称才可确认（不可逆操作） -->
+    <n-modal
+      v-model:show="deleteModalVisible"
+      preset="card"
+      title="确认删除"
+      style="width: 420px"
+      @update:show="onDeleteModalShow"
+    >
+      <div class="mb-3 space-y-2 text-sm text-ink-secondary">
+        <p>
+          即将<span class="font-medium text-red-500">永久删除</span>「{{ deleteTarget?.entry.name }}」
+          <template v-if="deleteTarget?.entry.isDir">（含其下所有内容）</template>，此操作不可恢复。
+        </p>
+        <p>请输入名称以确认：</p>
+      </div>
+      <n-input
+        v-model:value="deleteValue"
+        :placeholder="`请输入 ${deleteTarget?.entry.name ?? ''} 确认删除`"
+        :disabled="deleting"
+        clearable
+        @keydown.enter.prevent="onDeleteConfirm"
+      />
+      <template #footer>
+        <n-space justify="end">
+          <n-button quaternary :disabled="deleting" @click="deleteModalVisible = false">
+            取消
+          </n-button>
+          <n-button
+            type="error"
+            :disabled="deleteConfirmDisabled"
+            :loading="deleting"
+            @click="onDeleteConfirm"
+          >
+            确认删除
+          </n-button>
+        </n-space>
+      </template>
+    </n-modal>
+
     <!--
       图片预览 anchor：隐藏的 n-image 承载预览源，点击图片文件时程序化调用
       showPreview() 直接进入原生预览（全屏遮罩 + 缩放工具条）。
