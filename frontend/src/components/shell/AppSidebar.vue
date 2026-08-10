@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 import { AddOutline } from '@vicons/ionicons5'
@@ -25,6 +25,12 @@ const showProjectModal = ref(false)
 const projectPath = ref('')
 const projectCreating = ref(false)
 
+/**
+ * 根目录禁止创建为项目（agent 的 cwd 会是文件系统根，读写范围覆盖整个磁盘，风险过高）。
+ * 输入为 / 时确认按钮置灰；后端 CreateWorkspace 同样拒绝（最终防线）。
+ */
+const isRootPath = computed(() => projectPath.value.trim() === '/')
+
 // 同步共享 flag → 本地弹窗（WelcomeHero 按钮 / 侧栏按钮都能打开同一弹窗）
 watch(
   () => appStore.newProjectModalOpen,
@@ -49,7 +55,8 @@ function onNewProject() {
  */
 async function onCreateProject() {
   const path = projectPath.value.trim()
-  if (!path || projectCreating.value) return
+  // 空路径或根目录（/）拒绝：确认按钮已置灰，这里双保险防其它入口触发
+  if (!path || path === '/' || projectCreating.value) return
   projectCreating.value = true
   try {
     const ws = await sessionStore.createWorkspace(path)
@@ -90,11 +97,12 @@ async function onCreateProject() {
     :title="t('shell.newProjectTitle')"
     :positive-text="t('common.confirm')"
     :negative-text="t('common.cancel')"
+    :positive-button-props="{ disabled: isRootPath }"
     :loading="projectCreating"
     @positive-click="onCreateProject"
   >
     <div class="space-y-2 py-2">
-      <DirectoryPicker v-model="projectPath" @submit="onCreateProject" />
+      <DirectoryPicker v-model="projectPath" />
       <p class="text-xs text-ink-muted">{{ t('shell.newProjectHint') }}</p>
     </div>
   </n-modal>

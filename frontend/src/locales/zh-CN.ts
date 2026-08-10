@@ -39,6 +39,7 @@ export default {
   },
   dirPicker: {
     up: '返回上级目录',
+    enter: '进入该目录',
     retry: '重试',
     empty: '该目录下没有子文件夹',
   },

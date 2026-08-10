@@ -47,6 +47,13 @@ func (s *WorkspaceService) CreateWorkspace(path string) (*model.Workspace, error
 		return nil, fmt.Errorf("invalid path: %w", err)
 	}
 
+	// 根目录（/ 或 Windows 盘符根）禁止作为工作区：agent 的 cwd 会是文件系统根，
+	// 其读写能力将覆盖整个磁盘，风险过高。判断用 filepath.Dir(abs) == abs
+	//（跨平台成立，与 ListDirectories 的 parent == abs 写法一致）。
+	if filepath.Dir(absPath) == absPath {
+		return nil, errors.New("root directory cannot be used as workspace")
+	}
+
 	info, err := os.Stat(absPath)
 	if err != nil {
 		return nil, fmt.Errorf("path does not exist: %w", err)

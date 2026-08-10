@@ -6,23 +6,19 @@
  * - 打开弹窗（本组件重新挂载）时自动请求初始目录：后端返回
  *   session.default_cwd 解析后的绝对路径；
  * - 单击文件夹 = 进入并加载其子目录，路径输入框自动同步为当前目录；
- * - 输入框保留手动输入能力，回车通过 submit 事件交给父组件提交。
+ * - 输入框保留手动输入能力，回车或点击「进入」按钮 = 进入输入框中当前路径。
+ * - 是否创建项目由父组件弹窗的「确认」按钮决定，输入框内回车不再提交创建。
  * 与后端约定：GET /api/v1/fs/directories?path=<绝对路径>（见 api/index.ts）。
  */
 import { computed, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { ArrowBackOutline, FolderOpenOutline } from '@vicons/ionicons5'
+import { ArrowBackOutline, ArrowForwardOutline, FolderOpenOutline } from '@vicons/ionicons5'
 import { NButton, NIcon, NInput, NSpin } from 'naive-ui'
 import { fetchDirectories } from '@/api'
 import type { DirectoryEntry } from '@/types/models'
 
 /** 双向绑定：进入目录后把当前绝对路径写回父组件（弹窗路径输入框） */
 const modelValue = defineModel<string>({ default: '' })
-
-const emit = defineEmits<{
-  /** 输入框内回车：由父组件触发「创建项目」提交 */
-  (e: 'submit'): void
-}>()
 
 const { t } = useI18n()
 
@@ -87,6 +83,25 @@ function goUp() {
   void load(parentPath.value)
 }
 
+/**
+ * 进入输入框中当前路径（回车 / 点击「进入」按钮）。
+ * 空输入忽略；load 内部已有 loading 防连点与失败保留旧列表的处理。
+ */
+function enterPath() {
+  const p = modelValue.value.trim()
+  if (!p || loading.value) return
+  void load(p)
+}
+
+/**
+ * 回车进入当前路径；IME 组合输入（中文拼音选词确认）的回车不触发，
+ * 避免拼音确认键误触发「进入」。
+ */
+function onInputEnter(e: KeyboardEvent) {
+  if (e.isComposing) return
+  enterPath()
+}
+
 // n-modal 默认 display-directive="if"：弹窗关闭时内容销毁、打开时重新挂载，
 // 因此这里直接加载初始目录即可，无需额外暴露 reset 给父组件。
 onMounted(() => {
@@ -96,13 +111,28 @@ onMounted(() => {
 
 <template>
   <div class="space-y-2">
-    <!-- 路径输入框：可手动编辑；回车交由父组件提交 -->
+    <!-- 路径输入框：可手动编辑；回车或「进入」按钮 = 进入输入框中当前路径（不提交创建） -->
     <n-input
       v-model:value="modelValue"
       size="small"
       :placeholder="t('shell.newProjectPlaceholder')"
-      @keydown.enter="emit('submit')"
-    />
+      @keydown.enter="onInputEnter"
+    >
+      <template #suffix>
+        <n-button
+          quaternary
+          circle
+          size="tiny"
+          :disabled="!modelValue.trim() || loading"
+          :title="t('dirPicker.enter')"
+          @click="enterPath"
+        >
+          <template #icon>
+            <n-icon><ArrowForwardOutline /></n-icon>
+          </template>
+        </n-button>
+      </template>
+    </n-input>
 
     <!-- 面包屑 + 返回上级 -->
     <div class="flex items-center gap-1">
@@ -123,7 +153,7 @@ onMounted(() => {
       >
         <template v-for="(c, i) in crumbs" :key="c.path">
           <button
-            class="shrink-0 rounded px-1 py-0.5 hover:bg-surface-hover hover:text-ink"
+            class="shrink-0 cursor-pointer rounded px-1 py-0.5 hover:bg-surface-hover hover:text-ink"
             :class="{ 'font-medium text-ink': i === crumbs.length - 1 }"
             @click="load(c.path)"
           >
@@ -156,7 +186,7 @@ onMounted(() => {
           <button
             v-for="entry in entries"
             :key="entry.path"
-            class="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm hover:bg-surface-hover"
+            class="flex w-full cursor-pointer items-center gap-2 px-3 py-1.5 text-left text-sm hover:bg-surface-hover"
             @click="enterDir(entry)"
           >
             <n-icon class="shrink-0 text-amber-500"><FolderOpenOutline /></n-icon>

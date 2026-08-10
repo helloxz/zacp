@@ -30,6 +30,7 @@ export default {
   },
   dirPicker: {
     up: 'Go to parent directory',
+    enter: 'Enter this directory',
     retry: 'Retry',
     empty: 'No subfolders here',
   },
