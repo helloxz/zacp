@@ -2,6 +2,7 @@
 import { computed, nextTick, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { IncremarkContent } from '@incremark/vue'
+import { fetchMessageThoughts } from '@/api'
 import type { ChatMessage, ToolDetailsMap } from '@/types/models'
 import type { WsEvent } from '@/types/ws'
 import type { ToolCard } from '@/stores/session'
@@ -17,18 +18,54 @@ const sessionStore = useSessionStore()
 /** 思考过程滚动容器（展开后的内容区，限高 + 滚动，避免长思考把页面撑开） */
 const reasoningBodyRef = ref<HTMLElement | null>(null)
 
+/** 按需加载的思考过程缓存（展开面板时请求 /thoughts，组件实例级；重复展开不重复请求） */
+const loadedReasoning = ref('')
+
+/**
+ * 思考过程按需加载状态机：idle=未加载 / loading=请求中 / loaded=已加载（含加载结果为空）。
+ * 用状态而非布尔标记：加载中折叠再展开不重复请求；加载结果为空串时
+ * 「已加载过」与「未加载」可区分，避免每次展开都重发请求。
+ */
+const reasoningLoadState = ref<'idle' | 'loading' | 'loaded'>('idle')
+
 /** user 右对齐 / assistant 左对齐（角色用样式区分，不用气泡色做语义） */
 const isUser = computed(() => props.message.role === 'user')
 
 /**
+ * 是否存在思考过程（决定折叠面板是否展示）：
+ * - 本地已有内容（流式实时 / 缓存 / 老后端未置空）：message.reasoning 非空；
+ * - 历史消息：events 中存在 agent_thought 事件即认为有——列表接口已把 text
+ *   置空瘦身，type 字段保留作为「存在思考过程」的标记（用户展开时再按需加载）。
+ */
+const hasThought = computed(() => {
+  if (props.message.reasoning) {
+    return true
+  }
+  if (props.message.role !== 'assistant' || !props.message.events) {
+    return false
+  }
+  try {
+    const events = JSON.parse(props.message.events) as WsEvent[]
+    return events.some((e) => e.type === 'agent_thought')
+  } catch {
+    // events 不是合法 JSON：静默跳过，不影响文本渲染
+    return false
+  }
+})
+
+/**
  * 思维/推理文本：
  * - 流式期间：来自 store 占位消息的 message.reasoning（agent_thought 实时追加）；
- * - 刷新后/历史消息：Message 表未持久化 reasoning 列，但 agent_thought 事件
- *   完整落在 events JSON 里，这里按序拼接恢复（与流式 `+=` 的拼接结果一致）。
+ * - 展开后：loadedReasoning（按需加载 /thoughts 的结果）；
+ * - 刷新后/历史消息：兜底从 events 恢复（兼容老后端未置空的完整数据；
+ *   新后端已置空时这里得到空串，由展开加载补全）。
  */
 const reasoning = computed(() => {
   if (props.message.reasoning) {
     return props.message.reasoning
+  }
+  if (loadedReasoning.value) {
+    return loadedReasoning.value
   }
   if (props.message.role !== 'assistant' || !props.message.events) {
     return ''
@@ -44,6 +81,32 @@ const reasoning = computed(() => {
     return ''
   }
 })
+
+/**
+ * 展开思考面板时按需加载完整思考过程（历史消息列表已瘦身置空）。
+ * 本地已有内容（流式实时 / 已加载过）或非 assistant 消息时直接跳过；
+ * 加载失败保持 idle 状态，用户再次展开可重试；加载成功（含空结果）标记 loaded，
+ * 之后重复展开不再请求。
+ */
+async function onToggleReasoning(e: Event) {
+  const open = (e.target as HTMLDetailsElement).open
+  if (!open || reasoning.value || reasoningLoadState.value !== 'idle' || !hasThought.value) {
+    return
+  }
+  if (props.message.id <= 0) {
+    return // 流式占位消息（负数 id）本地必有内容，防御分支
+  }
+  reasoningLoadState.value = 'loading'
+  try {
+    const data = await fetchMessageThoughts(props.message.sessionId, props.message.id)
+    loadedReasoning.value = data.reasoning
+  } catch {
+    loadedReasoning.value = ''
+    reasoningLoadState.value = 'idle' // 失败允许重试
+    return
+  }
+  reasoningLoadState.value = 'loaded'
+}
 
 /**
  * 流式终态判定：仅当「本消息所属会话的 turn 仍在流式」且「本条就是流式占位消息（列表最后一条）」时
@@ -180,11 +243,14 @@ const blocks = computed<MessageBlock[]>(() => {
 
 <template>
   <div class="flex flex-col gap-2" :class="isUser ? 'items-end' : 'items-start'">
-    <!-- 思维/推理文本（流式实时 + 历史从 events 恢复；折叠展示，点击展开查看） -->
+    <!-- 思维/推理文本（流式实时 + 历史按需加载；折叠展示，点击展开查看） -->
     <!-- 与 AI 内容一致：固定占用整个可用内容宽度（w-full），无 max 宽度限制 -->
+    <!-- 展示依据：hasThought（本地内容或 events 存在 agent_thought type）；新后端列表接口
+         已把 text 置空瘦身，历史内容在展开时经 /thoughts 接口按需加载 -->
     <details
-      v-if="!isUser && reasoning"
+      v-if="!isUser && hasThought"
       class="w-full rounded-lg bg-amber-50/70 px-3 py-2 text-xs leading-relaxed text-slate-500 ring-1 ring-inset ring-amber-100 dark:bg-amber-500/10 dark:text-amber-200/80 dark:ring-amber-500/20"
+      @toggle="onToggleReasoning"
     >
       <summary
         class="cursor-pointer select-none font-medium"
@@ -204,7 +270,7 @@ const blocks = computed<MessageBlock[]>(() => {
         ref="reasoningBodyRef"
         class="reasoning-scroll mt-1.5 max-h-80 overflow-y-auto overscroll-contain whitespace-pre-wrap pr-2"
       >
-        {{ reasoning }}
+        {{ reasoningLoadState === 'loading' ? t('chat.reasoningLoading') : reasoning }}
       </div>
     </details>
 

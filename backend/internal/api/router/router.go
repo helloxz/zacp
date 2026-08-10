@@ -98,6 +98,8 @@ func New(
 			// 消息管理
 			authed.POST("/sessions/:id/messages", sessionHandler.SendMessage)
 			authed.GET("/sessions/:id/messages", middleware.Gzip(), sessionHandler.GetMessages)
+			// 单条消息的思考过程（列表接口已置空瘦身，前端展开时按需加载）
+			authed.GET("/sessions/:id/messages/:messageId/thoughts", middleware.Gzip(), sessionHandler.GetMessageThoughts)
 
 			// 会话配置项（模型/思考强度/mode 等，agent 支持才返回非空）
 			authed.GET("/sessions/:id/config-options", sessionHandler.GetConfigOptions)

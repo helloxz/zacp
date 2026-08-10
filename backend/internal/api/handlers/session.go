@@ -6,6 +6,7 @@ import (
 	"strconv"
 
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 
 	"github.com/helloxz/zacp/internal/service"
 	"github.com/helloxz/zacp/internal/ws"
@@ -424,4 +425,41 @@ func (h *SessionHandler) GetMessages(c *gin.Context) {
 		"limit":    limit,
 		"offset":   offset,
 	})
+}
+
+// GetMessageThoughts 获取单条消息的思考过程文本（按需加载）。
+// GET /api/v1/sessions/:id/messages/:messageId/thoughts
+// 消息列表接口已把 agent_thought 的 text 置空瘦身（保留 type 供前端判断存在性），
+// 前端展开思考过程折叠面板时调用本接口恢复完整内容；消息必须属于该会话。
+func (h *SessionHandler) GetMessageThoughts(c *gin.Context) {
+	sessionID, err := strconv.ParseUint(c.Param("id"), 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": gin.H{"code": "invalid_id", "message": "invalid session id"},
+		})
+		return
+	}
+	messageID, err := strconv.ParseUint(c.Param("messageId"), 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": gin.H{"code": "invalid_message_id", "message": "invalid message id"},
+		})
+		return
+	}
+
+	reasoning, err := h.svc.GetMessageThoughts(uint(sessionID), uint(messageID))
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{
+				"error": gin.H{"code": "message_not_found", "message": "message not found"},
+			})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": gin.H{"code": "get_message_thoughts_failed", "message": err.Error()},
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"reasoning": reasoning})
 }

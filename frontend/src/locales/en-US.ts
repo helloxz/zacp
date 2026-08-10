@@ -52,6 +52,7 @@ export default {
     enterHint: 'Enter to send · Shift+Enter for a new line',
     reasoning: 'Thought process',
     reasoningThinking: 'Thinking',
+    reasoningLoading: 'Loading thoughts…',
     send: 'Send',
     stop: 'Stop',
     queued: 'Queued',

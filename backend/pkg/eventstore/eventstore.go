@@ -7,6 +7,7 @@ package eventstore
 import (
 	"encoding/json"
 	"reflect"
+	"strings"
 
 	"github.com/helloxz/zacp/internal/acp/client"
 )
@@ -136,4 +137,57 @@ func MarshalDetails(details map[string]ToolDetail) string {
 		return ""
 	}
 	return string(data)
+}
+
+// ContainsThought 廉价预筛：事件 JSON 中是否存在 agent_thought 事件。
+// 落库序列化格式固定为紧凑 JSON 且 "type" 是事件首字段，子串匹配可靠；
+// 列表瘦身热路径用它跳过无思考过程的消息，避免无谓的 JSON 解析。
+func ContainsThought(eventsJSON string) bool {
+	return strings.Contains(eventsJSON, `"type":"agent_thought"`)
+}
+
+// StripThoughtText 返回思考过程文本被置空后的事件 JSON：
+// agent_thought 事件的 text 置空、type 字段保留——前端仍能据此判断
+// 「存在思考过程」并展示折叠面板，内容改为展开时经 /thoughts 接口按需加载。
+// 无 agent_thought 事件或解析失败时原样返回输入（不阻塞列表返回）。
+func StripThoughtText(eventsJSON string) string {
+	if eventsJSON == "" || !ContainsThought(eventsJSON) {
+		return eventsJSON
+	}
+	var events []client.Event
+	if err := json.Unmarshal([]byte(eventsJSON), &events); err != nil {
+		return eventsJSON
+	}
+	changed := false
+	for i := range events {
+		if events[i].Type == "agent_thought" && events[i].Text != "" {
+			events[i].Text = ""
+			changed = true
+		}
+	}
+	if !changed {
+		return eventsJSON
+	}
+	return Marshal(events)
+}
+
+// ExtractThoughtText 从事件 JSON 中按序拼接全部 agent_thought 文本。
+// 用于「思考过程按需加载」接口：DB 落库的 events 保留完整思考文本
+// （列表接口已置空瘦身），这里从原始数据恢复拼接结果。
+// 无思考过程或解析失败时返回空串。
+func ExtractThoughtText(eventsJSON string) string {
+	if eventsJSON == "" || !ContainsThought(eventsJSON) {
+		return ""
+	}
+	var events []client.Event
+	if err := json.Unmarshal([]byte(eventsJSON), &events); err != nil {
+		return ""
+	}
+	var sb strings.Builder
+	for _, ev := range events {
+		if ev.Type == "agent_thought" && ev.Text != "" {
+			sb.WriteString(ev.Text)
+		}
+	}
+	return sb.String()
 }

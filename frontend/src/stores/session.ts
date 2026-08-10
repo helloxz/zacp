@@ -533,6 +533,20 @@ export const useSessionStore = defineStore('session', () => {
    * 避免请求失败时先删除用户可见内容。正数 ID 通过 Map 去重，重试不会重复渲染。
    */
   async function loadMessageUpdates(sessionId: number, afterId: number) {
+    // 流式占位消息（负数 id）携带本地实时 reasoning（agent_thought 逐块追加）。
+    // 列表接口已把 events 里的思考过程置空瘦身，这里把占位消息的 reasoning
+    // 转移到本轮第一条 assistant 消息上，避免 turn 结束后刚展示过的思考过程
+    // 突然变空（展开面板时也无需再请求 /thoughts）。
+    // 注意：必须在 fetch 之前快照——增量返回后占位消息已被合并移除，
+    // 若等 fetch 返回再扫描，快速连发（A 结束立刻发 B）时 A 的思考会丢失。
+    let placeholderReasoning = ''
+    for (const message of messagesById.value[sessionId] ?? []) {
+      if (message.id < 0 && message.role === 'assistant' && message.reasoning) {
+        placeholderReasoning = message.reasoning
+        break
+      }
+    }
+
     const page = await fetchMessageUpdates(sessionId, afterId)
     if (page.messages.length === 0) {
       return
@@ -545,6 +559,10 @@ export const useSessionStore = defineStore('session', () => {
       }
     }
     for (const message of page.messages) {
+      if (placeholderReasoning && message.role === 'assistant' && !message.reasoning) {
+        message.reasoning = placeholderReasoning
+        placeholderReasoning = '' // 只转移给本轮第一条 assistant 消息
+      }
       merged.set(message.id, message)
     }
     messagesById.value[sessionId] = [...merged.values()]

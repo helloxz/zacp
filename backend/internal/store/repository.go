@@ -311,6 +311,19 @@ func (r *MessageRepository) CountBySession(sessionID uint) (int64, error) {
 	return count, err
 }
 
+// GetBySessionAndID 获取会话下的单条消息。
+// 同时按 session_id + id 查询并校验归属，防止越权读取其它会话的消息；
+// 消息不存在时返回 gorm.ErrRecordNotFound，由调用方映射 404。
+func (r *MessageRepository) GetBySessionAndID(sessionID, messageID uint) (*model.Message, error) {
+	var message model.Message
+	err := r.db.Where("session_id = ? AND id = ?", sessionID, messageID).
+		First(&message).Error
+	if err != nil {
+		return nil, err
+	}
+	return &message, nil
+}
+
 // DeleteBySession 删除会话的所有消息
 func (r *MessageRepository) DeleteBySession(sessionID uint) error {
 	return r.db.Where("session_id = ?", sessionID).

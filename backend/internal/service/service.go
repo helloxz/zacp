@@ -416,6 +416,8 @@ func (s *SessionService) SendMessage(ctx context.Context, sessionID uint, conten
 }
 
 // GetMessages 获取会话消息（分页从最新消息端计算，返回窗口内升序结果）。
+// 返回前对 events 做思考过程瘦身：agent_thought 的 text 置空（保留 type），
+// 内容由前端展开时经 /thoughts 接口按需加载，缩小历史消息响应体。
 func (s *SessionService) GetMessages(sessionID uint, limit, offset int) ([]model.Message, error) {
 	if limit <= 0 {
 		limit = 50
@@ -423,13 +425,43 @@ func (s *SessionService) GetMessages(sessionID uint, limit, offset int) ([]model
 	if offset < 0 {
 		offset = 0
 	}
-	return s.msgRepo.ListBySessionPaginated(sessionID, limit, offset)
+	messages, err := s.msgRepo.ListBySessionPaginated(sessionID, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	stripThoughtText(messages)
+	return messages, nil
 }
 
 // GetMessagesAfter 获取指定消息 ID 之后新增的消息。
 // 用于 turn.done 后的增量同步：服务端已落库本轮消息时，前端无需重新拉取整段历史。
+// 与 GetMessages 同样做思考过程瘦身，保证两条读取路径行为一致。
 func (s *SessionService) GetMessagesAfter(sessionID, afterID uint) ([]model.Message, error) {
-	return s.msgRepo.ListBySessionAfterID(sessionID, afterID)
+	messages, err := s.msgRepo.ListBySessionAfterID(sessionID, afterID)
+	if err != nil {
+		return nil, err
+	}
+	stripThoughtText(messages)
+	return messages, nil
+}
+
+// GetMessageThoughts 返回单条消息的思考过程文本（agent_thought 事件按序拼接）。
+// 消息列表接口已把思考过程置空瘦身，前端展开面板时调用本接口按需加载；
+// 消息必须属于该会话（仓储按 session_id + id 查询），防止越权读取其它会话消息。
+func (s *SessionService) GetMessageThoughts(sessionID, messageID uint) (string, error) {
+	message, err := s.msgRepo.GetBySessionAndID(sessionID, messageID)
+	if err != nil {
+		return "", fmt.Errorf("get message %d of session %d: %w", messageID, sessionID, err)
+	}
+	return eventstore.ExtractThoughtText(message.Events), nil
+}
+
+// stripThoughtText 列表瘦身：置空 events 中 agent_thought 事件的 text（保留 type 字段）。
+// 见 pkg/eventstore.StripThoughtText；无思考过程的消息零解析成本（子串预筛）。
+func stripThoughtText(messages []model.Message) {
+	for i := range messages {
+		messages[i].Events = eventstore.StripThoughtText(messages[i].Events)
+	}
 }
 
 // CountMessages 统计消息数量

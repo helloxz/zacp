@@ -33,6 +33,7 @@ import type {
   GitStatus,
   ManageAgent,
   MessagePage,
+  MessageThoughts,
   MessageUpdates,
   VersionInfo,
   Workspace,
@@ -344,6 +345,17 @@ export async function fetchMessageUpdates(
   return http.get<MessageUpdates>(
     `/api/v1/sessions/${sessionId}/messages`,
     { query: { afterId } },
+  )
+}
+
+/** GET /api/v1/sessions/:id/messages/:messageId/thoughts — 单条消息的思考过程
+ *  （列表接口已把 agent_thought text 置空瘦身，展开思考面板时按需加载） */
+export async function fetchMessageThoughts(
+  sessionId: number,
+  messageId: number,
+): Promise<MessageThoughts> {
+  return http.get<MessageThoughts>(
+    `/api/v1/sessions/${sessionId}/messages/${messageId}/thoughts`,
   )
 }
 

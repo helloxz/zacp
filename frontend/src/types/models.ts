@@ -156,7 +156,11 @@ export interface ChatMessage {
   sessionId: number
   role: MessageRole
   content: string
-  /** 思维/推理文本（仅流式本地消息；来自 ACP agent_thought 事件，DB 不持久化） */
+  /** 思维/推理文本：
+   *  - 流式期间：store 实时追加（来自 ACP agent_thought 事件）；
+   *  - turn 结束后：由流式占位消息转移而来（缓存刚展示过的思考过程）；
+   *  - 刷新/翻页加载的历史消息一般无此字段：列表接口已把 events 里的
+   *    agent_thought text 置空瘦身，展开面板时经 /thoughts 接口按需加载 */
   reasoning?: string
   /** 完整事件 JSON（工具调用等），P0-P1 未消费，P3 渲染工具卡片用 */
   events?: string
@@ -165,6 +169,12 @@ export interface ChatMessage {
   toolDetails?: string
 
   createdAt: string
+}
+
+/** 单条消息的思考过程响应（GET /sessions/:id/messages/:messageId/thoughts；
+ *  列表接口已置空瘦身，前端展开思考过程面板时按需加载） */
+export interface MessageThoughts {
+  reasoning: string
 }
 
 /** 分页消息响应 */
