@@ -35,7 +35,7 @@ Zacp是一个基于 **ACP（Agent Client Protocol）** 协议的多 Agent Web �
 
 ### 注意事项
 
-1. 安全前请确认您的网络可以访问Github，否则可能导致安装失败！
+1. 安装前请确认您的网络可以访问Github，否则可能导致安装失败！
 2. Zacp无内置Agent，请确保您本地已经安装了对应的 Agent（如 Codex、Reasonix、Grok、Omp 等），否则无法使用。
 
 ### macOS / Linux 一键安装（推荐）
