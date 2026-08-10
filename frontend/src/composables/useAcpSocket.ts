@@ -1,6 +1,7 @@
 import { reactive } from 'vue'
 import { wsUrl } from '@/config/env'
 import type { WsClientMessage, WsServerMessage } from '@/types/ws'
+import { useAuthStore } from '@/stores/auth'
 import { readAuthToken } from '@/utils/authStorage'
 
 /** WebSocket 子协议前缀（与后端 ws/handler.go 的 wsAuthProtocolPrefix 保持一致） */
@@ -53,7 +54,7 @@ function scheduleReconnect() {
   state.status = 'connecting'
   reconnectTimer = window.setTimeout(() => {
     reconnectTimer = undefined
-    connect()
+    void connect()
   }, delay)
 }
 
@@ -71,24 +72,39 @@ function handleMessage(raw: string) {
   }
 }
 
-/** 建立连接（幂等：已连接/连接中则跳过） */
-export function connect() {
+/** 建立连接（幂等：已连接/连接中则跳过）。async：先确认后端认证启用状态再决策 */
+export async function connect() {
   if (manuallyClosed || ws) {
     return
   }
-  // 认证启用但本地无 token（未登录/已被登出）：不建连，等登录成功后由页面手动 connect。
-  // 注意：这里只按「有无 token」判断；token 是否有效由后端握手校验（401 时 onclose 处理）。
+  // 拉取后端认证启用状态（幂等、并发去重；网络失败时静默不阻塞建连，
+  // 若后端实际要求认证，握手会被 401 拒绝，由 onclose 的失败计数兜底）。
+  const authStore = useAuthStore()
+  await authStore.ensureStatus()
+  // await 期间可能已被其它调用方建连或主动断开，重新检查幂等条件
+  if (manuallyClosed || ws) {
+    return
+  }
   const token = readAuthToken()
-  if (!token) {
+  // 认证启用但本地无 token（未登录/已被登出）：不建连，等登录成功后由页面手动 connect。
+  // 注意：认证未启用（未设置账号密码）时后端握手不校验 token，本地无 token 也要照常建连，
+  // 不能只凭「有无 token」拦截——否则未启用认证的部署将永远连不上 WS。
+  // token 是否有效由后端握手校验（401 时 onclose 处理）。
+  if (authStore.enabled && !token) {
     return
   }
   state.status = 'connecting'
   state.error = null
   let socket: WebSocket
   try {
-    // 登录 token 经 WebSocket 子协议携带（浏览器 WS 无法设自定义 header，
-    // 放 URL query 会进访问日志）；后端校验通过后回显该子协议完成握手。
-    socket = new WebSocket(wsUrl('/api/v1/ws'), [`${WS_AUTH_PROTOCOL_PREFIX}${token}`])
+    if (token) {
+      // 登录 token 经 WebSocket 子协议携带（浏览器 WS 无法设自定义 header，
+      // 放 URL query 会进访问日志）；后端校验通过后回显该子协议完成握手。
+      socket = new WebSocket(wsUrl('/api/v1/ws'), [`${WS_AUTH_PROTOCOL_PREFIX}${token}`])
+    } else {
+      // 认证未启用：不带子协议直接建连（后端不会校验）
+      socket = new WebSocket(wsUrl('/api/v1/ws'))
+    }
   } catch (e) {
     state.error = e instanceof Error ? e.message : String(e)
     scheduleReconnect()
@@ -124,21 +140,26 @@ export function connect() {
     }
     // 认证启用后本地 token 已无（401 拦截登出 / 凭证变更清 token）：
     // 不再重连，避免无效握手无限循环；重新登录后由页面手动 connect。
-    if (!readAuthToken()) {
+    // 认证未启用时后端不校验 token，断线一律走下面的退避重连。
+    if (authStore.enabled && !readAuthToken()) {
       return
     }
     // 连续握手失败兜底：服务重启后内存 token 全部失效（localStorage 里仍是旧 token），
     // 每次握手都会 401——浏览器 WS 无法拿到 HTTP 状态码，只能凭「从未 open 过就关闭」
     // 累计判断。连续 N 次失败视为 token 已失效：清登录态，由 HTTP 层 401 拦截跳转登录页，
     // 避免每 30s 一次的无效握手无限刷后端日志。
+    // 注意：认证未启用时没有「token 失效」概念，握手失败只可能是网络/服务故障，
+    // 不计入失败计数，直接走退避重连，避免纯网络抖动把用户弹去登录页。
+    if (!authStore.enabled) {
+      scheduleReconnect()
+      return
+    }
     handshakeFailures += 1
     if (handshakeFailures >= MAX_HANDSHAKE_FAILURES) {
       handshakeFailures = 0
-      void import('@/stores/auth').then(({ useAuthStore }) => {
-        useAuthStore().forceLogout()
-        const redirect = encodeURIComponent(window.location.pathname + window.location.search)
-        window.location.assign(`/login?redirect=${redirect}`)
-      })
+      authStore.forceLogout()
+      const redirect = encodeURIComponent(window.location.pathname + window.location.search)
+      window.location.assign(`/login?redirect=${redirect}`)
       return
     }
     scheduleReconnect()

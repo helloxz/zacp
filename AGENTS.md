@@ -221,9 +221,7 @@ cmd/server  →  api (router/handlers)  →  service  →  acp/manager|client|pr
 ## 5. 常用命令
 
 ```bash
-# 启动后端
-cd backend && go run ./cmd/server
-# 或
+# 开发环境启动后端
 ./scripts/dev-backend.sh
 
 # 一键构建单二进制（bun 编译前端 → embed 进后端；包名带版本号）
@@ -261,8 +259,8 @@ bun run build
 
 ---
 
+开发环境的数据位于`.zacp/`目录下（数据库和配置文件。）
 
----
 
 ## 7. 编码风格
 

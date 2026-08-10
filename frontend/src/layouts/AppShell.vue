@@ -47,7 +47,7 @@ const sessionStore = useSessionStore()
 onMounted(() => {
   void agentStore.load().catch(() => {})
   void sessionStore.loadInitial().catch(() => {})
-  acpSocket.connect()
+  void acpSocket.connect()
 })
 </script>
 

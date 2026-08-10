@@ -35,6 +35,16 @@ func NewHandler(hub *Hub, log *slog.Logger, authSvc *auth.Service) *Handler {
 	}
 }
 
+// firstSubprotocol 从握手请求取首个客户端子协议（RFC 6455 只要求服务端回显一个；
+// 客户端可能一次请求多个，逗号分隔，前端固定只发一个，此函数兜底第三方/手动客户端）。
+func firstSubprotocol(r *http.Request) string {
+	proto := r.Header.Get("Sec-WebSocket-Protocol")
+	if i := strings.IndexByte(proto, ','); i >= 0 {
+		proto = proto[:i]
+	}
+	return proto
+}
+
 // authSubprotocol 从握手请求提取并校验登录 token（子协议形式 "zacp-auth.<token>"）。
 // 返回（token 校验通过后的完整子协议值, 是否放行）：
 //   - 认证未启用：放行（保持默认无需登录）；
@@ -43,11 +53,13 @@ func NewHandler(hub *Hub, log *slog.Logger, authSvc *auth.Service) *Handler {
 //   - 其余：拒绝。
 func (h *Handler) authSubprotocol(r *http.Request) (string, bool) {
 	if h.authSvc == nil || !h.authSvc.Enabled() {
-		return "", true
+		// 认证未启用：不校验 token，但若客户端带了子协议必须回显——RFC 6455 §4.2.2
+		// 要求服务端要么回显一个子协议、要么拒绝握手；101 却不回显会被浏览器判定
+		// 握手失败（如 localStorage 残留旧 token、认证随后被关闭的场景）。
+		return firstSubprotocol(r), true
 	}
-	proto := r.Header.Get("Sec-WebSocket-Protocol")
-	token := strings.TrimPrefix(proto, wsAuthProtocolPrefix)
-	if token == proto || token == "" || !h.authSvc.ValidateMain(token) {
+	proto := firstSubprotocol(r)
+	if proto == "" || !h.authSvc.ValidateMain(strings.TrimPrefix(proto, wsAuthProtocolPrefix)) {
 		return "", false
 	}
 	return proto, true
