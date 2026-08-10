@@ -97,16 +97,22 @@ export async function removeWorkspace(workspaceId: number): Promise<void> {
   await http.delete(`/api/v1/workspaces/${workspaceId}`)
 }
 
-/** GET /api/v1/workspaces/:id/files?path=... — 列出工作区目录内容（隐藏文件由后端强制过滤） */
+/**
+ * GET /api/v1/workspaces/:id/files?path=... — 列出工作区目录内容。
+ *
+ * 返回完整 `{ path, entries }`：path 是后端 Clean/越界校验后的规范化相对路径
+ * （用户输入脏路径时用它回写输入框，保证展示与后端一致）。
+ * 隐藏文件（.gitignore、.env 等）由后端强制显示，仅 node_modules、.git 等
+ * 大目录被过滤；path 是后端 Clean/越界校验后的规范化相对路径。
+ */
 export async function fetchFiles(
   workspaceId: number,
   path = '',
-): Promise<FileEntry[]> {
-  const data = await http.get<{ path: string; entries: FileEntry[] }>(
+): Promise<{ path: string; entries: FileEntry[] }> {
+  return http.get<{ path: string; entries: FileEntry[] }>(
     `/api/v1/workspaces/${workspaceId}/files`,
     { query: { path: path || undefined } },
   )
-  return data.entries
 }
 
 /** GET /api/v1/workspaces/:id/git/status — 按需读取当前 workspace 的 Git 状态 */

@@ -50,7 +50,6 @@ declare module 'vue' {
     NTag: typeof import('naive-ui')['NTag']
     NText: typeof import('naive-ui')['NText']
     NTooltip: typeof import('naive-ui')['NTooltip']
-    NTree: typeof import('naive-ui')['NTree']
     PermissionModal: typeof import('./components/chat/PermissionModal.vue')['default']
     PlanCard: typeof import('./components/chat/PlanCard.vue')['default']
     PlanDock: typeof import('./components/chat/PlanDock.vue')['default']

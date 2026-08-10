@@ -1,59 +1,41 @@
 <script setup lang="ts">
 /**
- * FileExplorer — 「文件」Tab 的文件树。
+ * FileExplorer — 「文件」Tab 单目录浏览。
  *
  * 功能：
- * - 懒加载文件树（受控展开，展开时才拉取子目录）
- * - 拖拽上传：拖到目录节点 = 上传到该目录；拖到空白区 = 上传到工作区根
- * - 图片自动压缩转 webp（等比不裁剪，>5MB 降采样兜底），非图片原样直传
- * - 点击图片文件 → 直接调用 Naive UI n-image 原生预览（全屏遮罩+缩放工具条，
- *   走后端 raw 接口，天然受 workspace 边界保护）
- * - 右键节点 → 「重命名 / 复制名称」菜单（无 https 环境下复制回退）
+ * - 扁平目录浏览：仅显示当前目录下的文件与文件夹；单击文件夹进入，
+ *   列表顶部 `...` 返回上级。不做多级树形展开，避免大项目同时展开多个
+ *   子目录导致 DOM 节点暴增卡顿（性能收益：数据与渲染量恒为「当前目录」）。
+ * - 路径输入栏：前缀为项目根目录名（锁定不可改，从根上杜绝路径穿透），
+ *   其后为可编辑的相对路径；回车或点【进入】跳转，点【刷新】重载当前目录。
+ *   输入校验拒绝绝对路径与 `..`（后端 resolveInWorkspace 另有硬校验兜底）。
+ * - 拖拽上传：拖入列表 = 上传到当前目录（根目录时上传到项目根）。
+ * - 图片自动压缩转 webp（等比不裁剪，>5MB 降采样兜底），非图片原样直传。
+ * - 单击图片文件 → n-image 原生预览；双击文本文件 → 编辑器；右键 →
+ *   「重命名 / 复制名称」（文件另加「编辑」）。
  *
  * 数据根 = 当前会话所属 workspace；无会话时用默认 workspace。
  */
-import { computed, h, onMounted, ref, watch } from 'vue'
-import {
-  NIcon,
-  useMessage,
-  type DropdownOption,
-  type TreeOption,
-} from 'naive-ui'
+import { computed, onMounted, ref, watch } from 'vue'
+import { NIcon, useMessage, type DropdownOption } from 'naive-ui'
 import {
   FolderOutline,
   DocumentOutline,
   ImageOutline,
   RefreshOutline,
+  ArrowForwardOutline,
 } from '@vicons/ionicons5'
 import { fetchFiles, fetchPreviewUrl, renameFile, uploadFiles } from '@/api'
 import type { FileEntry } from '@/types/models'
 import { useSessionStore } from '@/stores/session'
-import { useAppStore } from '@/stores/app'
 import { copyText } from '@/utils/clipboard'
 import FileEditorDrawer from '@/components/files/FileEditorDrawer.vue'
-
-/** 文件树节点：key 用相对路径（后端约定 `/` 分隔），raw 存原始条目 */
-interface FileTreeNode extends TreeOption {
-  raw: FileEntry
-}
 
 /** 图片压缩后大小上限（与后端 5MB 分档一致，保证后端不会拒绝） */
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024
 
 const message = useMessage()
 const sessionStore = useSessionStore()
-const appStore = useAppStore()
-
-/** 项目名 tooltip 主题：浅色白底浅字；暗色下跟随 Naive 主题（默认深色底） */
-const wsTooltipTheme = computed(() =>
-  appStore.isDark
-    ? {}
-    : {
-        color: '#fff',
-        textColor: '#333',
-        boxShadow: '0 2px 8px rgba(0, 0, 0, 0.12)',
-      },
-)
 
 /** 当前 workspace：优先当前会话所属项目，其次默认项目 */
 const activeWs = computed(() => {
@@ -65,44 +47,117 @@ const activeWs = computed(() => {
 })
 const workspaceId = computed(() => activeWs.value?.id ?? 0)
 
-const treeData = ref<FileTreeNode[]>([])
-const expandedKeys = ref<string[]>([])
-const treeLoading = ref(false)
+/** 根目录名（路径栏锁定前缀）：取 workspace 绝对路径最后一段，如 /data/apps/zurl → zurl */
+const wsBaseName = computed(() => {
+  const p = activeWs.value?.path ?? ''
+  return p.replace(/\/+$/, '').split('/').pop() || ''
+})
 
-const dragActive = ref(false)
-/** 拖拽悬停的目录 key（null = 空白区 → 上传到根） */
-const dragOverKey = ref<string | null>(null)
+// ---------------------------------------------------------------------------
+// 目录浏览状态：只保留当前目录，切换即整体替换，不驻留历史数据
+// ---------------------------------------------------------------------------
 
-const uploading = ref(false)
-const uploadProgress = ref(0)
-const uploadingName = ref('')
-
-const previewEntry = ref<FileEntry | null>(null)
-/** 预览直链（异步换取：12 小时资源 token，绑定 workspace+path，不进日志泄露主 token） */
-const previewSrc = ref('')
-/** 隐藏的 n-image anchor：负责承载预览源，程序化触发原生预览（naive-ui expose showPreview） */
-const previewImgRef = ref<{ showPreview: () => void } | null>(null)
+/** 当前目录（相对 workspace 根的路径，`/` 分隔；'' = 根） */
+const currentDir = ref('')
+/** 路径输入框内容（可编辑的相对路径部分，不含锁定前缀） */
+const pathInput = ref('')
+/** 当前目录条目（后端已排序：目录在前、按名称） */
+const entries = ref<FileEntry[]>([])
+const listLoading = ref(false)
+/** 非根目录时在列表顶部显示 `...` 返回上级 */
+const canGoUp = computed(() => currentDir.value !== '')
 
 /**
- * 为当前 previewEntry 换取短 token 直链；失败置空（图片预览留白，不阻断其它操作）。
- * 每次预览都签发新 token（12h 过期后由后端内存懒清理），无需客户端缓存。
+ * 解析并校验用户输入的相对路径；非法返回 null，空串表示根目录。
+ * 拒绝：绝对路径（/ 开头）、Windows 盘符（C:\…）、`..` 越界段；
+ * Windows 反斜杠统一转正斜杠。
+ * 这是防穿透的第一道闸（前端 UX 层），后端 resolveInWorkspace 是最终硬校验。
  */
-async function refreshPreviewUrl() {
-  const entry = previewEntry.value
-  if (!entry || !workspaceId.value) {
-    previewSrc.value = ''
-    return
-  }
+function normalizeInputPath(raw: string): string | null {
+  const v = raw.trim().replace(/\\/g, '/')
+  if (!v) return ''
+  if (v.startsWith('/')) return null
+  if (/^[A-Za-z]:/.test(v)) return null
+  const segs = v.split('/').filter(Boolean)
+  if (segs.some((s) => s === '..')) return null
+  return segs.join('/')
+}
+
+/**
+ * 加载指定目录：成功后用后端规范化后的 path 同步输入框
+ * （用户输入 `a//b` 这类脏路径时，展示自动对齐为后端 Clean 结果）。
+ * 竞态防护：每次请求递增序号，过期响应直接丢弃（快速连点进入/切换
+ * workspace 时，先发的慢请求不会覆盖新状态）。
+ */
+let loadSeq = 0
+async function load(dir: string) {
+  if (!workspaceId.value) return
+  const seq = ++loadSeq
+  listLoading.value = true
   try {
-    previewSrc.value = await fetchPreviewUrl(workspaceId.value, entry.path)
-  } catch {
-    previewSrc.value = ''
+    const data = await fetchFiles(workspaceId.value, dir)
+    if (seq !== loadSeq) return // 已有更新的请求，丢弃本次结果
+    currentDir.value = data.path
+    pathInput.value = data.path
+    entries.value = data.entries
+  } catch (err) {
+    if (seq !== loadSeq) return
+    // 失败时保持「路径栏 = 当前目录 = 列表」一致：输入框回滚到当前实际目录
+    pathInput.value = currentDir.value
+    message.error(err instanceof Error ? err.message : '加载文件列表失败')
+  } finally {
+    if (seq === loadSeq) listLoading.value = false
   }
 }
 
-// 切换预览目标或切换项目时，重新换取对应文件的直链
-watch([previewEntry, workspaceId], () => {
-  void refreshPreviewUrl()
+/** 回车 / 【进入】按钮：校验输入后跳转 */
+async function enterPath() {
+  const target = normalizeInputPath(pathInput.value)
+  if (target === null) {
+    message.warning('路径不能包含「..」，也不能使用绝对路径')
+    return
+  }
+  if (target === currentDir.value) return
+  await load(target)
+}
+
+/** 【刷新】：重载当前目录（输入框保持用户手输内容不变） */
+async function reload() {
+  await load(currentDir.value)
+}
+
+/** 单击文件夹 → 进入子目录 */
+function enterDir(entry: FileEntry) {
+  if (listLoading.value) return
+  void load(entry.path)
+}
+
+/** 列表顶部 `...` → 返回上级目录 */
+function goUp() {
+  if (!currentDir.value || listLoading.value) return
+  const i = currentDir.value.lastIndexOf('/')
+  void load(i >= 0 ? currentDir.value.slice(0, i) : '')
+}
+
+// workspace 变化 → 回到根目录重载；同时关闭可能指向旧 workspace 的编辑器
+watch(workspaceId, async () => {
+  // 有未保存修改时先征得用户同意（切换后旧文件无法再保存，故只提供「放弃/取消」）；
+  // 用户取消 → 保持抽屉打开（内容仍可复制），但列表照常切换到新 workspace
+  if (editorRef.value?.dirty) {
+    if (await editorRef.value.confirmDiscard()) {
+      editorShow.value = false
+    }
+  } else {
+    editorShow.value = false
+  }
+  currentDir.value = ''
+  pathInput.value = ''
+  entries.value = []
+  void load('')
+})
+
+onMounted(() => {
+  void load('')
 })
 
 // ---------------------------------------------------------------------------
@@ -129,14 +184,9 @@ const renameValue = ref('')
 const renaming = ref(false)
 const renameTarget = ref<{ workspaceId: number; entry: FileEntry } | null>(null)
 
-/** 右键节点：定位目标条目并弹出菜单（路径从节点 DOM 的 data-dir 取，与拖拽同套路） */
-function onContextMenu(e: MouseEvent) {
-  const el = (e.target as HTMLElement).closest('.n-tree-node') as HTMLElement | null
-  const dir = el?.dataset.dir
-  if (dir == null) return
-  const node = findNode(treeData.value, dir)
-  if (!node) return
-  ctxMenuEntry.value = node.raw
+/** 右键条目：定位目标条目并弹出菜单（条目从 v-for 直接传入，无需 DOM 查找） */
+function onEntryContextMenu(e: MouseEvent, entry: FileEntry) {
+  ctxMenuEntry.value = entry
   ctxMenuX.value = e.clientX
   ctxMenuY.value = e.clientY
   ctxMenuShow.value = true
@@ -186,9 +236,9 @@ async function openEditor(entry: FileEntry) {
   editorShow.value = true
 }
 
-/** 编辑器保存成功后刷新整树（节点大小/时间展示随之更新） */
+/** 编辑器保存成功后刷新当前目录（节点大小/时间展示随之更新） */
 async function onFileSaved() {
-  await reloadAll()
+  await reload()
 }
 
 async function onRenameConfirm() {
@@ -215,8 +265,7 @@ async function onRenameConfirm() {
     await renameFile(target.workspaceId, target.entry.path, nextName)
     renameModalVisible.value = false
     message.success(`已重命名为「${nextName}」`)
-    // 重命名目录会使其子节点 key 全部变化，整树刷新可避免旧路径缓存残留。
-    await reloadAll()
+    await reload()
   } catch (err) {
     message.error(err instanceof Error ? err.message : '重命名失败')
   } finally {
@@ -226,100 +275,7 @@ async function onRenameConfirm() {
 }
 
 // ---------------------------------------------------------------------------
-// 树数据：懒加载
-// ---------------------------------------------------------------------------
-
-function toNode(e: FileEntry): FileTreeNode {
-  return { key: e.path, label: e.name, isLeaf: !e.isDir, raw: e }
-}
-
-async function buildChildren(dir: string): Promise<FileTreeNode[]> {
-  // 隐藏文件由后端强制过滤（不提供开关），这里只拿可见条目
-  const entries = await fetchFiles(workspaceId.value, dir)
-  return entries.map(toNode)
-}
-
-/** 按 key 递归查找节点 */
-function findNode(nodes: FileTreeNode[], key: string): FileTreeNode | null {
-  for (const n of nodes) {
-    if (n.key === key) return n
-    if (n.children) {
-      const r = findNode(n.children as FileTreeNode[], key)
-      if (r) return r
-    }
-  }
-  return null
-}
-
-async function loadRoot() {
-  if (!workspaceId.value) return
-  treeLoading.value = true
-  try {
-    treeData.value = await buildChildren('')
-  } catch (err) {
-    treeData.value = []
-    message.error(err instanceof Error ? err.message : '加载文件列表失败')
-  } finally {
-    treeLoading.value = false
-  }
-}
-
-/**
- * naive-ui 懒加载回调（on-load）：展开「未加载」（children 为 undefined）的目录时
- * 由 NTree 调用，返回的 Promise resolve 后自动结束 loading 状态并完成展开。
- * 必须在此给 node.children 赋值（NTree 以 children 有无判断 shallowLoaded）。
- * 加载失败按空目录处理，避免无限重试。
- */
-async function onLoad(node: TreeOption) {
-  const children = await buildChildren(String(node.key)).catch(() => [] as FileTreeNode[])
-  node.children = children
-  // 换引用强制 NTree 重新计算树结构（直接改 children 不保证触发重渲染）
-  treeData.value = [...treeData.value]
-}
-
-/** 受控展开状态记录（实际加载交给 on-load，这里只维护 keys） */
-function onExpandedKeys(keys: Array<string | number>) {
-  expandedKeys.value = keys.map(String)
-}
-
-/** 刷新指定目录（上传成功后调用）；不在当前展开视图内的目录无需刷新 */
-async function reloadDir(dir: string) {
-  if (dir === '') {
-    await loadRoot()
-    return
-  }
-  const node = findNode(treeData.value, dir)
-  if (!node) return
-  node.children = await buildChildren(dir)
-  treeData.value = [...treeData.value]
-}
-
-/** 整树重建（切换 workspace 时） */
-async function reloadAll() {
-  expandedKeys.value = []
-  await loadRoot()
-}
-
-// workspace 变化 → 重建树（目录不同，缓存作废）；同时关闭可能指向旧 workspace 的编辑器
-watch(workspaceId, async () => {
-  // 有未保存修改时先征得用户同意（切换后旧文件无法再保存，故只提供「放弃/取消」）；
-  // 用户取消 → 保持抽屉打开（内容仍可复制），但树照常切换到新 workspace
-  if (editorRef.value?.dirty) {
-    if (await editorRef.value.confirmDiscard()) {
-      editorShow.value = false
-    }
-  } else {
-    editorShow.value = false
-  }
-  void reloadAll()
-})
-
-onMounted(() => {
-  void loadRoot()
-})
-
-// ---------------------------------------------------------------------------
-// 拖拽上传
+// 条目交互：文件夹单击进入；文件单击图片预览 / 双击编辑
 // ---------------------------------------------------------------------------
 
 function isImageEntry(e: FileEntry): boolean {
@@ -330,40 +286,73 @@ function isImageEntry(e: FileEntry): boolean {
   )
 }
 
+const previewEntry = ref<FileEntry | null>(null)
+/** 预览直链（异步换取：12 小时资源 token，绑定 workspace+path，不进日志泄露主 token） */
+const previewSrc = ref('')
+/** 隐藏的 n-image anchor：负责承载预览源，程序化触发原生预览（naive-ui expose showPreview） */
+const previewImgRef = ref<{ showPreview: () => void } | null>(null)
+
 /**
- * 节点 props：把真实路径挂到节点 DOM（naive-ui 非虚拟滚动树节点没有 data-key 属性，
- * 拖拽定位必须靠自定义 data 属性），拖拽时通过 dataset 取目标目录。
- * 注意：naive-ui 回调签名是 (info: { option }) => HTMLAttributes，参数包在对象里。
+ * 为当前 previewEntry 换取短 token 直链；失败置空（图片预览留白，不阻断其它操作）。
+ * 每次预览都签发新 token（12h 过期后由后端内存懒清理），无需客户端缓存。
  */
-function nodeProps({ option }: { option: TreeOption }): Record<string, unknown> {
-  const e = (option as FileTreeNode).raw
-  return {
-    'data-dir': e.path,
-    'data-isdir': e.isDir ? '1' : '0',
-    // naive-ui NTree 没有 dblclick emit，双击只能通过节点 props 绑定原生事件；
-    // 文本文件 → 打开编辑器（图片预览走 onSelect 选中路径，不冲突）
-    onDblclick: () => {
-      if (e && !e.isDir) {
-        void openEditor(e)
-      }
-    },
+async function refreshPreviewUrl() {
+  const entry = previewEntry.value
+  if (!entry || !workspaceId.value) {
+    previewSrc.value = ''
+    return
+  }
+  try {
+    previewSrc.value = await fetchPreviewUrl(workspaceId.value, entry.path)
+  } catch {
+    previewSrc.value = ''
   }
 }
 
-/** 拖拽悬停：高亮目标节点（路径从节点 DOM 的 data-dir 属性取） */
-function onDragOver(e: DragEvent) {
+// 切换预览目标或切换项目时，重新换取对应文件的直链
+watch([previewEntry, workspaceId], () => {
+  void refreshPreviewUrl()
+})
+
+/** 单击条目：文件夹进入；图片文件直接弹出 n-image 原生预览（不经过中间弹窗） */
+async function onEntryClick(entry: FileEntry) {
+  if (entry.isDir) {
+    enterDir(entry)
+    return
+  }
+  if (!isImageEntry(entry)) return
+  previewEntry.value = entry
+  // 等短 token 直链就绪后再触发预览，保证预览层能取到图
+  await refreshPreviewUrl()
+  previewImgRef.value?.showPreview()
+}
+
+/** 双击条目：文本文件打开编辑器 */
+function onEntryDblClick(entry: FileEntry) {
+  if (!entry.isDir) void openEditor(entry)
+}
+
+// ---------------------------------------------------------------------------
+// 拖拽上传：单目录模式下目标固定为「当前目录」
+// ---------------------------------------------------------------------------
+
+const dragActive = ref(false)
+
+const uploading = ref(false)
+const uploadProgress = ref(0)
+const uploadingName = ref('')
+
+/** 拖拽悬停：只做容器高亮；上传目标固定为当前目录，不再按悬停节点区分 */
+function onDragOver() {
   dragActive.value = true
-  const el = (e.target as HTMLElement).closest('.n-tree-node') as HTMLElement | null
-  dragOverKey.value = el?.dataset.dir ?? null
 }
 
 function onDragLeave(e: DragEvent) {
   // 只有真正离开容器才收起提示（relatedTarget 在容器外）
   const related = e.relatedTarget as Node | null
-  const container = (e.currentTarget as HTMLElement)
+  const container = e.currentTarget as HTMLElement
   if (!container.contains(related)) {
     dragActive.value = false
-    dragOverKey.value = null
   }
 }
 
@@ -371,21 +360,7 @@ async function onDrop(e: DragEvent) {
   dragActive.value = false
   const files = Array.from(e.dataTransfer?.files ?? [])
   if (!files.length || !workspaceId.value || uploading.value) return
-
-  // 目标目录：悬停在目录节点 = 该目录；悬停在文件节点 = 其父目录；空白区 = 根
-  const el = (e.target as HTMLElement).closest('.n-tree-node') as HTMLElement | null
-  const over = el?.dataset.dir ?? null
-  let dir = ''
-  if (over) {
-    if (el?.dataset.isdir === '1') {
-      dir = over
-    } else {
-      const i = over.lastIndexOf('/')
-      dir = i >= 0 ? over.slice(0, i) : ''
-    }
-  }
-  dragOverKey.value = null
-  await doUpload(files, dir)
+  await doUpload(files, currentDir.value)
 }
 
 /**
@@ -416,7 +391,7 @@ async function doUpload(files: File[], dir: string) {
     }
     if (ok.length) message.success(`已上传 ${ok.length} 个文件：${ok.join('、')}`)
     if (failed.length) message.error(`上传失败 ${failed.length} 个：${failed.join('；')}`)
-    await reloadDir(dir)
+    await reload()
   } finally {
     uploading.value = false
     uploadProgress.value = 0
@@ -501,36 +476,6 @@ function encodeWebp(
     )
   })
 }
-
-// ---------------------------------------------------------------------------
-// 节点渲染 & 点击预览
-// ---------------------------------------------------------------------------
-
-function renderLabel({ option }: { option: TreeOption }) {
-  const e = (option as FileTreeNode).raw
-  const icon = e.isDir
-    ? FolderOutline
-    : isImageEntry(e)
-      ? ImageOutline
-      : DocumentOutline
-  return h('div', { class: 'flex min-w-0 items-center gap-1.5' }, [
-    h(NIcon, { size: 15 }, { default: () => h(icon) }),
-    h('span', { class: 'truncate' }, option.label as string),
-  ])
-}
-
-/** 点击节点：图片文件 → 直接弹出 n-image 原生预览（不经过中间弹窗） */
-async function onSelect(keys: Array<string | number>) {
-  if (!keys.length) return
-  const node = findNode(treeData.value, String(keys[0]))
-  const e = node?.raw
-  if (e && !e.isDir && isImageEntry(e)) {
-    previewEntry.value = e
-    // 等短 token 直链就绪后再触发预览，保证预览层能取到图
-    await refreshPreviewUrl()
-    previewImgRef.value?.showPreview()
-  }
-}
 </script>
 
 <template>
@@ -543,27 +488,39 @@ async function onSelect(keys: Array<string | number>) {
     />
 
     <template v-else>
-      <!-- 工具栏：项目名（tooltip 展示完整路径）+ 刷新 -->
-      <div class="flex items-center gap-2 px-3 pb-1">
-        <n-tooltip
-          class="min-w-0 flex-1"
-          placement="left"
-          :theme-overrides="wsTooltipTheme"
+      <!-- 路径输入栏：锁定根目录前缀 + 可编辑相对路径 + 进入/刷新图标按钮 -->
+      <div class="flex items-center gap-1 px-3 pb-2 pt-2">
+        <n-input
+          v-model:value="pathInput"
+          size="small"
+          placeholder="相对路径，如 src/components"
+          :disabled="listLoading"
+          clearable
+          @keydown.enter.prevent="enterPath"
         >
-          <template #trigger>
-            <span class="block w-full truncate text-xs font-medium text-ink-secondary">
-              {{ activeWs?.name || '项目文件' }}
-            </span>
+          <template #prefix>
+            <span class="shrink-0 text-xs text-ink-secondary">{{ wsBaseName }}/</span>
           </template>
-          <span class="break-all">{{ activeWs?.path }}</span>
-        </n-tooltip>
+        </n-input>
         <n-button
           quaternary
           circle
-          size="tiny"
+          size="small"
+          title="进入"
+          :disabled="listLoading"
+          @click="enterPath"
+        >
+          <template #icon>
+            <n-icon><ArrowForwardOutline /></n-icon>
+          </template>
+        </n-button>
+        <n-button
+          quaternary
+          circle
+          size="small"
           title="刷新"
-          :loading="treeLoading"
-          @click="reloadAll"
+          :loading="listLoading"
+          @click="reload"
         >
           <template #icon>
             <n-icon><RefreshOutline /></n-icon>
@@ -571,40 +528,64 @@ async function onSelect(keys: Array<string | number>) {
         </n-button>
       </div>
 
-      <!-- 文件树（拖拽目标容器；右键节点弹菜单） -->
+      <!-- 文件列表（拖拽目标容器；右键条目弹菜单） -->
       <div
         class="min-h-0 flex-1 overflow-auto px-1"
         @dragenter.prevent
         @dragover.prevent="onDragOver"
         @dragleave="onDragLeave"
         @drop.prevent="onDrop"
-        @contextmenu.prevent="onContextMenu"
       >
-        <n-tree
-          block-line
-          expand-on-click
-          :data="treeData"
-          :expanded-keys="expandedKeys"
-          :node-props="nodeProps"
-          :render-label="renderLabel"
-          :on-load="onLoad"
-          :selectable="true"
-          @update:expanded-keys="onExpandedKeys"
-          @update:selected-keys="onSelect"
-        />
+        <n-spin :show="listLoading">
+          <!-- 返回上级：列表顶部 `...`（根目录不显示） -->
+          <button
+            v-if="canGoUp"
+            class="flex w-full cursor-pointer items-center gap-2 rounded px-2.5 py-1 text-left hover:bg-surface-hover"
+            title="返回上级"
+            @click="goUp"
+          >
+            <!-- `...` 句号 glyph 在字体中位于基线以下，垂直居中后视觉偏下，上移 4px 修正 -->
+            <span class="-translate-y-[4px] text-sm leading-none tracking-[0.25em] text-ink-secondary">...</span>
+          </button>
+
+          <!-- 空目录 -->
+          <div
+            v-if="!listLoading && entries.length === 0"
+            class="px-3 py-8 text-center text-xs text-ink-muted"
+          >
+            当前目录为空
+          </div>
+
+          <!-- 条目：文件夹单击进入；文件单击图片预览 / 双击编辑 / 右键菜单 -->
+          <div
+            v-for="entry in entries"
+            :key="entry.path"
+            class="flex min-w-0 cursor-pointer items-center gap-1.5 rounded px-2.5 py-1 text-sm hover:bg-surface-hover"
+            @click="onEntryClick(entry)"
+            @dblclick="onEntryDblClick(entry)"
+            @contextmenu.prevent="onEntryContextMenu($event, entry)"
+          >
+            <n-icon
+              class="shrink-0"
+              size="15"
+              :class="entry.isDir ? 'text-amber-500' : 'text-ink-muted'"
+            >
+              <FolderOutline v-if="entry.isDir" />
+              <ImageOutline v-else-if="isImageEntry(entry)" />
+              <DocumentOutline v-else />
+            </n-icon>
+            <span class="truncate">{{ entry.name }}</span>
+          </div>
+        </n-spin>
       </div>
 
-      <!-- 拖拽悬停提示：目录节点高亮 + 上传目标说明 -->
+      <!-- 拖拽悬停提示：上传目标 = 当前目录 -->
       <div
         v-if="dragActive"
-        class="pointer-events-none absolute inset-x-1 bottom-1 top-8 z-10 flex items-center justify-center rounded border-2 border-dashed border-blue-400 bg-blue-50/70 text-sm text-blue-600 dark:border-blue-500/50 dark:bg-blue-500/15 dark:text-blue-400"
+        class="pointer-events-none absolute inset-x-1 bottom-1 top-12 z-10 flex items-center justify-center rounded border-2 border-dashed border-blue-400 bg-blue-50/70 text-sm text-blue-600 dark:border-blue-500/50 dark:bg-blue-500/15 dark:text-blue-400"
       >
         <span>
-          {{
-            dragOverKey
-              ? `上传到「${dragOverKey}」目录`
-              : '拖到目录上可指定位置；此处为项目根目录'
-          }}
+          {{ currentDir ? `上传到「${currentDir}」目录` : '上传到项目根目录' }}
         </span>
       </div>
 
@@ -632,7 +613,6 @@ async function onSelect(keys: Array<string | number>) {
       @select="onCtxSelect"
       @clickoutside="ctxMenuShow = false"
     />
-
 
     <!-- 重命名弹窗：只提交新名称，后端负责工作区边界与文件名校验 -->
     <n-modal v-model:show="renameModalVisible" preset="card" title="重命名" style="width: 420px">
@@ -666,7 +646,7 @@ async function onSelect(keys: Array<string | number>) {
       style="width: 1px; height: 1px"
     />
 
-    <!-- 文本编辑器抽屉（双击文件 / 右键【编辑】打开；保存后刷新树） -->
+    <!-- 文本编辑器抽屉（双击文件 / 右键【编辑】打开；保存后刷新列表） -->
     <FileEditorDrawer
       ref="editorRef"
       v-model:show="editorShow"

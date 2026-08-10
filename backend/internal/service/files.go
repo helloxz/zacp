@@ -66,7 +66,9 @@ const (
 
 // ignoredDirNames 始终不展示的大目录（无论是否显示隐藏文件）。
 // 这些目录体量大且对 AI 对话价值低，避免列目录拖慢接口 / 前端误展开。
+// 注意：`.git` 也在内——即使强制显示隐藏文件，也不把 .git/objects 等内部结构暴露到 UI。
 var ignoredDirNames = map[string]bool{
+	".git":         true,
 	"node_modules": true,
 	"dist":         true,
 	"build":        true,
@@ -81,10 +83,14 @@ var ignoredDirNames = map[string]bool{
 	"coverage":     true,
 }
 
-// isSkippedDirName 目录名是否应过滤（隐藏目录 / 忽略的大目录）。
-// 工作区文件浏览与新建项目目录浏览共用同一过滤规则，保持一致行为。
+// isHiddenName 是否为隐藏文件/目录（以 `.` 开头）。
+func isHiddenName(name string) bool {
+	return strings.HasPrefix(name, ".")
+}
+
+// isSkippedDirName 是否为始终忽略的大目录（见 ignoredDirNames）。
 func isSkippedDirName(name string) bool {
-	return strings.HasPrefix(name, ".") || ignoredDirNames[name]
+	return ignoredDirNames[name]
 }
 
 // FileService 提供工作区文件浏览与上传，以及新建项目弹窗的目录浏览。
@@ -141,8 +147,10 @@ func (s *FileService) resolveInWorkspace(ws *model.Workspace, rel string) (strin
 	return real, nil
 }
 
-// ListDir 列出工作区下 rel 目录内容（目录在前、按名称排序）。
-// 隐藏文件（以 `.` 开头）与 ignoredDirNames 大目录由后端强制过滤，不提供开关。
+// ListDir 列出工作区下 rel 目录的内容（目录在前、按名称排序）。
+// 强制显示隐藏文件（.gitignore、.env 等代码编辑高频对象）；
+// 仅忽略 ignoredDirNames 大目录（node_modules、.git 等）。
+// 安全边界在 resolveInWorkspace（路径逃逸校验），显示隐藏文件不扩大攻击面。
 func (s *FileService) ListDir(workspaceID uint, rel string) (*model.FileListDTO, error) {
 	ws, err := s.workspaceRepo.GetByID(workspaceID)
 	if err != nil {
@@ -202,7 +210,8 @@ func (s *FileService) ListDir(workspaceID uint, rel string) (*model.FileListDTO,
 // 与 ListDir 的区别：ListDir 是「workspace 安全边界内」的相对路径浏览；
 // 本方法是新建项目弹窗的「服务器任意目录」浏览入口，path 为绝对路径，
 // 不绑定 workspace。path 为空时返回 defaultCwd 解析后的绝对路径作为初始目录。
-// 只返回文件夹（IsDir），隐藏目录与 ignoredDirNames 大目录不展示（见 isSkippedDirName）。
+// 只返回文件夹（IsDir），隐藏目录与 ignoredDirNames 大目录均不展示
+// （选目录场景下 .git/.config 等无意义；文件面板 ListDir 已改为显示隐藏文件）。
 //
 // 安全注意：本端点可枚举服务器任意绝对路径下的子文件夹（当前无鉴权，仅本地/内网部署），
 // 若未来引入认证或收紧 CORS，应与此端点一并处理。
@@ -247,7 +256,7 @@ func (s *FileService) ListDirectories(dir string) (*model.DirectoryListDTO, erro
 	}
 	for _, item := range items {
 		// 只列文件夹；隐藏目录与忽略大目录过滤
-		if !item.IsDir() || isSkippedDirName(item.Name()) {
+		if !item.IsDir() || isHiddenName(item.Name()) || isSkippedDirName(item.Name()) {
 			continue
 		}
 		dto.Entries = append(dto.Entries, model.DirectoryEntryDTO{
