@@ -30,6 +30,13 @@ Zacp是一个基于 **ACP（Agent Client Protocol）** 协议的多 Agent Web �
 - **Git面板** ：支持查看 Git 状态
 - **主题模式** ：支持深色模式与浅色模式切换
 
+## TODO
+
+- [] 通过WEB页面编辑配置
+- [] 支持Docker部署
+- [] 支持添加多个Server端
+- [] 支持手机APP
+- [] 支持PC客户端
 
 ## 安装
 
