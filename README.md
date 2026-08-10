@@ -32,11 +32,11 @@ Zacp是一个基于 **ACP（Agent Client Protocol）** 协议的多 Agent Web �
 
 ## TODO
 
-- [] 通过WEB页面编辑配置
-- [] 支持Docker部署
-- [] 支持添加多个Server端
-- [] 支持手机APP
-- [] 支持PC客户端
+- [ ] 通过WEB页面编辑配置
+- [ ] 支持Docker部署
+- [ ] 支持添加多个Server端
+- [ ] 支持手机APP
+- [ ] 支持PC客户端
 
 ## 安装
 
