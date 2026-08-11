@@ -93,12 +93,16 @@ async function onToggleReasoning(e: Event) {
   if (!open || reasoning.value || reasoningLoadState.value !== 'idle' || !hasThought.value) {
     return
   }
-  if (props.message.id <= 0) {
-    return // 流式占位消息（负数 id）本地必有内容，防御分支
+  if (props.message.id < 0 && !props.message.streamFinalized) {
+    return // 未转正的流式占位消息本地必有内容，无需按需加载
+  }
+  const dbId = sessionStore.persistedIdOf(props.message)
+  if (dbId === undefined) {
+    return // 兜底：拿不到真实 DB id 时跳过（正常不会走到）
   }
   reasoningLoadState.value = 'loading'
   try {
-    const data = await fetchMessageThoughts(props.message.sessionId, props.message.id)
+    const data = await fetchMessageThoughts(props.message.sessionId, dbId)
     loadedReasoning.value = data.reasoning
   } catch {
     loadedReasoning.value = ''
@@ -159,8 +163,19 @@ watch(
  * 按工具调用点拆分为多段，恢复文本→工具→文本的因果交错。
  */
 const blocks = computed<MessageBlock[]>(() => {
-  // 流式占位消息：使用本会话的 store.streamBlocks（随事件增量构建）
-  if (isStreamingPlaceholder.value) {
+  // 流式占位消息（含「软收尾后、转正前」窗口：status 已回 idle 但占位尚未
+  // 合并进 DB）：使用 store.streamBlocks（随事件增量构建，turn.done 后由
+  // finalizeStream 保留至 refreshAfterTurn 转正）。已转正占位（streamFinalized）
+  // 与历史消息一样从 events 重建——保持消息高度连续，避免滚动跳动。
+  // 注意：必须限定 role === 'assistant'——乐观 user 消息的 id 也是负数
+  // （appendLocal 用 -Date.now()），若不加过滤，user 消息会把整个会话的
+  // streamBlocks（AI 实时内容）也渲染一份，流式期间出现 2 份重复内容。
+  if (
+    isStreamingPlaceholder.value ||
+    (props.message.id < 0 &&
+      props.message.role === 'assistant' &&
+      !props.message.streamFinalized)
+  ) {
     return sessionStore.streamBlocksOf(props.message.sessionId)
   }
   // 历史消息：从 events 重建，tool block 携带 contentSplit 位置

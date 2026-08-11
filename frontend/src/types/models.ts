@@ -167,6 +167,11 @@ export interface ChatMessage {
   /** 工具详情 JSON（toolId → {input, output}，每工具最终一份）；与 events 互补：
    *  v6 起 events 已剥离 input/output，展开工具卡详情优先读本字段，缺失时回退 events 内嵌值 */
   toolDetails?: string
+  /**
+   * 前端私有标记：流式占位消息已转正（保留负 id 以稳定 v-for key，避免
+   * turn.done 后整列 DOM 重建导致滚动跳动）。DB 消息无此字段。
+   */
+  streamFinalized?: boolean
 
   createdAt: string
 }

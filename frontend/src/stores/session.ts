@@ -167,6 +167,23 @@ export const useSessionStore = defineStore('session', () => {
   const streamBlocksBySession = ref<Record<number, MessageBlock[]>>({})
   /** 各会话当前流式 assistant 占位消息 id（-1 表示无占位） */
   const streamMsgIdBySession = ref<Record<number, number>>({})
+  /** 各会话当前轮乐观 user 消息 id（连发竞态时，旧轮的合并不得丢弃新轮的乐观 user） */
+  const streamUserIdBySession = ref<Record<number, number>>({})
+  /**
+   * 在途增量同步（refreshAfterTurn）的占位 id 集合：异步窗口内其它轮次的合并
+   * 重建列表时，凭此保留「还在等自己转正」的占位，避免连发竞态下被误丢
+   * （A 的 refresh 在途时 B 的合并先执行，A 占位不属于 B 的任何引用条件）。
+   * 负 id 跨会话天然唯一，全局集合即可。
+   */
+  const pendingFinalizePlaceholders = new Set<number>()
+  /**
+   * 已转正占位消息对应的 DB 消息 id（占位转正后保留负 id 稳定 v-for key，
+   * 真实 id 记在这里：latestPersistedMessageId 据此推进增量拉取的 afterId，
+   * 避免下轮 turn.done 重复拉取已转正消息）。外层 key 为 session id，内层为
+   * 占位 id → DB id：多轮转正占位共存时各自对应，/thoughts 不会串轮。
+   * 会话删除时随 dropSessionIndexes 清理。
+   */
+  const finalizedDbIdBySession = new Map<number, Map<number, number>>()
 
   /**
    * 取最新 100 条历史消息中的最后一个执行计划。
@@ -255,6 +272,8 @@ export const useSessionStore = defineStore('session', () => {
 		delete activeToolCardsBySession.value[sessionId]
 		delete activePlanBySession.value[sessionId]
 		delete streamMsgIdBySession.value[sessionId]
+		delete streamUserIdBySession.value[sessionId]
+		finalizedDbIdBySession.delete(sessionId)
 	}
   /** 首轮 prompt 后若仍是默认标题，安排一次会话详情同步；手动改名会话不参与。 */
   function markInitialSessionDetailRefresh(session: ChatSession) {
@@ -319,6 +338,20 @@ export const useSessionStore = defineStore('session', () => {
       message.id === (streamMsgIdBySession.value[message.sessionId] ?? -1) &&
       statusOf(message.sessionId) === 'streaming'
     )
+  }
+
+  /**
+   * 取消息用于后端请求（如 /thoughts）的真实 DB id：转正占位保留负 id（稳定 v-for key），
+   * 真实 id 记录在 finalizedDbIdBySession；正 id 历史消息原样返回；未转正占位返回 undefined。
+   */
+  function persistedIdOf(message: ChatMessage): number | undefined {
+    if (message.id > 0) {
+      return message.id
+    }
+    if (message.streamFinalized) {
+      return finalizedDbIdBySession.get(message.sessionId)?.get(message.id)
+    }
+    return undefined
   }
 
   /** 当前会话 turn 状态（驱动 Composer：idle=发送按钮 / 非 idle=停止按钮+状态文案） */
@@ -518,7 +551,13 @@ export const useSessionStore = defineStore('session', () => {
 
   /** 返回当前缓存中最大的数据库消息 ID；临时乐观消息使用负数 ID，会被忽略。 */
   function latestPersistedMessageId(sessionId: number): number {
+    // 已转正占位保留负 id，真实 id 从 finalizedDbIdBySession 取，保证增量窗口推进
     let latest = 0
+    for (const dbId of finalizedDbIdBySession.get(sessionId)?.values() ?? []) {
+      if (dbId > latest) {
+        latest = dbId
+      }
+    }
     for (const message of messagesById.value[sessionId] ?? []) {
       if (message.id > latest) {
         latest = message.id
@@ -531,43 +570,157 @@ export const useSessionStore = defineStore('session', () => {
    * 拉取指定 ID 之后新增的消息并合并到缓存，只保留最新窗口。
    * 服务端至少会返回本轮已落库的 user 消息；拿到增量后再移除本地负数占位，
    * 避免请求失败时先删除用户可见内容。正数 ID 通过 Map 去重，重试不会重复渲染。
+   *
+   * @param placeholderId 本轮占位消息 id 快照（由调用方在 fetch 前从
+   *   streamMsgIdBySession 取出传入）——异步窗口内若用户已发送新消息，
+   *   streamMsgIdBySession 已被覆盖，这里仍能精确命中本轮占位，不串轮。
+   * @param placeholderUserId 本轮乐观 user 消息 id 快照（同理）：重建时仅保留
+   *   「新轮」的乐观 user（连发竞态），本轮 user 由 DB 正 id 版回归替换。
    */
-  async function loadMessageUpdates(sessionId: number, afterId: number) {
-    // 流式占位消息（负数 id）携带本地实时 reasoning（agent_thought 逐块追加）。
-    // 列表接口已把 events 里的思考过程置空瘦身，这里把占位消息的 reasoning
-    // 转移到本轮第一条 assistant 消息上，避免 turn 结束后刚展示过的思考过程
-    // 突然变空（展开面板时也无需再请求 /thoughts）。
-    // 注意：必须在 fetch 之前快照——增量返回后占位消息已被合并移除，
-    // 若等 fetch 返回再扫描，快速连发（A 结束立刻发 B）时 A 的思考会丢失。
-    let placeholderReasoning = ''
-    for (const message of messagesById.value[sessionId] ?? []) {
-      if (message.id < 0 && message.role === 'assistant' && message.reasoning) {
-        placeholderReasoning = message.reasoning
-        break
-      }
-    }
+  async function loadMessageUpdates(
+    sessionId: number,
+    afterId: number,
+    placeholderId: number | undefined,
+    placeholderUserId: number | undefined,
+  ) {
+    // fetch 前快照：占位消息引用 + 其 reasoning。不能按「第一个未转正占位」扫描——
+    // 连发竞态时 A/B 两个未转正占位并存，B 的合并会串上 A 的思考内容；
+    // 必须按 placeholderId 精确命中本轮占位（对象引用稳定，appendStreamChunk
+    // 原地修改不替换对象，fetch 后引用依然有效）。
+    const preList = messagesById.value[sessionId] ?? []
+    const placeholder = preList.find((m) => m.id === placeholderId)
+    const placeholderReasoning = placeholder?.reasoning ?? ''
 
     const page = await fetchMessageUpdates(sessionId, afterId)
     if (page.messages.length === 0) {
+      // 无新增（取消/异常轮，后端未落库 assistant）：占位转正无目标，清理之，
+      // 避免残留空白气泡。但若异步窗口内新轮已开始（用户连发、正在流式），
+      // 保留新轮占位与乐观 user，防止实时内容被误删；在途合并的占位
+      // （pendingFinalizePlaceholders）也必须保留——它的合并还没执行，
+      // 转正目标对象不能在此被清出列表。
+      const keepId = streamMsgIdBySession.value[sessionId]
+      const keepUserId = streamUserIdBySession.value[sessionId]
+      const keepStreaming = keepId !== undefined && statusOf(sessionId) !== 'idle'
+      messagesById.value[sessionId] = (messagesById.value[sessionId] ?? []).filter(
+        (m) =>
+          m.id > 0 ||
+          m.streamFinalized ||
+          // 在途合并的占位保留（注意排除自身：本分支在 finally 注销前执行，
+          // 自己的登记恒为 true，若不排除会把「转正无目标」的本轮占位也留下）
+          (pendingFinalizePlaceholders.has(m.id) && m.id !== placeholderId) ||
+          (keepStreaming && m.id === keepId) ||
+          (keepStreaming && keepUserId !== undefined && m.id === keepUserId),
+      )
       return
     }
 
-    const merged = new Map<number, ChatMessage>()
-    for (const message of messagesById.value[sessionId] ?? []) {
-      if (message.id > 0) {
-        merged.set(message.id, message)
+    const oldList = messagesById.value[sessionId] ?? []
+    // 异步窗口内新轮的占位 id（连发竞态防护：A 的合并不能丢弃/污染 B 的占位）
+    const currentPlaceholderId = streamMsgIdBySession.value[sessionId]
+    // 本轮消息段：占位与 page 消息段「按序对应」——未转正占位按发送顺序排列
+    // （数组顺序），page 消息按 user 分段（后端每条 turn 先落库一条 user，再落库
+    // 一条合并的 assistant，一段即一轮）。连发竞态时 page 可能包含多轮已落库但
+    // 未转正的消息（A 合并在途时 B 已落库，B 的 fetch 返回 [userA, assistantA,
+    // userB, assistantB]）：无论哪个合并先执行，都用「自己的占位序号」精确命中
+    // 自己的轮次，不取「第一条/最后一段」，否则 A 占位会被塞入 B 的内容。
+    const pendingPlaceholders = oldList.filter(
+      (m) => m.id < 0 && !m.streamFinalized && m.role === 'assistant',
+    )
+    const placeholderIdx = placeholder ? pendingPlaceholders.indexOf(placeholder) : -1
+    const segments: ChatMessage[][] = []
+    for (const m of page.messages) {
+      if (m.role === 'user') {
+        segments.push([m])
+      } else if (segments.length > 0) {
+        segments[segments.length - 1].push(m)
+      } else {
+        segments.push([m]) // 防御：页首不是 user（异常数据）
       }
     }
-    for (const message of page.messages) {
-      if (placeholderReasoning && message.role === 'assistant' && !message.reasoning) {
-        message.reasoning = placeholderReasoning
-        placeholderReasoning = '' // 只转移给本轮第一条 assistant 消息
-      }
-      merged.set(message.id, message)
+    let mainDb: ChatMessage | undefined
+    let additions: ChatMessage[] = []
+    const turnSeg =
+      placeholder && placeholderIdx >= 0 && segments[placeholderIdx]
+        ? segments[placeholderIdx]
+        : segments[segments.length - 1] // 无占位（刷新/重连迟到）取最后一段
+    if (turnSeg) {
+      mainDb = turnSeg.find((m) => m.role === 'assistant')
+      additions = turnSeg.filter((m) => m !== mainDb)
     }
-    messagesById.value[sessionId] = [...merged.values()]
-      .sort((a, b) => a.id - b.id)
-      .slice(-SESSION_HISTORY_LIMIT)
+
+    // 按原顺序重建列表：正 id 消息、已转正占位（负 id + streamFinalized）、本轮占位
+    // 原位保留；异步窗口内仍被引用的新轮占位与乐观 user（连发竞态）一并保留；
+    // 取消/错误轮的未转正残留占位一律丢弃，与后端状态对齐。
+    // 注意：乐观 user 仅在「是当前引用且不是本轮」时保留——本轮 user 的负 id 版
+    // 由下面 additions 里的 DB 正 id 版回归替换，两者并存会重复渲染。
+    const currentUserId = streamUserIdBySession.value[sessionId]
+    const rebuilt: ChatMessage[] = []
+    for (const message of oldList) {
+      if (
+        message.id > 0 ||
+        message.streamFinalized ||
+        message.id === placeholderId ||
+        (currentPlaceholderId !== undefined && message.id === currentPlaceholderId) ||
+        pendingFinalizePlaceholders.has(message.id) ||
+        (currentUserId !== undefined &&
+          message.id === currentUserId &&
+          message.id !== placeholderUserId)
+      ) {
+        rebuilt.push(message)
+      }
+    }
+
+    // 增量里没有 assistant（防御：后端未落库）：本轮占位转正无目标，
+    // 原位替换为本轮 user 正版（DB 已落库 user），占位本体移除，避免残留
+    // 空白气泡；连发时新轮的占位由 currentPlaceholderId 条件保留，不受影响。
+    if (!mainDb && placeholder) {
+      const dropIdx = rebuilt.indexOf(placeholder)
+      if (dropIdx >= 0) {
+        rebuilt.splice(dropIdx, 1, ...additions)
+        additions = []
+      }
+    }
+
+    if (mainDb && placeholder) {
+      // 转正：DB 权威字段（content/events/toolDetails/createdAt）合并进占位对象，
+      // 但保留占位负 id——v-for key 不变 → DOM 复用 → details 展开状态、
+      // 工具卡片 DOM 不重建，turn.done 后消息高度连续，外层滚动不会跳动。
+      const { id: _dbId, ...rest } = mainDb
+      Object.assign(placeholder, rest, {
+        reasoning: placeholderReasoning || mainDb.reasoning,
+        streamFinalized: true,
+      })
+      // 按占位 id 记录真实 DB id（多轮转正占位共存时各记各的，/thoughts 不串轮）
+      let dbIdMap = finalizedDbIdBySession.get(sessionId)
+      if (!dbIdMap) {
+        dbIdMap = new Map()
+        finalizedDbIdBySession.set(sessionId, dbIdMap)
+      }
+      dbIdMap.set(placeholder.id, mainDb.id)
+    } else if (mainDb && !placeholder) {
+      // 无占位（刷新/重连后迟到的 turn.done 等）：正常加入 DB 消息，reasoning 兜底转移
+      if (placeholderReasoning && !mainDb.reasoning) {
+        mainDb.reasoning = placeholderReasoning
+      }
+    }
+    // 本轮新增消息（additions 已按「占位序号对应段」计算，仅含本轮消息——
+    // 连发竞态时旧轮已落库消息由各自轮次合并处理，不在此重复插入）。
+    // 插到 AI 回复之前，保持 user → assistant 的对话顺序（乐观 user 的负 id 版
+    // 已随重建丢弃，正 id DB 版在此归位）；负 id 混排不能直接 sort，按插入即可。
+    if (placeholder) {
+      const idx = rebuilt.indexOf(placeholder)
+      if (idx >= 0) {
+        rebuilt.splice(idx, 0, ...additions)
+      } else {
+        // 占位已被上面的「无 assistant 原位替换」清理（additions 已就地插入）
+        rebuilt.push(...additions)
+      }
+    } else {
+      // 无占位：user 先落库（id 更小），排在 mainDb 之前
+      rebuilt.push(...additions, ...(mainDb ? [mainDb] : []))
+    }
+
+    messagesById.value[sessionId] = rebuilt.slice(-SESSION_HISTORY_LIMIT)
   }
 
   /**
@@ -866,6 +1019,7 @@ export const useSessionStore = defineStore('session', () => {
   function endStreamTurn(sessionId: number) {
     statusBySession.value[sessionId] = 'idle'
     delete streamMsgIdBySession.value[sessionId]
+    delete streamUserIdBySession.value[sessionId]
     streamBlocksBySession.value[sessionId] = []
     activeToolCardsBySession.value[sessionId] = []
     activePlanBySession.value[sessionId] = null
@@ -873,17 +1027,39 @@ export const useSessionStore = defineStore('session', () => {
     runningSessionIds.value.delete(sessionId)
   }
 
+  /**
+   * 软收尾（turn.done 正常结束用）：仅复位状态机（idle / running / 权限队列），
+   * 保留流式内容槽位（streamBlocks / 工具卡片 / plan / 占位消息）——它们由
+   * refreshAfterTurn 在占位消息转正后统一清理（见 finalizeStream）。
+   * 若这里立即清空，turn.done 瞬间占位消息会变矮（卡片/文本消失），
+   * 外层滚动容器 scrollTop 被浏览器 clamp，视口被顶到半截，造成滚动跳动。
+   * error / cancel / 保险丝路径继续用 endStreamTurn（立即清空）。
+   */
+  function endStreamTurnSoft(sessionId: number) {
+    statusBySession.value[sessionId] = 'idle'
+    delete pendingPermissionsBySession.value[sessionId]
+    runningSessionIds.value.delete(sessionId)
+  }
+
   /** turn 收尾：结束流式状态，随后只同步本轮新增的数据库消息 */
   async function finalizeStream(sessionId: number) {
-    endStreamTurn(sessionId)
+    endStreamTurnSoft(sessionId)
     void refreshAfterTurn(sessionId)
   }
 
   /** 流式结束后的数据对齐：同步本轮新增消息；会话详情只在首轮默认标题场景刷新一次。 */
   async function refreshAfterTurn(sessionId: number) {
     const afterId = latestPersistedMessageId(sessionId)
+    // 快照本轮占位 id：异步窗口内若用户已发送新消息（streamMsgIdBySession 被覆盖），
+    // loadMessageUpdates 仍按快照命中本轮占位，且 finally 不会误清新轮的流式槽位。
+    const placeholderId = streamMsgIdBySession.value[sessionId]
+    const placeholderUserId = streamUserIdBySession.value[sessionId]
+    // 登记在途占位：连发竞态时其它轮次的合并（可能先执行）凭此保留本占位不误丢
+    if (placeholderId !== undefined) {
+      pendingFinalizePlaceholders.add(placeholderId)
+    }
     try {
-      await loadMessageUpdates(sessionId, afterId)
+      await loadMessageUpdates(sessionId, afterId, placeholderId, placeholderUserId)
       // agent 可能在 turn 中经 update 通知更新配置项，刷新以同步最新 currentValue
       await loadConfigOptions(sessionId)
       // / 命令首次进入会话时加载，后续依靠 WebSocket 广播更新，不在每轮重复 GET。
@@ -901,6 +1077,23 @@ export const useSessionStore = defineStore('session', () => {
       }
     } catch {
       // 刷新失败不影响已展示内容（本地消息仍可见）
+    } finally {
+      // 清理软收尾保留的流式槽位（转正后 blocks 已走 events 重建）：
+      // - 成功：占位已转正，槽位不再需要；
+      // - 失败/无新增：占位回到无流式内容状态（与旧 endStreamTurn 立即清空行为一致）。
+      // 仅当「本轮占位仍是当前占位」时清理——若异步窗口内用户已发新消息，
+      // streamMsgIdBySession 已指向新轮占位，本次收尾是旧轮，不得清掉新轮的槽位。
+      if (streamMsgIdBySession.value[sessionId] === placeholderId) {
+        delete streamMsgIdBySession.value[sessionId]
+        delete streamUserIdBySession.value[sessionId]
+        streamBlocksBySession.value[sessionId] = []
+        activeToolCardsBySession.value[sessionId] = []
+        activePlanBySession.value[sessionId] = null
+      }
+      // 注销在途占位登记（无论成功失败）
+      if (placeholderId !== undefined) {
+        pendingFinalizePlaceholders.delete(placeholderId)
+      }
     }
   }
 
@@ -1111,7 +1304,8 @@ export const useSessionStore = defineStore('session', () => {
     }
 
     // 乐观展示用户消息 + 空占位（流式追加目标）
-    appendLocal(sessionId, 'user', content)
+    const userMsg = appendLocal(sessionId, 'user', content)
+    streamUserIdBySession.value[sessionId] = userMsg.id
     // 占位 id 必须与 user 消息不同（appendLocal 用 -Date.now()，同一毫秒会撞 key）
     const placeholderId = -(Date.now() + 1)
     streamMsgIdBySession.value[sessionId] = placeholderId
@@ -1216,6 +1410,7 @@ export const useSessionStore = defineStore('session', () => {
     activeToolCardsOf,
     activePlanOf,
     isStreamingMessage,
+    persistedIdOf,
     runningSessionIds,
     streamError,
     streamErrorOf,
