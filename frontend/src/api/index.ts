@@ -334,7 +334,7 @@ export async function createSession(
   return { session: data.session, configOptions: data.configOptions ?? [] }
 }
 
-/** DELETE /api/v1/sessions/:id — 删除会话（物理删除 + 停 agent） */
+/** DELETE /api/v1/sessions/:id — 删除会话（物理删除 DB + 异步清理 agent 侧会话：session/delete → close → 有条件停进程） */
 export async function deleteSession(sessionId: number): Promise<void> {
   await http.delete(`/api/v1/sessions/${sessionId}`)
 }
@@ -344,7 +344,7 @@ export async function renameSession(sessionId: number, title: string): Promise<v
   await http.patch(`/api/v1/sessions/${sessionId}`, { body: { title } })
 }
 
-/** DELETE /api/v1/sessions/:id/draft — 删除草稿会话（切 tab/离开空态时释放旧隐式草稿） */
+/** DELETE /api/v1/sessions/:id/draft — 删除草稿会话（删 DB + 异步协议层清理 delete→close，不停 agent；切 tab/离开空态时释放旧隐式草稿） */
 export async function deleteDraftSession(sessionId: number): Promise<void> {
   await http.delete(`/api/v1/sessions/${sessionId}/draft`)
 }

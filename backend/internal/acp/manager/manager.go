@@ -968,6 +968,22 @@ func (m *Manager) CloseSession(ctx context.Context, agentID, sessionID string) e
 	return conn.CloseSession(ctx, acp.SessionId(sessionID))
 }
 
+// DeleteSession 删除指定 ACP session（agent 侧，ACP session/delete，UNSTABLE 能力）。
+// 用于删除会话时同步清理 agent 侧会话数据；agent 未实现该能力时返回错误，
+// 调用方应降级到 CloseSession（session/close）。
+// 注意：仅作用于 ACP 协议层，不影响 agent 进程本身。
+func (m *Manager) DeleteSession(ctx context.Context, agentID, sessionID string) error {
+	m.mu.Lock()
+	conn, exists := m.agents[agentID]
+	m.mu.Unlock()
+
+	if !exists {
+		return fmt.Errorf("agent '%s' not started", agentID)
+	}
+
+	return conn.DeleteSession(ctx, acp.SessionId(sessionID))
+}
+
 // Close 停止空闲回收器并关闭所有 agent 连接。
 func (m *Manager) Close() error {
 	m.mu.Lock()
@@ -1403,6 +1419,19 @@ func (c *AgentConnection) waitCancelConfirm(sessionID acp.SessionId, done chan s
 	}
 }
 
+// removeSessionLocked 从内存会话表移除指定 session（须持 c.mu 调用）。
+// 同时校正 lastSessionID：被移除的是当前默认会话时，回退到剩余会话中的任意一个。
+func (c *AgentConnection) removeSessionLocked(sessionID acp.SessionId) {
+	delete(c.sessions, sessionID)
+	if c.lastSessionID == sessionID {
+		c.lastSessionID = ""
+		for id := range c.sessions {
+			c.lastSessionID = id
+			break
+		}
+	}
+}
+
 // CloseSession 关闭单个 ACP session（释放 agent 端会话资源）。
 // 用于切 tab 时释放旧隐式草稿会话。ACP CloseSession 是可选能力，
 // agent 不支持时可能报错，调用方按尽力释放处理。
@@ -1418,15 +1447,36 @@ func (c *AgentConnection) CloseSession(ctx context.Context, sessionID acp.Sessio
 	_, err := conn.CloseSession(ctx, acp.CloseSessionRequest{SessionId: sessionID})
 	if err == nil {
 		c.mu.Lock()
-		delete(c.sessions, sessionID)
-		if c.lastSessionID == sessionID {
-			c.lastSessionID = ""
-			for id := range c.sessions {
-				c.lastSessionID = id
-				break
-			}
-		}
+		c.removeSessionLocked(sessionID)
 		c.mu.Unlock()
+	}
+	return err
+}
+
+// DeleteSession 删除 agent 侧 ACP session（ACP session/delete，UNSTABLE 能力）。
+// 语义比 close 更彻底：agent 从其会话列表删除该会话（含持久化会话数据，若 agent 实现了）。
+// 返回 nil 的两种情况：
+//   - 删除成功；
+//   - agent 已不认该 session（unknown session，视为不存在/已被删除），同样清理内存表。
+//
+// 其余错误原样返回（如 method not found，agent 未实现该 unstable 能力），由调用方降级。
+func (c *AgentConnection) DeleteSession(ctx context.Context, sessionID acp.SessionId) error {
+	c.mu.Lock()
+	if !c.started || c.conn == nil {
+		c.mu.Unlock()
+		return fmt.Errorf("agent not started")
+	}
+	conn := c.conn
+	c.mu.Unlock()
+
+	_, err := conn.UnstableDeleteSession(ctx, acp.UnstableDeleteSessionRequest{SessionId: sessionID})
+	if err == nil || IsUnknownSessionErr(err) {
+		// 成功或 agent 侧已无此 session：内存表同步移除，与 agent 侧状态保持一致
+		// （残留条目会让后续针对该 session 的操作误判其仍活跃）。
+		c.mu.Lock()
+		c.removeSessionLocked(sessionID)
+		c.mu.Unlock()
+		return nil
 	}
 	return err
 }

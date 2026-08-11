@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -324,39 +325,137 @@ func (s *SessionService) ListRecentSessions(limit int) ([]model.Session, error) 
 	return s.sessionRepo.ListRecent(limit)
 }
 
-// DeleteSession 删除会话（停止 agent + 删除消息 + 删除会话）
+// agentSessionCleanupTimeout 删除会话后异步清理 agent 侧会话的总超时预算。
+// 清理链路：session/delete → session/close → 兜底停止 agent 进程；
+// 10s 足够协议层两轮请求往返，超时后不再等待、直接进入兜底决策。
+const agentSessionCleanupTimeout = 10 * time.Second
+
+// DeleteSession 删除会话：
+//  1. 同步物理删除 DB 数据（消息 + 会话行）——DB 是权威状态，删除请求快速返回；
+//  2. 异步 best-effort 清理 agent 侧会话数据，链路见 cleanupAgentSession：
+//     ACP session/delete → session/close → 该 agent 已无其它会话时停止其进程。
+//
+// 异步清理失败不影响删除结果（前端删除已完成），仅记录日志。
 func (s *SessionService) DeleteSession(id uint) error {
 	session, err := s.sessionRepo.GetByID(id)
 	if err != nil {
 		return fmt.Errorf("session not found: %w", err)
 	}
 
-	// 停止 agent
-	_ = s.mgr.StopAgent(session.AgentID)
-
-	// 删除消息
+	// 先删 DB：此后该会话在前端不可见，删除语义即完成
 	if err := s.msgRepo.DeleteBySession(id); err != nil {
 		return fmt.Errorf("failed to delete messages: %w", err)
 	}
+	if err := s.sessionRepo.Delete(id); err != nil {
+		return fmt.Errorf("failed to delete session: %w", err)
+	}
 
-	return s.sessionRepo.Delete(id)
+	// 异步清理 agent 侧（不阻塞删除响应）；进程退出时 goroutine 可能被截断，
+	// 属可接受的 best-effort 行为。
+	if session.ACPSessionID != "" {
+		go s.cleanupAgentSession(session)
+	}
+	return nil
+}
+
+// deleteOrCloseAgentSession 执行 ACP 协议层会话清理（供正常删除与草稿清理共用）：
+//  1. 优先 ACP session/delete：最贴合「删除」语义（含 agent 侧已不存在该 session 的情况）；
+//  2. 失败降级 ACP session/close：稳定能力，释放 agent 端会话资源。
+//
+// 返回是否清理成功（成功或 agent 已不认该 session）。不含进程级兜底——
+// 进程回收由调用方按场景决策（正常删除可兜底 kill，草稿释放不 kill）。
+func (s *SessionService) deleteOrCloseAgentSession(ctx context.Context, agentID, acpID string) bool {
+	err := s.mgr.DeleteSession(ctx, agentID, acpID)
+	if err == nil {
+		return true
+	}
+	slog.Debug("cleanup agent session: session/delete failed, downgrade to session/close",
+		"agent", agentID, "session", acpID, "err", err)
+
+	err = s.mgr.CloseSession(ctx, agentID, acpID)
+	if err == nil {
+		return true
+	}
+	slog.Warn("cleanup agent session: session/close failed",
+		"agent", agentID, "session", acpID, "err", err)
+	return false
+}
+
+// cleanupAgentSession 异步清理 agent 侧会话数据（总预算 agentSessionCleanupTimeout）：
+//  1. 协议层清理（delete → close 降级，见 deleteOrCloseAgentSession）；
+//  2. 仍失败 → 兜底：仅当该 agent 在 DB 中已无任何会话时才停止其进程（此时 kill
+//     无副作用）；还有其它会话则保留进程、记 WARN——宁可残留单个会话数据，
+//     也不误伤仍在使用的其它会话（进程级 kill 是地图炮，只能最后用、有条件用）。
+func (s *SessionService) cleanupAgentSession(session *model.Session) {
+	ctx, cancel := context.WithTimeout(context.Background(), agentSessionCleanupTimeout)
+	defer cancel()
+
+	agentID, acpID := session.AgentID, session.ACPSessionID
+	if s.deleteOrCloseAgentSession(ctx, agentID, acpID) {
+		return
+	}
+
+	// 兜底：kill 进程前先确认该 agent 已无其它会话（DB 是剩余会话的权威来源；
+	// 内存会话表可能因惰性恢复而不完整，不能作为判断依据）。
+	// 竞态说明：count 之后、StopAgent 之前若恰好有同 agent 新会话落库，可能误杀
+	// 新进程；但新会话有 DB 记录，进程重启后由 RecoverSession 机制自动恢复，
+	// 且该竞态要求 delete+close 双失败，属可自愈的低频边界，不额外加锁。
+	remain, err := s.sessionRepo.CountByAgent(agentID)
+	if err != nil {
+		slog.Error("cleanup agent session: count remaining sessions failed",
+			"agent", agentID, "err", err)
+		return
+	}
+	if remain > 0 {
+		slog.Warn("cleanup agent session: agent still has sessions, keep process",
+			"agent", agentID, "session", acpID, "remaining", remain)
+		return
+	}
+	if err := s.mgr.StopAgent(agentID); err != nil {
+		slog.Error("cleanup agent session: fallback stop agent failed", "agent", agentID, "err", err)
+	}
+}
+
+// cleanupAgentSessionProtocol 异步协议层清理 agent 侧会话（delete → close 降级），
+// 不停止 agent 进程。供草稿释放等「不回收进程」场景使用。
+func (s *SessionService) cleanupAgentSessionProtocol(session *model.Session) {
+	ctx, cancel := context.WithTimeout(context.Background(), agentSessionCleanupTimeout)
+	defer cancel()
+	s.deleteOrCloseAgentSession(ctx, session.AgentID, session.ACPSessionID)
 }
 
 // DeleteDraftSession 删除草稿会话（切 tab / 离开空态时释放旧隐式草稿）。
-// 与 DeleteSession 区别：草稿无消息，仅关闭 ACP session + 删 DB 记录，不停 agent 进程
-// （agent 进程可能仍在服务其他会话/草稿）。
-func (s *SessionService) DeleteDraftSession(ctx context.Context, id uint) error {
+// 与 DeleteSession 区别：草稿无消息，且释放是高频操作（每次切 tab 触发），
+// 故仅删 DB 记录 + 异步协议层清理（session/delete → close 降级），
+// 不停止 agent 进程——来回切 tab 不应导致 agent 反复重启；
+// 进程保留由空闲回收器（idleTimeout 扫描）统一管理。
+func (s *SessionService) DeleteDraftSession(id uint) error {
 	session, err := s.sessionRepo.GetByID(id)
 	if err != nil {
-		return fmt.Errorf("session not found: %w", err)
+		return fmt.Errorf("%w: %v", ErrSessionNotFound, err)
 	}
 
-	// 尽力关闭 ACP session（agent 不支持 close 能力时忽略错误）
+	// 防呆：/draft 路径只接受草稿会话。非草稿必须走 DeleteSession
+	//（删消息 + 有条件停进程）；若误用此路径会跳过消息删除，留下孤儿消息行。
+	if !session.IsDraft {
+		return fmt.Errorf("%w: session %d is not a draft", ErrInvalidArgument, id)
+	}
+
+	// 草稿正常无消息，防御性删除防历史脏数据留孤儿行
+	if err := s.msgRepo.DeleteBySession(id); err != nil {
+		return fmt.Errorf("failed to delete draft messages: %w", err)
+	}
+
+	if err := s.sessionRepo.Delete(id); err != nil {
+		return fmt.Errorf("failed to delete draft session: %w", err)
+	}
+
+	// 异步协议层清理（不阻塞切 tab 响应）；进程退出时 goroutine 可能被截断，
+	// 属可接受的 best-effort 行为。
 	if session.ACPSessionID != "" {
-		_ = s.mgr.CloseSession(ctx, session.AgentID, session.ACPSessionID)
+		go s.cleanupAgentSessionProtocol(session)
 	}
-
-	return s.sessionRepo.Delete(id)
+	return nil
 }
 
 // SendMessage 发送消息（保存用户消息 + 发送到 ACP + 保存助手回复）

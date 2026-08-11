@@ -310,10 +310,22 @@ func (h *SessionHandler) DeleteDraftSession(c *gin.Context) {
 		return
 	}
 
-	if err := h.svc.DeleteDraftSession(c.Request.Context(), uint(id)); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": gin.H{"code": "delete_draft_failed", "message": err.Error()},
-		})
+	if err := h.svc.DeleteDraftSession(uint(id)); err != nil {
+		switch {
+		case errors.Is(err, service.ErrSessionNotFound):
+			c.JSON(http.StatusNotFound, gin.H{
+				"error": gin.H{"code": "session_not_found", "message": err.Error()},
+			})
+		case errors.Is(err, service.ErrInvalidArgument):
+			// 目标不是草稿：必须走正常删除路径，400
+			c.JSON(http.StatusBadRequest, gin.H{
+				"error": gin.H{"code": "not_a_draft", "message": err.Error()},
+			})
+		default:
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"error": gin.H{"code": "delete_draft_failed", "message": err.Error()},
+			})
+		}
 		return
 	}
 

@@ -121,6 +121,15 @@ func (r *SessionRepository) GetByID(id uint) (*model.Session, error) {
 	return &session, nil
 }
 
+// CountByAgent 统计指定 agent 的未删除会话数（gorm 默认排除软删行）。
+// 用于删除会话后的兜底决策：若该 agent 已无任何会话，可安全停止其进程；
+// 否则保留进程，避免误伤仍在使用中的其它会话。
+func (r *SessionRepository) CountByAgent(agentID string) (int64, error) {
+	var count int64
+	err := r.db.Model(&model.Session{}).Where("agent_id = ?", agentID).Count(&count).Error
+	return count, err
+}
+
 // ListByWorkspace 列出工作目录下的所有会话（排除草稿：草稿不进项目会话列表）
 func (r *SessionRepository) ListByWorkspace(workspaceID uint) ([]model.Session, error) {
 	var sessions []model.Session

@@ -802,7 +802,7 @@ export const useSessionStore = defineStore('session', () => {
 
   /**
    * 删除草稿会话（切 tab / 离开空态时释放旧隐式草稿）。
-   * 调后端 DELETE /sessions/:id/draft（关闭 ACP session + 删 DB 记录，不停 agent）。
+   * 调后端 DELETE /sessions/:id/draft（异步协议层清理 session/delete→close，不停 agent）。
    */
   async function removeDraftSession(sessionId: number) {
     await apiDeleteDraftSession(sessionId)

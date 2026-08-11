@@ -178,7 +178,7 @@ curl -s -X POST localhost:8680/api/v1/sessions/1/config \
 
 | 项 | 文件 | 动作 |
 |----|------|------|
-| DeleteSession 勿 StopAgent | `service.go` | 仅软删会话/消息策略按产品：软删 session 即可；可选不删 messages |
+| DeleteSession 勿 StopAgent | `service.go` | ~~仅软删会话/消息策略按产品：软删 session 即可；可选不删 messages~~ **已实施（2026-08-11）**：删 DB 同步、异步 best-effort 清理 agent 侧会话：优先 `session/delete` → 降级 `session/close` → 兜底仅在该 agent 无其它会话时 `StopAgent`（10s 总预算） |
 | ListAgents 响应 | `manager.go` / `chat.go` | 弱化或移除误导 `sessionId`；保留 agentId/name/running |
 | 创建会话失败回滚 | `service.go` | 勿在「仅创建失败」时 Stop 整个 agent |
 
