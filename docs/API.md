@@ -479,6 +479,92 @@ ws://localhost:8680/api/v1/ws
 
 ---
 
+6## 5.1 Web TTY 通信
+
+### 页面与连接
+
+前端页面：
+
+```text
+/tty?workspaceId={id}
+```
+
+TTY WebSocket：
+
+```text
+GET /api/v1/tty/ws?workspaceId={id}
+```
+
+TTY 连接复用与 ACP WebSocket 相同的认证子协议：
+
+```text
+Sec-WebSocket-Protocol: zacp-auth.<token>
+```
+
+每个前端终端 Tab 对应一条独立连接。TTY 是临时会话，关闭 Tab、离开页面、刷新页面或连接断开都会终止对应 shell/PTY；终端输出不落库。
+
+### 客户端 → 服务端
+
+普通输入、粘贴和鼠标报告使用 Binary 帧，服务端原样写入 PTY：
+
+```text
+Binary: raw PTY input bytes
+```
+
+调整尺寸使用 Text JSON：
+
+```json
+{
+  "type": "resize",
+  "cols": 120,
+  "rows": 32
+}
+```
+
+限制：单个 Binary 输入帧最大 1 MiB；`cols` 范围为 1–1000，`rows` 范围为 1–500。
+
+### 服务端 → 客户端
+
+PTY 输出使用 Binary 帧，前端直接交给 xterm.js：
+
+```text
+Binary: raw PTY output bytes
+```
+
+控制消息使用 Text JSON。
+
+终端就绪：
+
+```json
+{
+  "type": "ready",
+  "terminalId": "短期终端 ID"
+}
+```
+
+终端退出：
+
+```json
+{
+  "type": "exit",
+  "code": 0
+}
+```
+
+终端错误：
+
+```json
+{
+  "type": "error",
+  "code": "invalid_resize",
+  "message": "invalid terminal size"
+}
+```
+
+服务端使用 WebSocket Ping 保活，不定义 TTY 业务层 ping/pong。输出采用有界缓冲，不能静默丢弃 PTY 数据；单进程最多 32 个活动终端，单页面最多 6 个 Tab。
+
+---
+
 ## 6. 数据模型
 
 ### Workspace

@@ -9,6 +9,7 @@ import (
 	"github.com/helloxz/zacp/internal/api/handlers"
 	"github.com/helloxz/zacp/internal/api/middleware"
 	"github.com/helloxz/zacp/internal/auth"
+	"github.com/helloxz/zacp/internal/tty"
 	"github.com/helloxz/zacp/internal/web"
 	"github.com/helloxz/zacp/internal/ws"
 )
@@ -25,6 +26,7 @@ func New(
 	authHandler *handlers.AuthHandler,
 	wsHandler *ws.Handler,
 	eventBridge *ws.EventBridge,
+	ttyHandler *tty.Handler,
 	authSvc *auth.Service,
 ) *gin.Engine {
 	r := gin.Default()
@@ -47,6 +49,11 @@ func New(
 		// 故放在认证组之外。
 		v1.GET("/ws", func(c *gin.Context) {
 			wsHandler.ServeHTTP(c.Writer, c.Request, eventBridge)
+		})
+
+		// TTY 通道使用与 ACP 相同的 WebSocket 子协议认证，但数据协议和生命周期完全独立。
+		v1.GET("/tty/ws", func(c *gin.Context) {
+			ttyHandler.ServeHTTP(c.Writer, c.Request)
 		})
 
 		// ---- 需认证端点（认证未启用时中间件直接放行，保持默认无需登录） ----

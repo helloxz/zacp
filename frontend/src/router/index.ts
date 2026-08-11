@@ -33,6 +33,12 @@ const router = createRouter({
       component: () => import('@/pages/ShellPage.vue'),
     },
     {
+      // 独立临时终端页面：query workspaceId 指定初始工作目录。
+      path: '/tty',
+      name: 'tty',
+      component: () => import('@/pages/TtyPage.vue'),
+    },
+    {
       // 后端 Session id 为数字（uint）
       path: '/sessions/:sessionId(\\d+)',
       name: 'session',

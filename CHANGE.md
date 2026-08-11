@@ -2,6 +2,9 @@
 
 * 修复：前端对话完毕后会滚动到用户消息的问题
 
+* 新增：Web TTY（go-pty + xterm.js），支持工作区启动目录和多 Tab 临时终端
+* 新增：Linux、macOS、Windows 跨平台 PTY WebSocket 通道
+
 * 修复：未开启认证时对话报错
 * 优化：文件上传
 

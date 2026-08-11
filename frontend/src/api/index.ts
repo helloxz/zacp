@@ -84,6 +84,14 @@ export async function fetchWorkspaces(): Promise<Workspace[]> {
   return data.workspaces
 }
 
+/** GET /api/v1/workspaces/:id — 获取 TTY 页面使用的单个工作区。 */
+export async function fetchWorkspace(workspaceId: number): Promise<Workspace> {
+  const data = await http.get<{ workspace: Workspace }>(
+    `/api/v1/workspaces/${encodeURIComponent(String(workspaceId))}`,
+  )
+  return data.workspace
+}
+
 /** POST /api/v1/workspaces — 创建工作区（校验路径存在；同路径曾被移除时整体恢复） */
 export async function createWorkspace(path: string): Promise<Workspace> {
   const data = await http.post<{ workspace: Workspace }>('/api/v1/workspaces', {

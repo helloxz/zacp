@@ -37,6 +37,7 @@ Zacp是一个基于 **ACP（Agent Client Protocol）** 协议的多 Agent Web �
 - **文件浏览器** ：支持文件上传、编辑、删除、重命名等操作
 - **Git面板** ：支持查看 Git 状态
 - **主题模式** ：支持深色模式与浅色模式切换
+- **Web TTY**：通过 `/tty?workspaceId={id}` 在项目目录下启动临时终端，支持 xterm.js、多 Tab、深色/浅色主题和 Linux/macOS/Windows。
 
 ## TODO
 

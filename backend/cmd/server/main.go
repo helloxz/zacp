@@ -22,6 +22,7 @@ import (
 	"github.com/helloxz/zacp/internal/config"
 	"github.com/helloxz/zacp/internal/service"
 	"github.com/helloxz/zacp/internal/store"
+	"github.com/helloxz/zacp/internal/tty"
 	"github.com/helloxz/zacp/internal/version"
 	"github.com/helloxz/zacp/internal/web"
 	"github.com/helloxz/zacp/internal/ws"
@@ -214,6 +215,10 @@ Examples:
 	fileSvc := service.NewFileService(workspaceRepo, cfg.Session.DefaultCwd)
 	gitSvc := service.NewGitService(workspaceRepo)
 	toolSvc := service.NewToolService(sessionRepo)
+	ttySvc := service.NewTTYService(workspaceRepo)
+	ttyManager := tty.NewManager(log, 32)
+	ttyHandler := tty.NewHandler(ttyManager, ttySvc, log, authSvc)
+	defer ttyManager.CloseAll()
 
 	// 创建 Handler
 	workspaceHandler := handlers.NewWorkspaceHandler(workspaceSvc)
@@ -234,7 +239,7 @@ Examples:
 		gin.SetMode(cfg.Server.Mode)
 	}
 
-	engine := router.New(workspaceHandler, sessionHandler, chatHandler, fileHandler, gitHandler, agentManageHandler, toolHandler, authHandler, wsHandler, eventBridge, authSvc)
+	engine := router.New(workspaceHandler, sessionHandler, chatHandler, fileHandler, gitHandler, agentManageHandler, toolHandler, authHandler, wsHandler, eventBridge, ttyHandler, authSvc)
 
 	// Graceful shutdown on signal.
 	go func() {
@@ -244,6 +249,7 @@ Examples:
 		log.Info("shutting down", "signal", sig.String())
 		done := make(chan struct{})
 		go func() {
+			ttyManager.CloseAll()
 			wsHandler.CloseAll()
 			_ = mgr.Close()
 			close(done)

@@ -4,19 +4,11 @@ import (
 	"context"
 	"log/slog"
 	"net/http"
-	"strings"
 
 	"github.com/coder/websocket"
 
 	"github.com/helloxz/zacp/internal/auth"
 )
-
-// wsAuthProtocolPrefix WebSocket 子协议前缀，登录 token 经它携带：
-// 浏览器 WebSocket 无法设置自定义 header（Authorization 带不过去），
-// 而把 token 放进 ?token= 会进访问日志——子协议由浏览器只在握手时发送、
-// 不回显到 URL，是折中方案。格式："zacp-auth.<token>"（token 为 hex，
-// 满足 RFC 7230 tchar 子协议字符集）。
-const wsAuthProtocolPrefix = "zacp-auth."
 
 // Handler WebSocket  HTTP 处理器
 type Handler struct {
@@ -35,39 +27,9 @@ func NewHandler(hub *Hub, log *slog.Logger, authSvc *auth.Service) *Handler {
 	}
 }
 
-// firstSubprotocol 从握手请求取首个客户端子协议（RFC 6455 只要求服务端回显一个；
-// 客户端可能一次请求多个，逗号分隔，前端固定只发一个，此函数兜底第三方/手动客户端）。
-func firstSubprotocol(r *http.Request) string {
-	proto := r.Header.Get("Sec-WebSocket-Protocol")
-	if i := strings.IndexByte(proto, ','); i >= 0 {
-		proto = proto[:i]
-	}
-	return proto
-}
-
-// authSubprotocol 从握手请求提取并校验登录 token（子协议形式 "zacp-auth.<token>"）。
-// 返回（token 校验通过后的完整子协议值, 是否放行）：
-//   - 认证未启用：放行（保持默认无需登录）；
-//   - 认证启用且 token 有效：放行，同时把客户端协议值回传（握手必须回显客户端协议，
-//     否则浏览器按 RFC 6455 判定握手失败）；
-//   - 其余：拒绝。
-func (h *Handler) authSubprotocol(r *http.Request) (string, bool) {
-	if h.authSvc == nil || !h.authSvc.Enabled() {
-		// 认证未启用：不校验 token，但若客户端带了子协议必须回显——RFC 6455 §4.2.2
-		// 要求服务端要么回显一个子协议、要么拒绝握手；101 却不回显会被浏览器判定
-		// 握手失败（如 localStorage 残留旧 token、认证随后被关闭的场景）。
-		return firstSubprotocol(r), true
-	}
-	proto := firstSubprotocol(r)
-	if proto == "" || !h.authSvc.ValidateMain(strings.TrimPrefix(proto, wsAuthProtocolPrefix)) {
-		return "", false
-	}
-	return proto, true
-}
-
 // ServeHTTP 处理 WebSocket 升级请求
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request, bridge *EventBridge) {
-	proto, ok := h.authSubprotocol(r)
+	proto, ok := AuthSubprotocol(r, h.authSvc)
 	if !ok {
 		h.log.Warn("websocket rejected: invalid auth token", "remote", r.RemoteAddr)
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
@@ -100,7 +62,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request, bridge *Even
 // ServeHTTPWithSession 处理带会话绑定的 WebSocket 升级请求
 func (h *Handler) ServeHTTPWithSession(sessionID, agentID string, bridge *EventBridge) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		proto, ok := h.authSubprotocol(r)
+		proto, ok := AuthSubprotocol(r, h.authSvc)
 		if !ok {
 			h.log.Warn("websocket rejected: invalid auth token", "remote", r.RemoteAddr)
 			http.Error(w, "unauthorized", http.StatusUnauthorized)

@@ -1,4 +1,5 @@
 @import 'tailwindcss';
+@import '@xterm/xterm/css/xterm.css';
 
 /* 让 dark: variant 跟随 .dark class 切换（默认跟随系统 prefers-color-scheme，改为 class 策略） */
 @custom-variant dark (&:where(.dark, .dark *));
@@ -61,13 +62,13 @@ html.dark {
 
 /*
  * 滚动条统一细化 + 随主题切换：
- * - WebKit（Chrome/Edge/Safari）：8px 宽、thumb 圆角并内缩 2px，hover 提亮；
+ * - WebKit（Chrome/Edge/Safari）：6px 宽，thumb 只保留 1px 透明内缩；
  * - Firefox：scrollbar-width: thin + scrollbar-color（thumb / track）。
- * 色值用 token，浅暗两套自动切换，避免与页面背景脱离的「白灰粗条」。
+ * 所有页面共用同一套细滚动条，TTY 的 xterm viewport 也单独对齐。
  */
 ::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
+  width: 6px;
+  height: 6px;
 }
 ::-webkit-scrollbar-track {
   background: transparent;
@@ -75,8 +76,7 @@ html.dark {
 ::-webkit-scrollbar-thumb {
   background-color: var(--color-scrollbar-thumb);
   border-radius: 9999px;
-  /* 透明 border + content-box 让 thumb 视觉上比轨道细 4px，更精致 */
-  border: 2px solid transparent;
+  border: 1px solid transparent;
   background-clip: content-box;
 }
 ::-webkit-scrollbar-thumb:hover {
@@ -90,6 +90,53 @@ html.dark {
   scrollbar-color: var(--color-scrollbar-thumb) transparent;
 }
 
+/* xterm 使用独立 viewport，显式覆盖其原生滚动条以保持与页面一致。 */
+.tty-page .xterm-viewport {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-scrollbar-thumb) transparent;
+}
+.tty-page .xterm-viewport::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+.tty-page .xterm-viewport::-webkit-scrollbar-thumb {
+  border: 1px solid transparent;
+  border-radius: 9999px;
+  background-color: var(--color-scrollbar-thumb);
+  background-clip: content-box;
+}
+.tty-page .xterm-viewport::-webkit-scrollbar-thumb:hover {
+  background-color: var(--color-scrollbar-thumb-hover);
+}
+
+/* xterm.js 使用自绘 scrollbar，不走上面的原生 ::-webkit-scrollbar 规则。 */
+.tty-page .xterm .xterm-scrollable-element > .scrollbar.vertical {
+  width: 6px !important;
+}
+.tty-page .xterm .xterm-scrollable-element > .scrollbar.horizontal {
+  height: 6px !important;
+}
+.tty-page .xterm .xterm-scrollable-element > .scrollbar > .slider {
+  background: var(--color-scrollbar-thumb) !important;
+  border-radius: 9999px;
+}
+.tty-page .xterm .xterm-scrollable-element > .scrollbar.vertical > .slider {
+  left: 0 !important;
+  width: 100% !important;
+}
+.tty-page .xterm .xterm-scrollable-element > .scrollbar.horizontal > .slider {
+  top: 0 !important;
+  height: 100% !important;
+}
+.tty-page .xterm .xterm-scrollable-element > .scrollbar > .slider:hover {
+  background: var(--color-scrollbar-thumb-hover) !important;
+}
+
+
+.tty-page .xterm,
+.tty-page .xterm-viewport {
+  background-color: var(--color-surface) !important;
+}
 /*
  * 全局基础样式：页面骨架用 Tailwind；组件外观跟 Naive UI。
  * 避免在这里覆盖 Naive 内部大量样式。

@@ -24,6 +24,16 @@ idle_timeout = "30m"
 # 默认 data/zacp.db，即 ~/.zacp/data/zacp.db
 path = "data/zacp.db"
 
+# 单用户账号认证（可选）
+# 默认不写该段 = 无需登录即可访问（password_hash 为空 = 认证关闭，老用户零影响）。
+# 推荐在设置页「用户设置」中设置用户名与密码（自动写回本段，热生效无需重启）；
+# 也可手动编辑：密码哈希格式 "sha256$<hex>"（sha256("zacp"+密码) 的 hex），
+# 可用命令生成：python3 -c "import hashlib;print('sha256$'+hashlib.sha256(b'zacp'+input().encode()).hexdigest())"
+# 忘记密码时：删除这两行（或置空）即恢复免登录，再重新设置即可。
+# [auth]
+# username = ""
+# password_hash = ""
+
 # 多 Agent 配置：每个二进制/ACP 入口一条
 # 前端可查看所有 enabled 的 agent 并切换
 
