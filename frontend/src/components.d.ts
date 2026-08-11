@@ -21,6 +21,7 @@ declare module 'vue' {
     FileExplorer: typeof import('./components/files/FileExplorer.vue')['default']
     FilePanel: typeof import('./components/files/FilePanel.vue')['default']
     GitPanel: typeof import('./components/files/GitPanel.vue')['default']
+    HeaderIconButton: typeof import('./components/chat/HeaderIconButton.vue')['default']
     LocaleSwitch: typeof import('./components/LocaleSwitch.vue')['default']
     MessageItem: typeof import('./components/chat/MessageItem.vue')['default']
     MessageList: typeof import('./components/chat/MessageList.vue')['default']

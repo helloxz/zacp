@@ -2,13 +2,14 @@
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
-import { NIcon, useMessage, type DropdownOption } from 'naive-ui'
+import { useMessage, type DropdownOption } from 'naive-ui'
 import {
-  CaretBackOutline,
-  CaretForwardOutline,
+  ChevronBackOutline,
+  ChevronForwardOutline,
   OpenOutline,
   TerminalOutline,
 } from '@vicons/ionicons5'
+import HeaderIconButton from '@/components/chat/HeaderIconButton.vue'
 import { fetchExternalTools, openSessionTool } from '@/api'
 import { useAgentStore } from '@/stores/agent'
 import { useSessionStore } from '@/stores/session'
@@ -85,23 +86,6 @@ function openWebTTY() {
   const opened = window.open(target.href, '_blank', 'noopener,noreferrer')
   if (!opened) message.warning(t('chat.ttyPopupBlocked'))
 }
-
-/** 右侧面板折叠按钮主题：纯灰图标、无 hover 背景（不用 quaternary/primary）；暗色下换亮一档 */
-const toggleBtnTheme = computed(() =>
-  appStore.isDark
-    ? {
-        textColor: '#64748b', // slate-500
-        textColorHover: '#94a3b8', // slate-400
-        textColorPressed: '#94a3b8',
-        textColorFocus: '#94a3b8',
-      }
-    : {
-        textColor: '#94a3b8', // slate-400：收起态
-        textColorHover: '#475569', // slate-600：hover 仅加深灰色，不出现背景
-        textColorPressed: '#475569',
-        textColorFocus: '#475569',
-      },
-)
 
 /** 右侧文件面板折叠状态（状态在 AppShell，这里只展示按钮并转发切换事件） */
 defineProps<{ rightOpen: boolean }>()
@@ -251,19 +235,9 @@ function onNewProjectFromHero() {
           {{ current.title || t('chat.newChatTitle') }}
         </span>
         <!-- Web TTY：使用当前会话所属工作区，在新浏览器 Tab 打开临时终端。 -->
-        <n-button
-          text
-          circle
-          size="small"
-          :theme-overrides="toggleBtnTheme"
-          :title="t('chat.openWebTTY')"
-          :aria-label="t('chat.openWebTTY')"
-          @click="openWebTTY"
-        >
-          <template #icon>
-            <n-icon><TerminalOutline /></n-icon>
-          </template>
-        </n-button>
+        <HeaderIconButton :title="t('chat.openWebTTY')" @click="openWebTTY">
+          <TerminalOutline />
+        </HeaderIconButton>
         <!-- 本地工具：后端仅返回当前平台已安装的白名单工具；悬停展开，点击直接启动。 -->
         <n-dropdown
           v-if="externalToolsLoaded && externalTools.length"
@@ -272,36 +246,18 @@ function onNewProjectFromHero() {
           :options="externalToolOptions"
           @select="onExternalToolSelect"
         >
-          <n-button
-            text
-            circle
-            size="small"
-            :theme-overrides="toggleBtnTheme"
+          <HeaderIconButton
             :title="t('chat.openTool')"
-            :aria-label="t('chat.openTool')"
             :disabled="externalToolOpening !== null"
           >
-            <template #icon>
-              <n-icon><OpenOutline /></n-icon>
-            </template>
-          </n-button>
+            <OpenOutline />
+          </HeaderIconButton>
         </n-dropdown>
-        <!-- 右侧面板（信息|文件|Git）展开/收起：箭头随状态指向收起方向，灰色系无 hover 背景 -->
-        <n-button
-          text
-          circle
-          size="small"
-          :theme-overrides="toggleBtnTheme"
-          title="侧边面板"
-          @click="emit('toggle-right-panel')"
-        >
-          <template #icon>
-            <n-icon>
-              <CaretForwardOutline v-if="rightOpen" />
-              <CaretBackOutline v-else />
-            </n-icon>
-          </template>
-        </n-button>
+        <!-- 右侧面板（信息|文件|Git）展开/收起：箭头随状态指向收起方向，图标色随壳 hover 加深 -->
+        <HeaderIconButton title="侧边面板" @click="emit('toggle-right-panel')">
+          <ChevronForwardOutline v-if="rightOpen" />
+          <ChevronBackOutline v-else />
+        </HeaderIconButton>
       </div>
 
       <div class="relative min-h-0 flex-1">
