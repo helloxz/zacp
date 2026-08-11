@@ -4,9 +4,10 @@ import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 import { NIcon, useMessage, type DropdownOption } from 'naive-ui'
 import {
-	CaretBackOutline,
-	CaretForwardOutline,
-	TerminalOutline,
+  CaretBackOutline,
+  CaretForwardOutline,
+  OpenOutline,
+  TerminalOutline,
 } from '@vicons/ionicons5'
 import { fetchExternalTools, openSessionTool } from '@/api'
 import { useAgentStore } from '@/stores/agent'
@@ -71,6 +72,18 @@ async function onExternalToolSelect(key: string | number) {
 	} finally {
 		externalToolOpening.value = null
 	}
+}
+
+/** 在新浏览器 Tab 打开当前会话工作区的 Web TTY；窗口被拦截时明确提示用户。 */
+function openWebTTY() {
+  const workspaceId = current.value?.workspaceId
+  if (!workspaceId) {
+    message.error(t('chat.ttyWorkspaceUnavailable'))
+    return
+  }
+  const target = router.resolve({ name: 'tty', query: { workspaceId: String(workspaceId) } })
+  const opened = window.open(target.href, '_blank', 'noopener,noreferrer')
+  if (!opened) message.warning(t('chat.ttyPopupBlocked'))
 }
 
 /** 右侧面板折叠按钮主题：纯灰图标、无 hover 背景（不用 quaternary/primary）；暗色下换亮一档 */
@@ -237,6 +250,20 @@ function onNewProjectFromHero() {
         <span class="min-w-0 flex-1 truncate text-sm font-medium text-ink">
           {{ current.title || t('chat.newChatTitle') }}
         </span>
+        <!-- Web TTY：使用当前会话所属工作区，在新浏览器 Tab 打开临时终端。 -->
+        <n-button
+          text
+          circle
+          size="small"
+          :theme-overrides="toggleBtnTheme"
+          :title="t('chat.openWebTTY')"
+          :aria-label="t('chat.openWebTTY')"
+          @click="openWebTTY"
+        >
+          <template #icon>
+            <n-icon><TerminalOutline /></n-icon>
+          </template>
+        </n-button>
         <!-- 本地工具：后端仅返回当前平台已安装的白名单工具；悬停展开，点击直接启动。 -->
         <n-dropdown
           v-if="externalToolsLoaded && externalTools.length"
@@ -251,10 +278,11 @@ function onNewProjectFromHero() {
             size="small"
             :theme-overrides="toggleBtnTheme"
             :title="t('chat.openTool')"
+            :aria-label="t('chat.openTool')"
             :disabled="externalToolOpening !== null"
           >
             <template #icon>
-              <n-icon><TerminalOutline /></n-icon>
+              <n-icon><OpenOutline /></n-icon>
             </template>
           </n-button>
         </n-dropdown>
