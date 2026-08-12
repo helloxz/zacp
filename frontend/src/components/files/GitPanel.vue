@@ -403,7 +403,7 @@ onMounted(() => {
             v-model:value="commitMsg"
             type="textarea"
             size="small"
-            :autosize="{ minRows: 1, maxRows: 3 }"
+            :autosize="{ minRows: 2, maxRows: 3 }"
             placeholder="提交信息（必填）"
             :disabled="committing || pushing"
           />
