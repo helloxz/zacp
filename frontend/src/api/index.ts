@@ -32,6 +32,9 @@ import type {
   FileEntry,
   AgentConfigContent,
   AgentConfigFile,
+  GitCommitRequest,
+  GitCommitResult,
+  GitPushResult,
   GitStatus,
   ManageAgent,
   MessagePage,
@@ -169,6 +172,26 @@ export async function fetchFiles(
 /** GET /api/v1/workspaces/:id/git/status — 按需读取当前 workspace 的 Git 状态 */
 export async function fetchGitStatus(workspaceId: number): Promise<GitStatus> {
   return http.get<GitStatus>(`/api/v1/workspaces/${workspaceId}/git/status`)
+}
+
+/**
+ * POST /api/v1/workspaces/:id/git/commit — 提交选中的文件（可选 push）。
+ * push 失败时后端返回 200 + { committed, pushError }，不抛错，前端据此展示
+ * 「已提交但推送失败」并提供重试按钮。
+ */
+export async function commitGitChanges(
+  workspaceId: number,
+  payload: GitCommitRequest,
+): Promise<GitCommitResult> {
+  return http.post<GitCommitResult>(
+    `/api/v1/workspaces/${workspaceId}/git/commit`,
+    { body: payload },
+  )
+}
+
+/** POST /api/v1/workspaces/:id/git/push — 重试推送当前分支（commit 成功但 push 失败后） */
+export async function pushGit(workspaceId: number): Promise<GitPushResult> {
+  return http.post<GitPushResult>(`/api/v1/workspaces/${workspaceId}/git/push`)
 }
 
 /** PATCH /api/v1/workspaces/:id/files/rename — 在原目录内重命名文件或目录 */

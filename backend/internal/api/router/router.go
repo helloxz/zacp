@@ -92,6 +92,9 @@ func New(
 			authed.GET("/workspaces/:id/files/content", fileHandler.ReadFileContent)
 			authed.PUT("/workspaces/:id/files/content", fileHandler.WriteFileContent)
 			authed.GET("/workspaces/:id/git/status", gitHandler.Status)
+			// 提交选中文件（可选 push）；push 失败返回 200 + pushError，前端可经 /git/push 重试
+			authed.POST("/workspaces/:id/git/commit", gitHandler.Commit)
+			authed.POST("/workspaces/:id/git/push", gitHandler.Push)
 
 			// 目录浏览（新建项目弹窗用）：列出任意绝对路径下的子文件夹，与 workspace 无关
 			authed.GET("/fs/directories", fileHandler.ListDirectories)

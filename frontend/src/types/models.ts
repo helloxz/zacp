@@ -126,6 +126,30 @@ export interface GitChange {
   worktreeStatus: string
 }
 
+/** POST /api/v1/workspaces/:id/git/commit 请求体：仅提交选中的文件（可选 push） */
+export interface GitCommitRequest {
+  message: string
+  files: string[]
+  push: boolean
+}
+
+/**
+ * POST /api/v1/workspaces/:id/git/commit 结果。
+ * committed=true 表示 commit 已成功；push=true 且推送失败时 pushed=false 并带 pushError，
+ * 前端展示「已提交但推送失败」并可调用 /git/push 重试。
+ */
+export interface GitCommitResult {
+  committed: boolean
+  commitHash?: string
+  pushed: boolean
+  pushError?: string
+}
+
+/** POST /api/v1/workspaces/:id/git/push 结果（重试推送） */
+export interface GitPushResult {
+  pushed: boolean
+}
+
 /**
  * 目录浏览条目（GET /api/v1/fs/directories → `{ path, parent, entries }`，仅文件夹）。
  * path 为绝对路径，可直接作为「创建项目」路径或继续浏览的入参。

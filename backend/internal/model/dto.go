@@ -106,6 +106,30 @@ type GitChangeDTO struct {
 	WorktreeStatus string `json:"worktreeStatus"`
 }
 
+// GitCommitRequestDTO POST /api/v1/workspaces/:id/git/commit 请求体。
+// Files 为相对 workspace 的路径列表（与 git/status 返回的 Path 一致），仅提交这些文件；
+// Push=true 时在 commit 成功后立即 push（push 失败不使整体请求失败，见 GitCommitResultDTO）。
+type GitCommitRequestDTO struct {
+	Message string   `json:"message"`
+	Files   []string `json:"files"`
+	Push    bool     `json:"push"`
+}
+
+// GitCommitResultDTO commit（可选 push）结果。
+// Committed=true 表示 commit 已成功；Push=true 且推送失败时，Pushed=false 并带 PushError 摘要，
+// 前端展示「已提交但推送失败」并可调用 /git/push 重试。
+type GitCommitResultDTO struct {
+	Committed  bool   `json:"committed"`
+	CommitHash string `json:"commitHash,omitempty"`
+	Pushed     bool   `json:"pushed"`
+	PushError  string `json:"pushError,omitempty"`
+}
+
+// GitPushResultDTO POST /api/v1/workspaces/:id/git/push 结果（重试推送当前分支全部已提交内容）。
+type GitPushResultDTO struct {
+	Pushed bool `json:"pushed"`
+}
+
 // DirectoryEntryDTO 目录浏览条目（新建项目弹窗用，仅文件夹）。
 // Path 为子文件夹的绝对路径，前端可直接作为下一步浏览 / 创建项目路径。
 type DirectoryEntryDTO struct {

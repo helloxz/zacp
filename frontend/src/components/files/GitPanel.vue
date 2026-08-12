@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { RefreshOutline } from '@vicons/ionicons5'
-import { fetchGitStatus } from '@/api'
-import type { GitChange, GitStatus } from '@/types/models'
+import { commitGitChanges, fetchGitStatus, pushGit } from '@/api'
+import type { GitChange, GitCommitResult, GitStatus } from '@/types/models'
 import { useSessionStore } from '@/stores/session'
 import { useAppStore } from '@/stores/app'
 
@@ -23,6 +23,27 @@ const status = ref<GitStatus | null>(null)
 const loading = ref(false)
 const error = ref<string | null>(null)
 let requestSerial = 0
+
+// ---- 文件选择（提交目标） ----
+// reactive Set：Vue 3 原生支持集合型响应式，增删无需整体替换。
+const selected = reactive(new Set<string>())
+const message = ref('')
+const committing = ref(false)
+const pushing = ref(false)
+const actionError = ref<string | null>(null)
+const commitResult = ref<GitCommitResult | null>(null)
+
+/** 可选中的文件（冲突文件禁止 add：git add 会以工作区内容强制标记 resolved）。 */
+const selectableFiles = computed(() => status.value?.files.filter((f) => f.status !== 'conflicted') ?? [])
+
+/** 可见可选文件是否已全部选中（决定「全选/取消全选」文案与行为）。 */
+const allSelected = computed(
+  () => selectableFiles.value.length > 0 && selectableFiles.value.every((f) => selected.has(f.path)),
+)
+
+const canCommit = computed(
+  () => selected.size > 0 && message.value.trim() !== '' && !committing.value && !pushing.value,
+)
 
 const statusLabels: Record<GitChange['status'], string> = {
   modified: '修改',
@@ -58,6 +79,11 @@ async function loadStatus() {
     const next = await fetchGitStatus(id)
     if (serial === requestSerial && id === workspaceId.value) {
       status.value = next
+      // 刷新后丢弃已不在列表中的勾选（如已提交/已删除的文件），避免提交失效路径
+      const known = new Set(next.files.map((f) => f.path))
+      for (const p of [...selected]) {
+        if (!known.has(p)) selected.delete(p)
+      }
     }
   } catch (err) {
     if (serial === requestSerial && id === workspaceId.value) {
@@ -65,6 +91,73 @@ async function loadStatus() {
     }
   } finally {
     if (serial === requestSerial) loading.value = false
+  }
+}
+
+function isSelected(path: string): boolean {
+  return selected.has(path)
+}
+
+function setSelected(path: string, checked: boolean) {
+  if (checked) selected.add(path)
+  else selected.delete(path)
+}
+
+/** 行点击 / checkbox 切换选中；冲突文件不可选。 */
+function toggle(path: string) {
+  if (status.value?.files.find((f) => f.path === path)?.status === 'conflicted') return
+  setSelected(path, !selected.has(path))
+}
+
+/** 全选 / 取消全选（仅作用于可见可选文件；truncated 时超出部分无法覆盖）。 */
+function toggleAll() {
+  if (allSelected.value) {
+    selected.clear()
+  } else {
+    for (const f of selectableFiles.value) selected.add(f.path)
+  }
+}
+
+/** 提交选中文件；push=true 时提交并推送。 */
+async function submit(push: boolean) {
+  const id = workspaceId.value
+  if (!id || !canCommit.value) return
+  committing.value = true
+  actionError.value = null
+  commitResult.value = null
+  try {
+    const result = await commitGitChanges(id, {
+      message: message.value.trim(),
+      files: [...selected],
+      push,
+    })
+    commitResult.value = result
+    if (result.committed) {
+      // 提交成功：清空信息与选择，刷新状态（已提交文件从列表消失）
+      message.value = ''
+      selected.clear()
+      void loadStatus()
+    }
+  } catch (err) {
+    actionError.value = err instanceof Error ? err.message : '提交失败'
+  } finally {
+    committing.value = false
+  }
+}
+
+/** 重试推送：commit 成功但 push 失败（无网络/无 upstream 等）后的独立入口。 */
+async function retryPush() {
+  const id = workspaceId.value
+  if (!id) return
+  pushing.value = true
+  actionError.value = null
+  try {
+    await pushGit(id)
+    if (commitResult.value) commitResult.value.pushed = true
+  } catch (err) {
+    actionError.value = err instanceof Error ? err.message : '推送失败'
+  } finally {
+    pushing.value = false
   }
 }
 
@@ -97,6 +190,11 @@ const tooltipTheme = computed(() =>
 )
 
 watch(workspaceId, () => {
+  // 切换项目：清空提交相关的全部本地状态，避免串到下一个仓库
+  selected.clear()
+  message.value = ''
+  commitResult.value = null
+  actionError.value = null
   void loadStatus()
 })
 
@@ -185,43 +283,105 @@ onMounted(() => {
       >
         <span v-if="status.hiddenCount">已隐藏 {{ status.hiddenCount }} 个路径</span>
         <span v-if="status.hiddenCount && status.truncated">；</span>
-        <span v-if="status.truncated">变更过多，仅显示部分结果</span>
+        <span v-if="status.truncated">变更过多，仅显示部分结果，全选仅覆盖可见文件</span>
       </div>
 
       <div v-if="!status.files.length" class="flex min-h-0 flex-1 items-center justify-center">
         <n-empty size="small" description="工作区干净" />
       </div>
 
-      <div v-else class="min-h-0 flex-1 overflow-y-auto">
-        <div class="space-y-0.5 p-1">
-          <div
-            v-for="change in status.files"
-            :key="`${change.originalPath ?? ''}:${change.path}:${change.indexStatus}:${change.worktreeStatus}`"
-            class="flex min-w-0 items-center gap-2 rounded-md px-2.5 py-2 hover:bg-surface-hover"
-          >
-            <n-tooltip
-              class="min-w-0 flex-1"
-              placement="left"
-              :theme-overrides="tooltipTheme"
+      <template v-else>
+        <!-- 选择操作条：已选数量 + 全选/取消全选 -->
+        <div class="flex shrink-0 items-center justify-between px-1">
+          <span class="text-xs text-ink-muted">已选 {{ selected.size }} 项</span>
+          <n-button size="tiny" quaternary :disabled="!selectableFiles.length" @click="toggleAll">
+            {{ allSelected ? '取消全选' : '全选' }}
+          </n-button>
+        </div>
+
+        <div class="min-h-0 flex-1 overflow-y-auto">
+          <div class="space-y-0.5 p-1">
+            <div
+              v-for="change in status.files"
+              :key="`${change.originalPath ?? ''}:${change.path}:${change.indexStatus}:${change.worktreeStatus}`"
+              class="flex min-w-0 cursor-pointer items-center gap-1 rounded-md px-2 py-1.5 hover:bg-surface-hover"
+              :class="{ 'opacity-60': change.status === 'conflicted' }"
+              @click="toggle(change.path)"
             >
-              <template #trigger>
-                <div class="flex w-full min-w-0 items-center gap-2">
-                  <span class="min-w-0 flex-1 truncate text-xs leading-4 text-ink">
-                    {{ changeName(change) }}
-                  </span>
-                  <span
-                    class="inline-flex shrink-0 items-center rounded px-1.5 py-0.5 text-[10px] font-medium leading-4"
-                    :class="changeClass(change)"
-                  >
-                    {{ changeLabel(change) }}
-                  </span>
-                </div>
-              </template>
-              <span class="break-all">{{ changeTooltip(change) }}</span>
-            </n-tooltip>
+              <n-checkbox
+                size="small"
+                :checked="isSelected(change.path)"
+                :disabled="change.status === 'conflicted'"
+                :title="change.status === 'conflicted' ? '存在冲突，请先解决' : undefined"
+                @click.stop
+                @update:checked="(checked: boolean) => setSelected(change.path, checked)"
+              />
+              <n-tooltip class="min-w-0 flex-1" placement="left" :theme-overrides="tooltipTheme">
+                <template #trigger>
+                  <div class="flex w-full min-w-0 items-center gap-2">
+                    <span class="min-w-0 flex-1 truncate text-xs leading-4 text-ink">
+                      {{ changeName(change) }}
+                    </span>
+                    <span
+                      class="inline-flex shrink-0 items-center rounded px-1.5 py-0.5 text-[10px] font-medium leading-4"
+                      :class="changeClass(change)"
+                    >
+                      {{ changeLabel(change) }}
+                    </span>
+                  </div>
+                </template>
+                <span class="break-all">{{ changeTooltip(change) }}</span>
+              </n-tooltip>
+            </div>
           </div>
         </div>
-      </div>
+
+        <!-- 底部提交区：信息输入 + 提交 / 提交并推送（仅处理选中文件） -->
+        <div class="shrink-0 space-y-2 border-t border-surface-hover pt-3">
+          <n-alert v-if="actionError" type="error" :show-icon="false" title="操作失败">
+            <span class="break-all">{{ actionError }}</span>
+          </n-alert>
+
+          <n-alert
+            v-else-if="commitResult"
+            :type="commitResult.pushed ? 'success' : 'warning'"
+            :show-icon="false"
+            :title="commitResult.pushed ? '已提交并推送' : '已提交，但推送失败'"
+          >
+            <div class="flex items-center justify-between gap-2">
+              <span class="min-w-0 break-all text-xs">
+                {{
+                  commitResult.pushed
+                    ? commitResult.commitHash
+                      ? `提交 ${commitResult.commitHash.slice(0, 7)} 已推送到远程`
+                      : '提交已推送到远程'
+                    : `提交 ${commitResult.commitHash?.slice(0, 7) ?? ''} 成功，但推送失败：${commitResult.pushError ?? ''}`
+                }}
+              </span>
+              <n-button v-if="!commitResult.pushed" size="tiny" secondary :loading="pushing" @click="retryPush">
+                重试推送
+              </n-button>
+            </div>
+          </n-alert>
+
+          <n-input
+            v-model:value="message"
+            type="textarea"
+            size="small"
+            :autosize="{ minRows: 1, maxRows: 3 }"
+            placeholder="提交信息（必填）"
+            :disabled="committing || pushing"
+          />
+          <div class="flex gap-2">
+            <n-button size="small" type="primary" :disabled="!canCommit" :loading="committing" @click="submit(false)">
+              提交
+            </n-button>
+            <n-button size="small" secondary :disabled="!canCommit" :loading="committing" @click="submit(true)">
+              提交并推送
+            </n-button>
+          </div>
+        </div>
+      </template>
     </template>
   </div>
 </template>
