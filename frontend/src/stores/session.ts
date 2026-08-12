@@ -48,6 +48,17 @@ const SESSION_HISTORY_LIMIT = 100
 const CANCEL_FUSE_MS = 25_000
 
 /**
+ * streaming 超时保险丝：WS 断线（或广播丢失）后，进行中会话收不到 turn.done
+ * 会永久卡在「正在执行」。保险丝对「超过 TURN_FUSE_IDLE_MS 无任何事件」的
+ * running 会话做周期性只读检查（拉消息增量），一旦发现本轮 assistant 已落库
+ * （后端先落库再广播 turn.done，落库即完成），走 finalizeStream 正常收尾；
+ * 未完成（agent 仍在执行，如长工具调用静默期）则继续等，绝不打断。
+ */
+const TURN_FUSE_IDLE_MS = 3 * 60_000
+/** 保险丝轮询间隔 */
+const TURN_FUSE_INTERVAL_MS = 60_000
+
+/**
  * 会话解析超时：进入 /sessions/:id 时以 GET /sessions/:id 校验会话存在性，
  * 若后端挂起（无响应而非明确报错），超时后强制转错误态，避免无限「加载中」。
  */
@@ -144,6 +155,11 @@ export const useSessionStore = defineStore('session', () => {
    * 与状态机同步：queued/streaming 都算进行中；turn.done/error/取消后移除。
    */
   const runningSessionIds = ref<Set<number>>(new Set())
+  /**
+   * 各会话最近一次收到 WS 广播的时间戳（保险丝判静默用，无需响应式）。
+   * 收到该会话任何广播、或发送 prompt 时刷新；会话收尾时删除。
+   */
+  const lastEventAtBySession = new Map<number, number>()
   /** 新建会话/草稿阶段使用的全局错误；已有 session 的错误单独存储。 */
   const streamError = ref<string | null>(null)
   /** 已有 session 的错误提示，避免后台 session 的错误串到当前窗口。 */
@@ -1035,6 +1051,7 @@ export const useSessionStore = defineStore('session', () => {
     activePlanBySession.value[sessionId] = null
     delete pendingPermissionsBySession.value[sessionId]
     runningSessionIds.value.delete(sessionId)
+    lastEventAtBySession.delete(sessionId)
   }
 
   /**
@@ -1049,12 +1066,46 @@ export const useSessionStore = defineStore('session', () => {
     statusBySession.value[sessionId] = 'idle'
     delete pendingPermissionsBySession.value[sessionId]
     runningSessionIds.value.delete(sessionId)
+    lastEventAtBySession.delete(sessionId)
   }
 
   /** turn 收尾：结束流式状态，随后只同步本轮新增的数据库消息 */
   async function finalizeStream(sessionId: number) {
     endStreamTurnSoft(sessionId)
     void refreshAfterTurn(sessionId)
+  }
+
+  /**
+   * streaming 超时保险丝（轮询体）：遍历所有 running 会话，对「长时间无事件」
+   * 的会话做只读增量检查。判据：增量消息里出现 assistant 即本轮已落库完成
+   * （后端 handlePrompt 先 Create assistant 消息、再广播 turn.done），此时
+   * turn.done 大概率已丢失（WS 断线 / 广播 drop），走 finalizeStream 收尾。
+   * 未完成不打扰（不清流式槽位、不打断执行），下一轮再查；
+   * 检查失败（网络抖动）静默跳过，下一轮重试。
+   */
+  async function checkStalledTurns() {
+    const now = Date.now()
+    for (const sid of [...runningSessionIds.value]) {
+      const lastAt = lastEventAtBySession.get(sid) ?? 0
+      if (now - lastAt < TURN_FUSE_IDLE_MS) {
+        continue
+      }
+      try {
+        const afterId = latestPersistedMessageId(sid)
+        const page = await fetchMessageUpdates(sid, afterId)
+        // 二次确认：fetch 期间若该会话收到新广播/用户发新消息（lastEventAt 被刷新），
+        // 说明通道已恢复或新轮已开始——放弃本次收尾，避免 finalizeStream 置 idle
+        // 踩坏新轮状态机（内容不丢，但按钮/圆点会瞬态错乱到新轮 turn.done）。
+        if (lastEventAtBySession.get(sid) !== lastAt) {
+          continue
+        }
+        if (page.messages.some((m) => m.role === 'assistant')) {
+          void finalizeStream(sid)
+        }
+      } catch {
+        // 检查失败不处理，下一轮重试
+      }
+    }
   }
 
   /** 流式结束后的数据对齐：同步本轮新增消息；会话详情只在首轮默认标题场景刷新一次。 */
@@ -1122,6 +1173,10 @@ export const useSessionStore = defineStore('session', () => {
       const sid = 'sessionId' in msg
         ? (msg.sessionId ? (dbIdByAcpSession.get(msg.sessionId) ?? null) : currentId.value)
         : currentId.value
+      // 收到该会话任何广播都视为通道健康，刷新保险丝的最后事件时间
+      if (sid !== null) {
+        lastEventAtBySession.set(sid, Date.now())
+      }
       switch (msg.type) {
         case 'event': {
           const e = msg.event
@@ -1355,8 +1410,9 @@ export const useSessionStore = defineStore('session', () => {
       endStreamTurn(sessionId)
       setSessionStreamError(sessionId, 'websocket not connected')
     } else {
-      // 发送成功即视为「任务进行中」，点亮侧栏圆点
+      // 发送成功即视为「任务进行中」，点亮侧栏圆点；同时初始化保险丝静默计时
       runningSessionIds.value.add(sessionId)
+      lastEventAtBySession.set(sessionId, Date.now())
     }
   }
 
@@ -1404,6 +1460,11 @@ export const useSessionStore = defineStore('session', () => {
 
   // 首次实例化时注册 WS 消息订阅
   ensureWsListener()
+  // streaming 超时保险丝：周期性检查长时间无事件的 running 会话
+  // （turn.done 丢失时自动收尾；会话收尾或取消后自动停止检查）
+  setInterval(() => {
+    void checkStalledTurns()
+  }, TURN_FUSE_INTERVAL_MS)
 
   return {
     workspaces,

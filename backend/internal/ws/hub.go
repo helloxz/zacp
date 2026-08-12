@@ -103,11 +103,18 @@ func (c *Client) ReadPump(ctx context.Context) {
 	for {
 		_, message, err := c.conn.Read(ctx)
 		if err != nil {
-			if websocket.CloseStatus(err) == websocket.StatusNormalClosure ||
-				websocket.CloseStatus(err) == websocket.StatusGoingAway {
-				c.hub.log.Info("client closed connection")
+			// 对端主动发送的关闭帧（无论是否带状态码）都视为有序关闭：
+			// 1000 正常 / 1001 离开页面 / 1005 未携带状态码（部分客户端 close() 无参）。
+			// 其余（网络中断、本地已 Close 后读取、1006 异常关闭）才是需要关注的断连。
+			status := websocket.CloseStatus(err)
+			if status == websocket.StatusNormalClosure ||
+				status == websocket.StatusGoingAway ||
+				status == websocket.StatusNoStatusRcvd {
+				c.hub.log.Info("client closed connection", "closeStatus", status)
 			} else {
-				c.hub.log.Error("read error", "error", err)
+				// closeStatus 用于区分断连原因：-1 表示非关闭帧错误（网络中断/本地已 Close 后读取，
+				// 如 WritePump 失败先关了连接）；其它值为对端发来的关闭帧 code（如 1006 异常关闭）。
+				c.hub.log.Error("read error", "error", err, "closeStatus", status)
 			}
 			break
 		}
@@ -137,7 +144,10 @@ func (c *Client) WritePump(ctx context.Context) {
 			err := c.conn.Write(writeCtx, websocket.MessageText, message)
 			cancel()
 			if err != nil {
-				c.hub.log.Error("write error", "error", err)
+				// closeStatus 区分写失败原因：-1 为网络/超时类错误，其它值为对端关闭帧 code。
+				// WritePump 退出会 Close 连接，阻塞中的 ReadPump 随之报 read error——
+				// 日志里 write/read 成对出现时，根因在写方向（对端不再消费/网络中断）。
+				c.hub.log.Error("write error", "error", err, "closeStatus", websocket.CloseStatus(err))
 				return
 			}
 			if !ok {
@@ -150,6 +160,9 @@ func (c *Client) WritePump(ctx context.Context) {
 			err := c.conn.Ping(writeCtx)
 			cancel()
 			if err != nil {
+				// ping 失败 = 对端/网络已不可达（空闲超时断连的典型先兆），
+				// 记录 closeStatus 便于与 read error 关联定位断连根因。
+				c.hub.log.Error("ping error", "error", err, "closeStatus", websocket.CloseStatus(err))
 				return
 			}
 		}

@@ -10,6 +10,7 @@ import {
   TerminalOutline,
 } from '@vicons/ionicons5'
 import HeaderIconButton from '@/components/chat/HeaderIconButton.vue'
+import { acpSocket } from '@/composables/useAcpSocket'
 import { fetchExternalTools, openSessionTool } from '@/api'
 import { useAgentStore } from '@/stores/agent'
 import { useSessionStore } from '@/stores/session'
@@ -148,6 +149,19 @@ const sessionResolveError = computed(() => {
   }
 })
 
+/** 当前会话是否有进行中的 turn（断线提示条件：断线 + 仍在跑才提示） */
+const currentTurnActive = computed(() => {
+  const id = current.value?.id
+  return id !== undefined && ['queued', 'streaming', 'cancelling'].includes(sessionStore.statusOf(id))
+})
+
+/**
+ * WS 通道断开（未连接/重连退避中/已断开都算；仅作提示，不影响功能）。
+ * 注意不能用 status === 'closed' 判断：onclose 会立即进入 connecting 退避重连，
+ * 'closed' 只在 token 失效跳登录页等不重连路径常驻。
+ */
+const wsDisconnected = computed(() => acpSocket.state.status !== 'open')
+
 /** 重试解析：后端恢复 / 网络抖动后重新校验会话 */
 function onRetryResolve() {
   const id = sessionId.value
@@ -283,6 +297,15 @@ function onNewProjectFromHero() {
         >
           ✕
         </button>
+      </div>
+
+      <!-- WS 断线提示：会话仍在本机 running 但实时通道已断；后端任务不受影响，
+           重连后由 store 保险丝自动同步收尾（见 session.ts checkStalledTurns） -->
+      <div
+        v-if="wsDisconnected && currentTurnActive"
+        class="mx-4 mb-2 flex items-center justify-between rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-700 ring-1 ring-inset ring-amber-200 dark:bg-amber-950/40 dark:text-amber-400 dark:ring-amber-900/50"
+      >
+        <span>{{ t('chat.disconnectedBanner') }}</span>
       </div>
 
       <!-- 底部输入条：与 AI 内容共用 content-container 宽度（max-w-4xl 居中）；

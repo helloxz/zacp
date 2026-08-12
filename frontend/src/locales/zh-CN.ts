@@ -104,6 +104,7 @@ export default {
     user: '你',
     assistant: 'Agent',
     errorTitle: '出错了',
+    disconnectedBanner: '连接已断开，任务仍在后台执行，恢复后自动同步结果',
     backToBottom: '回到底部',
     openTool: '打开本地工具',
     openWebTTY: '打开 Web 终端',

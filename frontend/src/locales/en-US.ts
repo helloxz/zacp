@@ -94,6 +94,7 @@ export default {
     user: 'You',
     assistant: 'Agent',
     errorTitle: 'Something went wrong',
+    disconnectedBanner: 'Connection lost — the task is still running in the background; results will sync automatically',
     backToBottom: 'Back to bottom',
     openTool: 'Open local tool',
     openWebTTY: 'Open Web terminal',
