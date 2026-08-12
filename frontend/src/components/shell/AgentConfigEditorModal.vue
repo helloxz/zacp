@@ -395,9 +395,11 @@ onBeforeUnmount(() => {
 
 <template>
   <n-modal :show="show" :mask-closable="true" @update:show="onShowChange">
-    <!-- 自绘弹窗容器：圆角/背景/阴影与设置弹窗（SettingsModal）保持一致 -->
+    <!-- 自绘弹窗容器：圆角/背景/阴影与设置弹窗（SettingsModal）保持一致。
+         高度自动伸展，但上限为视口高度减上下留白（calc(100vh - 2rem)），
+         超高时滚动发生在下方内容区，标题栏保持固定 -->
     <div
-      class="flex w-[960px] max-w-[94vw] flex-col overflow-hidden rounded-2xl bg-surface-raised shadow-2xl"
+      class="flex max-h-[calc(100vh-2rem)] w-[960px] max-w-[94vw] flex-col overflow-hidden rounded-2xl bg-surface-raised shadow-2xl"
     >
       <!-- 顶部标题栏：与设置弹窗同一风格（border-b 分隔线 + 圆形关闭按钮） -->
       <header
@@ -416,7 +418,9 @@ onBeforeUnmount(() => {
         </button>
       </header>
 
-      <div class="flex flex-col gap-3 p-6">
+      <!-- 内容区：flex-1 + min-h-0 让滚动落在这里（标题栏 shrink-0 固定在顶部）；
+           内容未超高时高度随内容自动伸展 -->
+      <div class="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-6">
         <!-- 打开中 -->
         <n-spin v-if="loading" class="py-12" />
 
