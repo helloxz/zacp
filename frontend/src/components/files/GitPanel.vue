@@ -153,13 +153,49 @@ async function retryPush() {
   actionError.value = null
   try {
     await pushGit(id)
-    if (commitResult.value) commitResult.value.pushed = true
+    if (commitResult.value) {
+      commitResult.value.pushed = true
+      // 清除失败残留，保持三态判断（pushed 优先于 pushError）状态一致
+      commitResult.value.pushError = undefined
+    }
   } catch (err) {
     actionError.value = err instanceof Error ? err.message : '推送失败'
   } finally {
     pushing.value = false
   }
 }
+
+/**
+ * 提交结果的三态展示：纯 commit（未请求推送）/ 推送失败 / 推送成功。
+ * 注意：pushed=false 既可能是「未请求推送」（点「提交」），也可能是「请求了但失败」，
+ * 只能以 pushError 是否非空区分，不能把 pushed=false 一律当作推送失败。
+ */
+const commitAlert = computed(() => {
+  const r = commitResult.value
+  if (!r) return null
+  if (r.pushed) {
+    return {
+      type: 'success' as const,
+      title: '已提交并推送',
+      detail: r.commitHash ? `提交 ${r.commitHash.slice(0, 7)} 已推送到远程` : '提交已推送到远程',
+      showRetry: false,
+    }
+  }
+  if (r.pushError) {
+    return {
+      type: 'warning' as const,
+      title: '已提交，但推送失败',
+      detail: `提交 ${r.commitHash?.slice(0, 7) ?? ''} 成功，但推送失败：${r.pushError}`,
+      showRetry: true,
+    }
+  }
+  return {
+    type: 'success' as const,
+    title: '已提交',
+    detail: r.commitHash ? `提交 ${r.commitHash.slice(0, 7)} 成功` : '提交成功',
+    showRetry: false,
+  }
+})
 
 function changeLabel(change: GitChange): string {
   return statusLabels[change.status] ?? '变更'
@@ -343,22 +379,20 @@ onMounted(() => {
           </n-alert>
 
           <n-alert
-            v-else-if="commitResult"
-            :type="commitResult.pushed ? 'success' : 'warning'"
+            v-else-if="commitAlert"
+            :type="commitAlert.type"
             :show-icon="false"
-            :title="commitResult.pushed ? '已提交并推送' : '已提交，但推送失败'"
+            :title="commitAlert.title"
           >
             <div class="flex items-center justify-between gap-2">
-              <span class="min-w-0 break-all text-xs">
-                {{
-                  commitResult.pushed
-                    ? commitResult.commitHash
-                      ? `提交 ${commitResult.commitHash.slice(0, 7)} 已推送到远程`
-                      : '提交已推送到远程'
-                    : `提交 ${commitResult.commitHash?.slice(0, 7) ?? ''} 成功，但推送失败：${commitResult.pushError ?? ''}`
-                }}
-              </span>
-              <n-button v-if="!commitResult.pushed" size="tiny" secondary :loading="pushing" @click="retryPush">
+              <span class="min-w-0 break-all text-xs">{{ commitAlert.detail }}</span>
+              <n-button
+                v-if="commitAlert.showRetry"
+                size="tiny"
+                secondary
+                :loading="pushing"
+                @click="retryPush"
+              >
                 重试推送
               </n-button>
             </div>
