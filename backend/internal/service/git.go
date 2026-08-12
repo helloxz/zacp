@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -117,7 +118,28 @@ func (s *GitService) Status(ctx context.Context, workspaceID uint) (*model.GitSt
 	if err := readGitStatus(statusCtx, gitPath, workspacePath, repoRoot, realWorkspacePath, result); err != nil {
 		return nil, err
 	}
+	// ahead 徽标数据：独立短超时探测，失败（含无 upstream）不阻塞状态读取
+	result.Ahead = queryGitAhead(ctx, gitPath, workspacePath)
 	return result, nil
+}
+
+// queryGitAhead 查询当前分支相对 upstream 的待推送提交数（`@{upstream}..HEAD`）。
+// 无 upstream（rev-list 退出码 128）或探测失败时返回 nil，前端据此隐藏徽标。
+func queryGitAhead(ctx context.Context, gitPath, workspacePath string) *int {
+	probeCtx, cancel := context.WithTimeout(ctx, gitProbeTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(probeCtx, gitPath, "-C", workspacePath, "rev-list", "--count", "@{upstream}..HEAD")
+	cmd.Stderr = io.Discard
+	cmd.Env = gitEnv()
+	out, err := cmd.Output()
+	if err != nil {
+		return nil
+	}
+	count, err := strconv.Atoi(strings.TrimSpace(string(out)))
+	if err != nil {
+		return nil
+	}
+	return &count
 }
 
 // probeGitWorktree 探测 git 是否安装、workspace 是否位于 git worktree 内。

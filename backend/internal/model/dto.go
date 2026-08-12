@@ -86,6 +86,9 @@ type GitStatusDTO struct {
 	Files        []GitChangeDTO `json:"files"`
 	Truncated    bool           `json:"truncated"`
 	HiddenCount  int            `json:"hiddenCount"`
+	// Ahead 当前分支相对 upstream 的待推送提交数；无 upstream 或探测失败时为 nil，
+	// 前端据此隐藏「推送 (n)」徽标（n≥1 才显示）。
+	Ahead *int `json:"ahead"`
 }
 
 // GitSummaryDTO Git 状态汇总；计数包含被 UI 隐藏的路径，HiddenCount 用于解释差异。

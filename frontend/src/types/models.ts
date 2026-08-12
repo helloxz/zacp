@@ -108,6 +108,8 @@ export interface GitStatus {
   files: GitChange[]
   truncated: boolean
   hiddenCount: number
+  /** 待推送提交数；null/undefined = 无 upstream 或未知（前端隐藏「推送 (n)」徽标） */
+  ahead?: number | null
 }
 
 export interface GitSummary {

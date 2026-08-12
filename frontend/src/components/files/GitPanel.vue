@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { useMessage } from 'naive-ui'
 import { RefreshOutline } from '@vicons/ionicons5'
 import { commitGitChanges, fetchGitStatus, pushGit } from '@/api'
 import type { GitChange, GitCommitResult, GitStatus } from '@/types/models'
@@ -8,6 +9,8 @@ import { useAppStore } from '@/stores/app'
 
 const sessionStore = useSessionStore()
 const appStore = useAppStore()
+// 全局 message provider 已在 App 层挂载，成功提示走 toast（5s 自动消失）
+const message = useMessage()
 
 /** 当前 workspace：与文件树保持一致，优先当前会话所属项目，其次默认项目。 */
 const activeWorkspace = computed(() => {
@@ -27,11 +30,14 @@ let requestSerial = 0
 // ---- 文件选择（提交目标） ----
 // reactive Set：Vue 3 原生支持集合型响应式，增删无需整体替换。
 const selected = reactive(new Set<string>())
-const message = ref('')
+const commitMsg = ref('')
 const committing = ref(false)
 const pushing = ref(false)
 const actionError = ref<string | null>(null)
+// commit 成功但 push 失败的常驻待处理结果（成功态直接 toast，不驻留）
 const commitResult = ref<GitCommitResult | null>(null)
+// 独立推送失败（无 commit 残留时）的常驻待处理结果
+const pushError = ref<string | null>(null)
 
 /** 可选中的文件（冲突文件禁止 add：git add 会以工作区内容强制标记 resolved）。 */
 const selectableFiles = computed(() => status.value?.files.filter((f) => f.status !== 'conflicted') ?? [])
@@ -42,8 +48,21 @@ const allSelected = computed(
 )
 
 const canCommit = computed(
-  () => selected.size > 0 && message.value.trim() !== '' && !committing.value && !pushing.value,
+  () => selected.size > 0 && commitMsg.value.trim() !== '' && !committing.value && !pushing.value,
 )
+
+/** 待推送提交数；无 upstream 或未知时为 null（隐藏「推送 (n)」徽标）。 */
+const aheadCount = computed(() => status.value?.ahead ?? null)
+
+/** 推送按钮文案：有待推送提交时带数量徽标。 */
+const pushLabel = computed(() => {
+  if (aheadCount.value != null && aheadCount.value > 0) return `推送 (${aheadCount.value})`
+  return '推送'
+})
+
+function shortHash(hash?: string): string {
+  return hash ? ` ${hash.slice(0, 7)}` : ''
+}
 
 const statusLabels: Record<GitChange['status'], string> = {
   modified: '修改',
@@ -125,17 +144,28 @@ async function submit(push: boolean) {
   committing.value = true
   actionError.value = null
   commitResult.value = null
+  pushError.value = null
   try {
     const result = await commitGitChanges(id, {
-      message: message.value.trim(),
+      message: commitMsg.value.trim(),
       files: [...selected],
       push,
     })
-    commitResult.value = result
     if (result.committed) {
       // 提交成功：清空信息与选择，刷新状态（已提交文件从列表消失）
-      message.value = ''
+      commitMsg.value = ''
       selected.clear()
+      if (result.pushError) {
+        // commit 成功但 push 失败：常驻 warning + 重试入口，不能 toast 消失
+        commitResult.value = result
+      } else {
+        // 成功（含纯提交）：toast 5s 自动消失，不占用面板空间
+        commitResult.value = null
+        message.success(
+          result.pushed ? `已提交并推送${shortHash(result.commitHash)}` : `已提交${shortHash(result.commitHash)}`,
+          { duration: 5000 },
+        )
+      }
       void loadStatus()
     }
   } catch (err) {
@@ -145,57 +175,31 @@ async function submit(push: boolean) {
   }
 }
 
-/** 重试推送：commit 成功但 push 失败（无网络/无 upstream 等）后的独立入口。 */
-async function retryPush() {
+/** 推送当前分支：底部「推送」按钮与失败提示内的「重试推送」共用同一入口。 */
+async function pushNow() {
   const id = workspaceId.value
-  if (!id) return
+  if (!id || committing.value || pushing.value) return
   pushing.value = true
   actionError.value = null
   try {
     await pushGit(id)
-    if (commitResult.value) {
-      commitResult.value.pushed = true
-      // 清除失败残留，保持三态判断（pushed 优先于 pushError）状态一致
-      commitResult.value.pushError = undefined
-    }
+    // 归一：若存在 commit+push 失败残留，一并清除（当前已推送成功）
+    commitResult.value = null
+    pushError.value = null
+    message.success('已推送到远程', { duration: 5000 })
+    void loadStatus() // ahead 归零，刷新徽标
   } catch (err) {
-    actionError.value = err instanceof Error ? err.message : '推送失败'
+    const msg = err instanceof Error ? err.message : '推送失败'
+    if (commitResult.value) {
+      // 有 commit 残留结果：错误归一到其展示（保留提交上下文）
+      commitResult.value.pushError = msg
+    } else {
+      pushError.value = msg
+    }
   } finally {
     pushing.value = false
   }
 }
-
-/**
- * 提交结果的三态展示：纯 commit（未请求推送）/ 推送失败 / 推送成功。
- * 注意：pushed=false 既可能是「未请求推送」（点「提交」），也可能是「请求了但失败」，
- * 只能以 pushError 是否非空区分，不能把 pushed=false 一律当作推送失败。
- */
-const commitAlert = computed(() => {
-  const r = commitResult.value
-  if (!r) return null
-  if (r.pushed) {
-    return {
-      type: 'success' as const,
-      title: '已提交并推送',
-      detail: r.commitHash ? `提交 ${r.commitHash.slice(0, 7)} 已推送到远程` : '提交已推送到远程',
-      showRetry: false,
-    }
-  }
-  if (r.pushError) {
-    return {
-      type: 'warning' as const,
-      title: '已提交，但推送失败',
-      detail: `提交 ${r.commitHash?.slice(0, 7) ?? ''} 成功，但推送失败：${r.pushError}`,
-      showRetry: true,
-    }
-  }
-  return {
-    type: 'success' as const,
-    title: '已提交',
-    detail: r.commitHash ? `提交 ${r.commitHash.slice(0, 7)} 成功` : '提交成功',
-    showRetry: false,
-  }
-})
 
 function changeLabel(change: GitChange): string {
   return statusLabels[change.status] ?? '变更'
@@ -228,8 +232,9 @@ const tooltipTheme = computed(() =>
 watch(workspaceId, () => {
   // 切换项目：清空提交相关的全部本地状态，避免串到下一个仓库
   selected.clear()
-  message.value = ''
+  commitMsg.value = ''
   commitResult.value = null
+  pushError.value = null
   actionError.value = null
   void loadStatus()
 })
@@ -378,28 +383,24 @@ onMounted(() => {
             <span class="break-all">{{ actionError }}</span>
           </n-alert>
 
-          <n-alert
-            v-else-if="commitAlert"
-            :type="commitAlert.type"
-            :show-icon="false"
-            :title="commitAlert.title"
-          >
+          <n-alert v-else-if="commitResult" type="warning" :show-icon="false" title="已提交，但推送失败">
             <div class="flex items-center justify-between gap-2">
-              <span class="min-w-0 break-all text-xs">{{ commitAlert.detail }}</span>
-              <n-button
-                v-if="commitAlert.showRetry"
-                size="tiny"
-                secondary
-                :loading="pushing"
-                @click="retryPush"
-              >
-                重试推送
-              </n-button>
+              <span class="min-w-0 break-all text-xs">
+                提交 {{ commitResult.commitHash?.slice(0, 7) ?? '' }} 成功，但推送失败：{{ commitResult.pushError ?? '' }}
+              </span>
+              <n-button size="tiny" secondary :loading="pushing" @click="pushNow">重试推送</n-button>
+            </div>
+          </n-alert>
+
+          <n-alert v-else-if="pushError" type="warning" :show-icon="false" title="推送失败">
+            <div class="flex items-center justify-between gap-2">
+              <span class="min-w-0 break-all text-xs">{{ pushError }}</span>
+              <n-button size="tiny" secondary :loading="pushing" @click="pushNow">重试</n-button>
             </div>
           </n-alert>
 
           <n-input
-            v-model:value="message"
+            v-model:value="commitMsg"
             type="textarea"
             size="small"
             :autosize="{ minRows: 1, maxRows: 3 }"
@@ -412,6 +413,9 @@ onMounted(() => {
             </n-button>
             <n-button size="small" secondary :disabled="!canCommit" :loading="committing" @click="submit(true)">
               提交并推送
+            </n-button>
+            <n-button size="small" secondary :disabled="committing || pushing" :loading="pushing" @click="pushNow">
+              {{ pushLabel }}
             </n-button>
           </div>
         </div>
