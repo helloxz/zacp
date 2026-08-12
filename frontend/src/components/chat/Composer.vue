@@ -3,9 +3,11 @@ import { computed, h, onMounted, ref, watch } from 'vue'
 import type { VNodeChild } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { SendOutline, StopOutline } from '@vicons/ionicons5'
-import { NIcon } from 'naive-ui'
+import { NIcon, useMessage } from 'naive-ui'
 import type { InputInst, SelectGroupOption, SelectOption } from 'naive-ui'
 import { useSessionStore, type SessionStreamStatus } from '@/stores/session'
+import { uploadFiles } from '@/api'
+import { extractPastedFiles, prepareFile } from '@/utils/fileUpload'
 import type { ConfigOptionValue } from '@/types/models'
 
 /** Composer 提交载荷（card / bar 共用） */
@@ -37,6 +39,7 @@ const emit = defineEmits<{
 
 const { t } = useI18n()
 const sessionStore = useSessionStore()
+const message = useMessage()
 
 /** 会话配置项：select 型（模型/思考强度/mode 等）→ 下拉（仅 bar 模式展示） */
 const selectConfigOptions = computed(() =>
@@ -136,6 +139,121 @@ function filterSelectOption(pattern: string, option: SelectOption | SelectGroupO
 const text = ref('')
 const selectedAgentId = ref(props.agentId ?? '')
 const inputRef = ref<InputInst | null>(null)
+
+// ---------------------------------------------------------------------------
+// 粘贴上传图片（仅 bar 模式启用）：Ctrl/Cmd+V 粘贴图片 → 转 webp 上传到
+// 当前会话工作区根目录 → 在文本最前面插入 @文件名 引用 → 通知文件列表刷新。
+// 与「文件」面板共用 utils/fileUpload 的提取/压缩逻辑，行为保持一致。
+// ---------------------------------------------------------------------------
+
+/** 输入框中已引用图片的数量上限（已有引用 + 本次 1 张 > 上限则拒绝） */
+const MAX_IMAGE_REFS = 3
+/**
+ * 统计文本中 @引用图片 的数量。粘贴上传的图片统一转 webp，
+ * 正则同时兼容手动输入的其它图片格式（png/jpg/gif 等）。
+ */
+const IMAGE_REF_RE = /@[\w.-]+\.(?:webp|png|jpe?g|gif|bmp|svg|avif|ico)\b/gi
+function countImageRefs(t: string): number {
+  return (t.match(IMAGE_REF_RE) ?? []).length
+}
+
+/** 上传进行中：禁止发送（避免引用还没插入文本就被发走） */
+const imageUploading = ref(false)
+
+/**
+ * 当前会话所属工作区（与 FileExplorer activeWs 同规则：会话项目 → 默认项目）。
+ * bar 模式必在会话内，activeSession 可解析。
+ */
+const composerWorkspaceId = computed(() => {
+  const sid = sessionStore.activeSession?.workspace?.id
+  if (sid) return sid
+  return sessionStore.defaultWorkspace()?.id ?? 0
+})
+
+/**
+ * 输入框粘贴（仅 bar 模式）：
+ * - 剪贴板含图片 且 无纯文本 → 上传图片（单张，只取第一张）并插入 @引用；
+ * - 含图片 且有纯文本（Word/网页复制文字+图）→ 放行默认粘贴：只留文字、丢弃图片；
+ * - 非图片文件 → 静默忽略（textarea 粘贴文件本就无效果，不给提示）。
+ */
+function onPaste(e: ClipboardEvent) {
+  if (props.mode !== 'bar') return
+  const files = extractPastedFiles(e)
+  // 仅图片可上传；其它文件不支持，直接放行不提示
+  const images = files.filter((f) => f.type.startsWith('image/'))
+  if (!images.length) return
+  // 富文本粘贴（文字+图）：丢弃图片、保留文字，交给浏览器默认行为插入纯文本
+  const hasPlainText =
+    (e.clipboardData?.getData('text/plain') ?? '').trim().length > 0
+  if (hasPlainText) return
+  e.preventDefault()
+  if (imageUploading.value) {
+    // 上一张还在传：吞掉本次并明确提示，避免用户误以为粘贴失败
+    message.info('正在上传图片，请稍候')
+    return
+  }
+  void pasteUploadImage(images[0]) // 单张限制：多图只取第一张，其余忽略
+}
+
+/**
+ * 粘贴图片上传：压缩转 webp → 上传到工作区根目录（dir=''）→
+ * 成功后在文本最前面插入引用并通知文件列表刷新。
+ */
+async function pasteUploadImage(file: File) {
+  const wsId = composerWorkspaceId.value
+  if (!wsId) {
+    // 会话无工作区（如默认项目缺失）时上传无处可去，明确提示而非静默丢弃
+    message.warning('请先添加项目，再粘贴上传图片')
+    return
+  }
+  // 引用数上限：已有引用 + 本次 1 张 > 3 → 提示并跳过上传
+  if (countImageRefs(text.value) + 1 > MAX_IMAGE_REFS) {
+    message.warning(`最多引用 ${MAX_IMAGE_REFS} 张图片`)
+    return
+  }
+  // 上传前捕获上下文：上传期间用户可能切换会话/项目，完成时需双重校验
+  // （同会话 + 同工作区）才把引用插回输入框，避免污染新会话文本
+  const sid = sessionStore.activeSession?.id ?? null
+  imageUploading.value = true
+  try {
+    const prepared = await prepareFile(file)
+    const uploaded = await uploadFiles(wsId, '', [prepared])
+    const name = uploaded[0]?.name
+    if (name) {
+      // 文件已上传成功：无论是否插入引用都刷新列表
+      sessionStore.bumpFileList()
+      // 上下文已变化 → 不插引用（文件仍在工作区，可手动 @ 引用）
+      const sameContext =
+        sessionStore.activeSession?.id === sid &&
+        composerWorkspaceId.value === wsId
+      // 插入前重新计数：上传耗时期间用户可能已手动输入 @引用，超限则不再自动插入
+      const withinLimit = countImageRefs(text.value) + 1 <= MAX_IMAGE_REFS
+      if (sameContext && withinLimit) {
+        insertRefs([name])
+      } else if (sameContext && !withinLimit) {
+        message.info('图片已上传，但引用数超过上限，未自动插入')
+      }
+    }
+  } catch (err) {
+    message.error(`图片上传失败：${err instanceof Error ? err.message : '未知错误'}`)
+  } finally {
+    imageUploading.value = false
+  }
+}
+
+/** 把引用（@文件名）插入到文本最前面，多张用空格分隔；末尾带尾随空格，用户可直接继续输入 */
+function insertRefs(names: string[]) {
+  const refs = names.map((n) => `@${n}`).join(' ') + ' '
+  text.value = text.value ? `${refs}${text.value}` : refs
+  // rAF 保证 DOM 已按新 value 更新后再设置光标（与 pickSlashCommand 同模式）
+  requestAnimationFrame(() => {
+    inputRef.value?.focus()
+    const el = (
+      inputRef.value as unknown as { textareaElRef?: HTMLTextAreaElement }
+    ).textareaElRef
+    if (el) el.setSelectionRange(text.value.length, text.value.length)
+  })
+}
 
 // ---------------------------------------------------------------------------
 // / 命令候选面板（数据来自 agent 经 ACP available_commands_update 通告的命令列表）
@@ -242,9 +360,10 @@ watch(
   },
 )
 
-/** 可发送：bar 模式不要求 Agent（沿用当前会话）；card 模式必须已选 Agent */
+/** 可发送：bar 模式不要求 Agent（沿用当前会话）；card 模式必须已选 Agent；上传图片期间禁止发送 */
 const canSend = computed(
   () =>
+    !imageUploading.value &&
     text.value.trim().length > 0 &&
     (props.mode === 'bar' || !!selectedAgentId.value),
 )
@@ -340,6 +459,7 @@ function onKeydown(e: KeyboardEvent) {
       :autosize="{ minRows: mode === 'card' ? 3 : 2, maxRows: 8 }"
       :placeholder="t('chat.placeholder')"
       @keydown="onKeydown"
+      @paste="onPaste"
     />
 
     <!-- 配置项更新失败提示条：显示 agent 真实拒绝原因（如列表过期），3 秒自动消失 -->
@@ -348,6 +468,15 @@ function onKeydown(e: KeyboardEvent) {
       class="mt-1.5 rounded bg-red-50 px-2 py-1 text-xs leading-relaxed text-red-500 dark:bg-red-950/40 dark:text-red-400"
     >
       {{ t('chat.configUpdateFailed') }}：{{ configError }}
+    </div>
+
+    <!-- 图片上传中提示条：粘贴上传进行时显示；与错误条同位避免卡片高度跳动 -->
+    <div
+      v-if="imageUploading"
+      class="mt-1.5 flex items-center gap-2 rounded bg-blue-50 px-2 py-1 text-xs leading-relaxed text-blue-500 dark:bg-blue-950/40 dark:text-blue-400"
+    >
+      <n-spin :size="13" />
+      正在上传图片…
     </div>
 
     <!-- 底部选项行：左侧配置项（模型/思考强度等），右侧仅图标发送按钮；与输入框同卡片，构成整体 -->
@@ -422,6 +551,7 @@ function onKeydown(e: KeyboardEvent) {
           type="primary"
           size="medium"
           circle
+          :loading="imageUploading"
           :disabled="!canSend"
           @click="onSend"
         >

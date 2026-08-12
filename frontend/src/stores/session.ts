@@ -83,6 +83,8 @@ export type SessionStreamStatus = 'idle' | 'queued' | 'streaming' | 'cancelling'
 export const useSessionStore = defineStore('session', () => {
   /** 工作区列表（Composer 下拉 / 侧栏分组兜底） */
   const workspaces = ref<Workspace[]>([])
+  /** 文件列表版本号：任意入口上传/删除文件后 +1，FileExplorer 监听后刷新当前目录 */
+  const fileListVersion = ref(0)
   /** 侧栏会话列表（GET /api/v1/sessions，后端按 updatedAt 倒序） */
   const sessions = ref<ChatSession[]>([])
   /** 各会话消息缓存（进入会话时按需加载） */
@@ -363,6 +365,14 @@ export const useSessionStore = defineStore('session', () => {
   /** 默认工作区：isDefault 优先，否则最近使用（侧栏分组兜底） */
   function defaultWorkspace(): Workspace | undefined {
     return workspaces.value.find((w) => w.isDefault) ?? workspaces.value[0]
+  }
+
+  /**
+   * 文件列表变更通知：上传/删除后调用，FileExplorer 监听 fileListVersion
+   * 自行刷新当前目录（跨组件解耦，见 FileExplorer watch）。
+   */
+  function bumpFileList() {
+    fileListVersion.value += 1
   }
 
   /**
@@ -1397,6 +1407,8 @@ export const useSessionStore = defineStore('session', () => {
 
   return {
     workspaces,
+    fileListVersion,
+    bumpFileList,
     sessions,
     messagesById,
     currentId,
