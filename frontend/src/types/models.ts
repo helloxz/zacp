@@ -32,6 +32,29 @@ export interface ManageAgent {
   installed: boolean
   /** "config" = 来自用户配置；"builtin" = 后端内置模板（未写入配置） */
   source: 'config' | 'builtin'
+  /** 后端是否登记了该智能体的配置文件路径（前端据此显示「编辑配置」按钮） */
+  hasConfigFiles: boolean
+}
+
+/**
+ * 智能体配置文件条目（GET /api/v1/agents/:agentId/config-files → `{ files }`）。
+ * 后端已按 HOME 展开检查存在性，只返回真实存在的文件；path 为 `~/...` 相对形式。
+ */
+export interface AgentConfigFile {
+  path: string
+  name: string
+  /** 扩展名（小写，不含点；用于编辑器语言选择） */
+  ext: string
+}
+
+/** 智能体配置文件内容（GET/PUT /api/v1/agents/:agentId/config-files/content）。 */
+export interface AgentConfigContent {
+  path: string
+  name: string
+  content: string
+  size: number
+  /** 文件 mtime（毫秒），保存时回传做乐观锁比对 */
+  mtimeUnixMs: number
 }
 
 /** 工作目录（GET /api/v1/workspaces → `{ workspaces: Workspace[] }`） */

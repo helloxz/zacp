@@ -30,6 +30,8 @@ import type {
   ExternalTool,
   FileContent,
   FileEntry,
+  AgentConfigContent,
+  AgentConfigFile,
   GitStatus,
   ManageAgent,
   MessagePage,
@@ -76,6 +78,47 @@ export async function setAgentEnabled(
   await http.put(`/api/v1/agents/${encodeURIComponent(agentId)}`, {
     body: { enabled },
   })
+}
+
+/**
+ * GET /api/v1/agents/:agentId/config-files — 该智能体真实存在的配置文件列表
+ * （后端按 HOME 展开 + 存在性过滤；用于设置页「编辑配置」弹窗）。
+ * 路径为 `~/...` 相对形式；列表为空说明文件暂不存在。
+ */
+export async function fetchAgentConfigFiles(
+  agentId: string,
+): Promise<AgentConfigFile[]> {
+  const data = await http.get<{ files: AgentConfigFile[] }>(
+    `/api/v1/agents/${encodeURIComponent(agentId)}/config-files`,
+  )
+  return data.files
+}
+
+/** GET /api/v1/agents/:agentId/config-files/content?path=... — 读取单个配置文件内容。 */
+export async function fetchAgentConfigContent(
+  agentId: string,
+  path: string,
+): Promise<AgentConfigContent> {
+  return http.get<AgentConfigContent>(
+    `/api/v1/agents/${encodeURIComponent(agentId)}/config-files/content?path=${encodeURIComponent(path)}`,
+  )
+}
+
+/**
+ * PUT /api/v1/agents/:agentId/config-files/content — 保存配置文件内容。
+ * 携带 expectedMtime 做乐观锁：文件已被他处修改时返回 409（file_modified）；
+ * 格式语法错误返回 400（invalid_syntax，message 带解析详情）。
+ */
+export async function saveAgentConfigContent(
+  agentId: string,
+  path: string,
+  content: string,
+  expectedMtime?: number,
+): Promise<AgentConfigContent> {
+  return http.put<AgentConfigContent>(
+    `/api/v1/agents/${encodeURIComponent(agentId)}/config-files/content`,
+    { body: { path, content, expectedMtime } },
+  )
 }
 
 /** GET /api/v1/workspaces — 工作区列表（按最近使用排序） */

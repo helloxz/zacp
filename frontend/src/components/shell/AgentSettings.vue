@@ -1,14 +1,25 @@
 <script setup lang="ts">
-import { onMounted } from 'vue'
+import { onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useMessage } from 'naive-ui'
-import { CubeOutline } from '@vicons/ionicons5'
+import { CreateOutline, CubeOutline } from '@vicons/ionicons5'
 import { useAgentManageStore } from '@/stores/agentManage'
+import AgentConfigEditorModal from '@/components/shell/AgentConfigEditorModal.vue'
 import type { ManageAgent } from '@/types/models'
 
 const { t } = useI18n()
 const message = useMessage()
 const store = useAgentManageStore()
+
+// 「编辑配置」弹窗：目标智能体 + 开关
+const editTarget = ref<ManageAgent | null>(null)
+const editorShow = ref(false)
+
+/** 打开某智能体的配置编辑弹窗 */
+function onEditConfig(agent: ManageAgent) {
+  editTarget.value = agent
+  editorShow.value = true
+}
 
 // 每次进入「智能体」页重新拉取目录，保证开关状态与服务端一致
 onMounted(() => {
@@ -117,9 +128,21 @@ function retry() {
             </div>
 
             <div class="flex shrink-0 items-center gap-3">
-              <span class="hidden text-xs text-ink-muted sm:inline">
-                {{ agent.agentId }}
-              </span>
+              <!-- 已安装且后端登记了配置文件路径 → 提供「编辑配置」入口。
+                   用纯文字按钮（text 类型）：quaternary 按钮点击后有 hover 背景残留，
+                   与未点击项不协调；文字按钮 hover 仅变色、无背景块 -->
+              <n-button
+                v-if="agent.installed && agent.hasConfigFiles"
+                size="small"
+                text
+                type="primary"
+                @click="onEditConfig(agent)"
+              >
+                <template #icon>
+                  <n-icon :size="14"><CreateOutline /></n-icon>
+                </template>
+                {{ t('settings.agent.editConfig') }}
+              </n-button>
               <!-- 未安装：开关禁用，hover 提示先安装 -->
               <n-tooltip v-if="!agent.installed" trigger="hover">
                 <template #trigger>
@@ -146,5 +169,12 @@ function retry() {
         </div>
       </n-spin>
     </div>
+
+    <!-- 编辑配置弹窗 -->
+    <AgentConfigEditorModal
+      :show="editorShow"
+      :agent="editTarget"
+      @update:show="editorShow = $event"
+    />
   </div>
 </template>

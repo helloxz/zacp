@@ -1,8 +1,10 @@
 package providers
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strings"
 
@@ -43,6 +45,71 @@ func BuiltinTemplate(id string) (config.AgentConfig, bool) {
 	return config.AgentConfig{}, false
 }
 
+// AgentConfigPaths 各智能体的配置文件路径（键为内置 agent id，值为相对 HOME 的形式，
+// 如 "~/.reasonix/config.toml"）。用于设置页「编辑配置」功能：
+//   - 命中映射（HasConfigPaths）且本机已安装的智能体才显示「编辑配置」按钮
+//   - 展开弹窗时后端按此映射做存在性过滤，不存在的文件不返回
+//   - 读写接口仅允许访问此映射内的路径（白名单），防止任意路径读写
+//
+// 说明：qodercn / qoder / grok 没有稳定、可安全编辑的配置文件，不登记路径。
+var AgentConfigPaths = map[string][]string{
+	"reasonix": {
+		"~/.reasonix/config.toml",
+		"~/.reasonix/.env",
+	},
+	"omp": {
+		"~/.omp/agent/config.yml",
+		"~/.omp/agent/models.yml",
+		"~/.omp/agent/.env",
+	},
+	"opencode": {
+		"~/.config/opencode/opencode.json",
+	},
+	"codex-acp": {
+		"~/.codex/config.toml",
+		"~/.codex/auth.json",
+	},
+	"pi-acp": {
+		"~/.pi/agent/settings.json",
+		"~/.pi/agent/models.json",
+		"~/.pi/agent/auth.json",
+	},
+}
+
+// HasConfigPaths 判断该智能体是否在后端登记了配置文件路径（设置页「编辑配置」按钮条件之一）。
+// 只表示映射存在，不关心文件是否真实存在（存在性由列表接口按 HOME 展开后检查）。
+func HasConfigPaths(agentID string) bool {
+	_, ok := AgentConfigPaths[strings.ToLower(agentID)]
+	return ok
+}
+
+// ConfigFilePaths 返回某智能体登记的配置文件路径列表（相对 HOME 的原始形式，未展开）。
+// 映射未命中返回 nil, false。调用方应保持返回的路径原样传递给前端/展开，
+// 展开统一走 ExpandHomePath，避免路径拼接歧义。
+func ConfigFilePaths(agentID string) ([]string, bool) {
+	paths, ok := AgentConfigPaths[strings.ToLower(agentID)]
+	if !ok {
+		return nil, false
+	}
+	return paths, true
+}
+
+// ExpandHomePath 把 "~" / "~/" 开头的路径展开为当前用户 HOME 的绝对路径。
+// 非 ~ 开头原样返回。HOME 解析失败返回错误（读写接口据此 500）。
+func ExpandHomePath(p string) (string, error) {
+	if p != "~" && !strings.HasPrefix(p, "~/") {
+		return p, nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("resolve home dir: %w", err)
+	}
+	if p == "~" {
+		return home, nil
+	}
+	return filepath.Join(home, p[2:]), nil
+}
+
 // CatalogItem 设置页「智能体」列表的单条数据。
 type CatalogItem struct {
 	AgentID   string `json:"agentId"`
@@ -51,6 +118,8 @@ type CatalogItem struct {
 	Enabled   bool   `json:"enabled"`   // 配置中是否启用（内置且未写入配置时为 false）
 	Installed bool   `json:"installed"` // 本机是否已安装（which 检测）
 	Source    string `json:"source"`    // "config" | "builtin"
+	// HasConfigFiles 后端是否登记了该智能体的配置文件路径（设置页「编辑配置」按钮条件）。
+	HasConfigFiles bool `json:"hasConfigFiles"`
 }
 
 // BuildCatalog 合并配置与内置智能体，返回设置页展示列表：
@@ -75,6 +144,8 @@ func BuildCatalog(configured []config.AgentConfig) []CatalogItem {
 			Enabled:   a.Enabled,
 			Installed: IsInstalled(a.Command),
 			Source:    "config",
+			// 配置文件路径按 agent id 映射，与是否写入用户配置无关
+			HasConfigFiles: HasConfigPaths(a.ID),
 		})
 	}
 
@@ -86,12 +157,13 @@ func BuildCatalog(configured []config.AgentConfig) []CatalogItem {
 		}
 		seen[key] = true
 		items = append(items, CatalogItem{
-			AgentID:   b.ID,
-			Name:      b.Name,
-			Command:   b.Command,
-			Enabled:   false, // 未写入配置 = 默认未启用
-			Installed: IsInstalled(b.Command),
-			Source:    "builtin",
+			AgentID:        b.ID,
+			Name:           b.Name,
+			Command:        b.Command,
+			Enabled:        false, // 未写入配置 = 默认未启用
+			Installed:      IsInstalled(b.Command),
+			Source:         "builtin",
+			HasConfigFiles: HasConfigPaths(b.ID),
 		})
 	}
 

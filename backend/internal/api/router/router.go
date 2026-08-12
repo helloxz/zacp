@@ -69,6 +69,10 @@ func New(
 			// 注意：/agents/manage 为静态段，与 /agents/:agentId/status 无路由冲突
 			authed.GET("/agents/manage", agentManageHandler.ListManageAgents)
 			authed.PUT("/agents/:agentId", agentManageHandler.SetAgentEnabled)
+			// 智能体配置文件读写（设置页「编辑配置」弹窗；路径白名单在后端校验）
+			authed.GET("/agents/:agentId/config-files", agentManageHandler.ListConfigFiles)
+			authed.GET("/agents/:agentId/config-files/content", agentManageHandler.ReadConfigFileContent)
+			authed.PUT("/agents/:agentId/config-files/content", agentManageHandler.WriteConfigFileContent)
 
 			// 本地工具：只返回后端白名单中当前平台已安装的工具。
 			authed.GET("/tools", toolHandler.ListTools)

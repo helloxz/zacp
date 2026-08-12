@@ -30,6 +30,8 @@ type manageAgentResponse struct {
 	Enabled   bool   `json:"enabled"`
 	Installed bool   `json:"installed"`
 	Source    string `json:"source"` // "config" | "builtin"
+	// HasConfigFiles 后端是否登记了该智能体的配置文件路径（前端据此显示「编辑配置」按钮）。
+	HasConfigFiles bool `json:"hasConfigFiles"`
 }
 
 // ListManageAgents 返回设置页智能体全量列表。
@@ -47,12 +49,13 @@ func (h *AgentManageHandler) ListManageAgents(c *gin.Context) {
 	resp := make([]manageAgentResponse, 0, len(items))
 	for _, it := range items {
 		resp = append(resp, manageAgentResponse{
-			AgentID:   it.AgentID,
-			Name:      it.Name,
-			Command:   it.Command,
-			Enabled:   it.Enabled,
-			Installed: it.Installed,
-			Source:    it.Source,
+			AgentID:        it.AgentID,
+			Name:           it.Name,
+			Command:        it.Command,
+			Enabled:        it.Enabled,
+			Installed:      it.Installed,
+			Source:         it.Source,
+			HasConfigFiles: it.HasConfigFiles,
 		})
 	}
 	c.JSON(http.StatusOK, gin.H{"agents": resp})

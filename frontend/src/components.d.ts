@@ -12,6 +12,7 @@ export {}
 declare module 'vue' {
   export interface GlobalComponents {
     AboutSettings: typeof import('./components/shell/AboutSettings.vue')['default']
+    AgentConfigEditorModal: typeof import('./components/shell/AgentConfigEditorModal.vue')['default']
     AgentSettings: typeof import('./components/shell/AgentSettings.vue')['default']
     AppSidebar: typeof import('./components/shell/AppSidebar.vue')['default']
     ChatPane: typeof import('./components/chat/ChatPane.vue')['default']
@@ -27,6 +28,8 @@ declare module 'vue' {
     MessageList: typeof import('./components/chat/MessageList.vue')['default']
     NAlert: typeof import('naive-ui')['NAlert']
     NButton: typeof import('naive-ui')['NButton']
+    NCollapse: typeof import('naive-ui')['NCollapse']
+    NCollapseItem: typeof import('naive-ui')['NCollapseItem']
     NConfigProvider: typeof import('naive-ui')['NConfigProvider']
     NDialogProvider: typeof import('naive-ui')['NDialogProvider']
     NDrawer: typeof import('naive-ui')['NDrawer']
