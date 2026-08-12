@@ -534,29 +534,36 @@ function onKeydown(e: KeyboardEvent) {
           <n-spin :size="13" />
           {{ t('chat.stopping') }}
         </span>
-        <n-button
-          v-if="status !== 'idle'"
-          type="error"
-          size="medium"
-          circle
-          :disabled="status === 'cancelling'"
-          @click="emit('cancel')"
-        >
-          <template #icon>
-            <n-icon :size="18"><StopOutline /></n-icon>
-          </template>
-        </n-button>
+        <!-- 处理中（排队/流式/停止确认）：红色停止按钮外层套「彗星」光弧——
+             一条头部亮、尾部渐隐的弧，缓慢绕按钮旋转扫过（3s 一圈），
+             比满圈虚线更优雅、更低调；pointer-events-none 不挡按钮点击。
+             动画仅 bar（会话输入条）模式显示；card（/new 新建会话）只要改小按钮、
+             不要动画效果（见 v-if="mode === 'bar'"） -->
+        <span v-if="status !== 'idle'" class="relative inline-flex">
+          <span v-if="mode === 'bar'" class="comet-ring"></span>
+          <n-button
+            type="error"
+            size="small"
+            circle
+            :disabled="status === 'cancelling'"
+            @click="emit('cancel')"
+          >
+            <template #icon>
+              <n-icon :size="16"><StopOutline /></n-icon>
+            </template>
+          </n-button>
+        </span>
         <n-button
           v-else
           type="primary"
-          size="medium"
+          size="small"
           circle
           :loading="imageUploading"
           :disabled="!canSend"
           @click="onSend"
         >
           <template #icon>
-            <n-icon :size="18"><SendOutline /></n-icon>
+            <n-icon :size="16"><SendOutline /></n-icon>
           </template>
         </n-button>
       </div>
@@ -579,5 +586,53 @@ function onKeydown(e: KeyboardEvent) {
 .opt-select :deep(.n-base-selection__border),
 .opt-select :deep(.n-base-selection__state-border) {
   display: none;
+}
+/* 处理中红色按钮的「彗星」光弧：
+ * - conic-gradient 只点亮约 110° 的弧段，且由尾部（约 250° 起，几乎透明）
+ *   到头部（360°，最亮）渐强，形成「彗尾拖长渐隐、头部聚集」的扫掠感；
+ * - mask 径向镂空中心，只留约 1px 宽的细圆环（1px 的过渡沿让边缘柔和）；
+ * - 3s 一圈匀速旋转，缓慢优雅；.dark 下换浅红系保持暗色可见。
+ */
+.comet-ring {
+  position: absolute;
+  inset: -6px;
+  border-radius: 9999px;
+  pointer-events: none;
+  background: conic-gradient(
+    from 0deg,
+    transparent 0deg,
+    transparent 250deg,
+    rgba(239, 68, 68, 0.08) 280deg,
+    rgba(239, 68, 68, 0.4) 320deg,
+    rgba(239, 68, 68, 0.85) 350deg,
+    rgba(239, 68, 68, 1) 360deg
+  );
+  -webkit-mask: radial-gradient(
+    farthest-side,
+    transparent calc(100% - 3px),
+    #000 calc(100% - 2px)
+  );
+  mask: radial-gradient(
+    farthest-side,
+    transparent calc(100% - 3px),
+    #000 calc(100% - 2px)
+  );
+  animation: comet-spin 3s linear infinite;
+}
+.dark .comet-ring {
+  background: conic-gradient(
+    from 0deg,
+    transparent 0deg,
+    transparent 250deg,
+    rgba(248, 113, 113, 0.08) 280deg,
+    rgba(248, 113, 113, 0.4) 320deg,
+    rgba(248, 113, 113, 0.85) 350deg,
+    rgba(248, 113, 113, 1) 360deg
+  );
+}
+@keyframes comet-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 </style>
