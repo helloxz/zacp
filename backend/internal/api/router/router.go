@@ -29,7 +29,14 @@ func New(
 	ttyHandler *tty.Handler,
 	authSvc *auth.Service,
 ) *gin.Engine {
-	r := gin.Default()
+	r := gin.New()
+	// release 模式输出安静日志：不注册访问日志中间件（[GIN] 请求路径不再打印），
+	// 与 main 的 slog 级别联动（release 下仅 warn+，见 newSlogLogger）。
+	// gin.Mode() 已在 main 按 GIN_MODE 环境变量 > config server.mode 设置，这里直接跟随。
+	if gin.Mode() != gin.ReleaseMode {
+		r.Use(gin.Logger())
+	}
+	r.Use(gin.Recovery())
 	// 跨域访问（前端 dev 直连后端；开发默认允许所有来源，见 middleware.CORS）
 	r.Use(middleware.CORS())
 	r.GET("/healthz", chatHandler.Health)

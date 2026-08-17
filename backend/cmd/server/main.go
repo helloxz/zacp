@@ -79,22 +79,31 @@ Examples:
 		os.Exit(0)
 	}
 
-	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
-
-	// 确保 ZACP_DATA 状态根目录存在：--data-dir 显式传入时优先，否则按环境变量/默认解析
+	// 日志级别依赖 server.mode（release 仅 warn+），故 logger 须在配置加载后创建；
+	// 此阶段发生错误时直接输出到 stderr 后退出（不会走到 logger 分支）。
 	homeDir, err := config.EnsureHomeDir(*dataDir)
 	if err != nil {
-		log.Error("failed to ensure home dir", "err", err)
+		fmt.Fprintf(os.Stderr, "failed to ensure home dir: %v\n", err)
 		os.Exit(1)
 	}
-	log.Info("ZACP_DATA", "path", homeDir)
 
 	// 加载配置
 	cfg, err := config.Load(homeDir, *configPath)
 	if err != nil {
-		log.Error("failed to load config", "err", err)
+		fmt.Fprintf(os.Stderr, "failed to load config: %v\n", err)
 		os.Exit(1)
 	}
+
+	// 统一运行模式：GIN_MODE 环境变量（显式设置时）> TOML server.mode > 默认 debug。
+	// 须在创建 logger 前执行：newSlogLogger 与 router 的日志开关均以 gin.Mode() 判定（同源），
+	// 避免 GIN_MODE 与配置 mode 不一致时两类日志开关脱节。
+	if os.Getenv("GIN_MODE") == "" {
+		gin.SetMode(cfg.Server.Mode)
+	}
+
+	// 按运行模式构建 slog logger：release 仅输出 warn 及以上（日志安静），其余含 info
+	log := newSlogLogger()
+	log.Info("ZACP_DATA", "path", homeDir)
 	log.Info("config loaded", "agents", len(cfg.Agents), "autoApprove", cfg.Session.AutoApprove)
 
 	// 解析配置文件绝对路径（设置页写回 [[agents]] 用）：
@@ -233,11 +242,8 @@ Examples:
 	}
 	authHandler := handlers.NewAuthHandler(authSvc)
 
-	// gin mode 优先级：GIN_MODE 环境变量（gin 包 init 已读取）> TOML server.mode > 默认 debug。
-	// GIN_MODE 显式设置时以环境变量为准（不覆盖）；否则以配置为准。
-	if os.Getenv("GIN_MODE") == "" {
-		gin.SetMode(cfg.Server.Mode)
-	}
+	// gin mode 已在配置加载后统一设置（GIN_MODE 环境变量优先，见上方 logger 创建处），
+	// router.New 内以 gin.Mode() 决定是否注册访问日志中间件。
 
 	engine := router.New(workspaceHandler, sessionHandler, chatHandler, fileHandler, gitHandler, agentManageHandler, toolHandler, authHandler, wsHandler, eventBridge, ttyHandler, authSvc)
 
@@ -299,6 +305,18 @@ func envOr(k, def string) string {
 		return v
 	}
 	return def
+}
+
+// newSlogLogger 按运行模式创建 slog logger：
+// release 仅输出 warn 及以上（与 gin 访问日志静默联动，见 router.New）；
+// 其余模式输出 info 及以上（含启动诊断、权限请求等）。
+// 判定源与 router 一致：gin.Mode()（调用前已按 GIN_MODE > server.mode 设置）。
+func newSlogLogger() *slog.Logger {
+	level := slog.LevelInfo
+	if gin.Mode() == gin.ReleaseMode {
+		level = slog.LevelWarn
+	}
+	return slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level}))
 }
 
 // normalizeAddr 把监听地址转成可拼 URL 的 host:port 形式（仅用于提示，不影响实际监听）：
