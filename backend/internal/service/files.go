@@ -57,6 +57,10 @@ var (
 	ErrFileModified = errors.New("file modified by others")
 	// ErrPathNotFound 目标路径不存在。
 	ErrPathNotFound = errors.New("path not found")
+	// ErrNotEditableFile 文件扩展名不在可编辑白名单内（非常见文本文件，
+	// 如 mp3/mp4/zip 等二进制类型），拒绝在文本编辑器打开/写入。
+	// 放在内容检测（NUL / UTF-8）之前显式拦截，避免漏网二进制被读进编辑器甚至写回破坏。
+	ErrNotEditableFile = errors.New("file type not editable")
 )
 
 // 上传大小上限（与前端压缩约定一致：图片 5MB，其余 10MB）。
@@ -591,7 +595,8 @@ func (s *FileService) ResolveFile(workspaceID uint, rel string) (string, error) 
 
 // ReadTextFile 读取工作区内文本文件内容（供编辑器打开）。
 //
-// 校验链：路径边界（resolveInWorkspace）→ 是文件 → ≤2MB → 非二进制（无 NUL）→ 合法 UTF-8。
+// 校验链：路径边界（resolveInWorkspace）→ 是文件 → 扩展名白名单（isEditableTextName）
+// → ≤2MB → 非二进制（无 NUL）→ 合法 UTF-8。
 // 返回内容与 mtime（毫秒）：mtime 供前端保存时回传做乐观锁比对（见 WriteTextFile）。
 func (s *FileService) ReadTextFile(workspaceID uint, rel string) (*model.FileContentDTO, error) {
 	ws, err := s.workspaceRepo.GetByID(workspaceID)
@@ -608,6 +613,10 @@ func (s *FileService) ReadTextFile(workspaceID uint, rel string) (*model.FileCon
 	}
 	if info.IsDir() {
 		return nil, ErrNotDirectory
+	}
+	// 扩展名白名单：非常见文本文件（mp3/mp4/zip 等）直接拒绝，不等内容检测兜底
+	if !isEditableTextName(filepath.Base(rel)) {
+		return nil, ErrNotEditableFile
 	}
 	if info.Size() > MaxEditableSizeBytes {
 		return nil, ErrFileTooLargeForEdit
@@ -634,7 +643,8 @@ func (s *FileService) ReadTextFile(workspaceID uint, rel string) (*model.FileCon
 
 // WriteTextFile 把编辑后的文本内容写回工作区内文件。
 //
-// 校验链：路径边界 → 是文件 → 内容 ≤2MB → 合法 UTF-8 →（可选）mtime 乐观锁。
+// 校验链：路径边界 → 是文件 → 扩展名白名单（isEditableTextName）→ 内容 ≤2MB
+// → 合法 UTF-8 →（可选）mtime 乐观锁。
 // 乐观锁：前端打开时记录 mtime、保存时回传；不一致说明文件已被他处修改，拒绝覆盖（409）。
 // 写入用 os.WriteFile（O_TRUNC），已存在文件的权限位保持不变。
 func (s *FileService) WriteTextFile(workspaceID uint, rel, content string, expectedMtime *int64) (*model.FileContentDTO, error) {
@@ -652,6 +662,11 @@ func (s *FileService) WriteTextFile(workspaceID uint, rel, content string, expec
 	}
 	if info.IsDir() {
 		return nil, ErrNotDirectory
+	}
+	// 扩展名白名单与读侧一致：非白名单文件拒绝写回，防止 API 直接把二进制内容
+	// 以文本 O_TRUNC 覆盖进 mp3/mp4/zip 等文件造成损坏
+	if !isEditableTextName(filepath.Base(rel)) {
+		return nil, ErrNotEditableFile
 	}
 	if int64(len(content)) > MaxEditableSizeBytes {
 		return nil, ErrFileTooLargeForEdit
@@ -681,6 +696,64 @@ func (s *FileService) WriteTextFile(workspaceID uint, rel, content string, expec
 		Size:        newInfo.Size(),
 		MtimeUnixMs: newInfo.ModTime().UnixMilli(),
 	}, nil
+}
+
+// editableTextExts 可文本编辑的扩展名白名单（小写，不含点）。
+//
+// 以主流语言代码 + 常用文本/配置/数据文件为主；无扩展名（README、LICENSE、
+// Makefile、Dockerfile、Cargo.lock 等）与隐藏文件（.gitignore、.env 等）单独放行，
+// 见 isEditableTextName。白名单内的文件仍会走内容检测（NUL / UTF-8）兜底，
+// 防「.txt 伪装二进制」。
+//
+// 注意：此集合需与前端 frontend/src/utils/fileEditable.ts 保持一致（两端各自维护，
+// 前端控制 UI 入口，后端是最终防线——即使前端漏放行，Read/Write 也会拒绝）。
+var editableTextExts = map[string]bool{
+	// JS/TS 系列
+	"js": true, "jsx": true, "mjs": true, "cjs": true, "ts": true, "tsx": true,
+	// Java 系 / Android / Kotlin
+	"java": true, "kt": true, "kts": true,
+	// C/C++ 系
+	"c": true, "h": true, "cpp": true, "hpp": true, "cc": true, "cxx": true,
+	"m": true, "mm": true,
+	// 其他后端/脚本语言
+	"py": true, "pyw": true, "go": true, "rs": true, "php": true,
+	"cs": true, "csx": true, "swift": true, "rb": true, "lua": true,
+	"dart": true, "scala": true, "pl": true, "pm": true, "r": true, "jl": true,
+	"ex": true, "exs": true, "erl": true, "hrl": true, "hs": true, "lhs": true,
+	// 标记 / 样式
+	"md": true, "markdown": true, "mdx": true, "rst": true, "adoc": true,
+	"html": true, "htm": true, "vue": true, "svelte": true,
+	"css": true, "scss": true, "sass": true, "less": true, "styl": true,
+	// 配置 / 数据
+	"xml": true, "svg": true, "sql": true, "yml": true, "yaml": true, "toml": true,
+	"ini": true, "conf": true, "cfg": true, "config": true, "properties": true,
+	"env": true, "json": true, "jsonc": true, "lock": true,
+	"proto": true, "graphql": true, "gql": true,
+	// 脚本 / 运维
+	"sh": true, "bash": true, "zsh": true, "ksh": true, "fish": true,
+	"ps1": true, "psm1": true, "bat": true, "cmd": true, "nginx": true,
+	// 通用文本 / 数据
+	"txt": true, "text": true, "log": true, "csv": true, "tsv": true,
+	"patch": true, "diff": true,
+}
+
+// isEditableTextName 判断文件名是否允许文本编辑（与前端 fileEditable.ts 规则一致）。
+//
+// 规则：
+//  1. 隐藏文件（以 `.` 开头，如 .gitignore、.env、.npmrc）→ 放行，
+//     代码仓库高频文本配置；极端情况（如 .DS_Store）由内容检测兜底拒绝；
+//  2. 无扩展名（不含 `.`，如 README、LICENSE、Makefile、Dockerfile、Cargo.lock）→ 放行；
+//  3. 扩展名（最后一个点之后的小写部分）命中白名单 → 放行；
+//  4. 其余（mp3/mp4/zip/exe 等）→ 拒绝。
+func isEditableTextName(name string) bool {
+	if isHiddenName(name) {
+		return true
+	}
+	ext := strings.ToLower(filepath.Ext(name))
+	if ext == "" {
+		return true
+	}
+	return editableTextExts[strings.TrimPrefix(ext, ".")]
 }
 
 // IsImageName 按扩展名判断是否图片（用于上传大小分档）。

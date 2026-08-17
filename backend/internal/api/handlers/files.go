@@ -330,6 +330,8 @@ func writeFileError(c *gin.Context, err error) {
 		writeError(c, http.StatusRequestEntityTooLarge, "file_too_large", "文件超过 2MB，不支持文本编辑")
 	case errors.Is(err, service.ErrBinaryFile):
 		writeError(c, http.StatusUnsupportedMediaType, "binary_file", "二进制文件不支持文本编辑")
+	case errors.Is(err, service.ErrNotEditableFile):
+		writeError(c, http.StatusUnsupportedMediaType, "not_editable_file", "非常见文本文件，不支持文本编辑")
 	case errors.Is(err, service.ErrInvalidEncoding):
 		writeError(c, http.StatusUnsupportedMediaType, "invalid_encoding", "文件不是合法 UTF-8 编码，不支持编辑")
 	case errors.Is(err, service.ErrFileModified):

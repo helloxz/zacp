@@ -15,7 +15,8 @@
  *   粘贴/拖拽单次统一上限 10 个文件，超过拒绝整批；截图自动命名并转 webp。
  * - 图片自动压缩转 webp（等比不裁剪，>5MB 降采样兜底），非图片原样直传。
  * - 单击图片文件 → n-image 原生预览；双击文本文件 → 编辑器；右键 →
- *   「重命名 / 复制名称」（文件另加「编辑」）。
+ *   「重命名 / 复制名称」（文件另加「编辑」，非文本文件不显示）。
+ *   可编辑判定见 utils/fileEditable.ts（扩展名白名单，与后端 Read/Write 限制一致）。
  *
  * 数据根 = 当前会话所属 workspace；无会话时用默认 workspace。
  */
@@ -39,6 +40,7 @@ import {
 import type { FileEntry } from '@/types/models'
 import { useSessionStore } from '@/stores/session'
 import { copyText } from '@/utils/clipboard'
+import { isEditableFileName } from '@/utils/fileEditable'
 import FileEditorDrawer from '@/components/files/FileEditorDrawer.vue'
 
 const message = useMessage()
@@ -187,13 +189,19 @@ const ctxMenuShow = ref(false)
 const ctxMenuX = ref(0)
 const ctxMenuY = ref(0)
 const ctxMenuEntry = ref<FileEntry | null>(null)
-/** 右键菜单：文件多一个「编辑」项（目录不可编辑）；删除项固定放最后 */
+/** 右键菜单：文件多一个「编辑」项（目录不可编辑；非白名单文本类型的文件同样不显示） */
 const ctxOptions = computed<DropdownOption[]>(() => {
   const options: DropdownOption[] = [
     { key: 'rename', label: '重命名' },
     { key: 'copy-name', label: '复制名称' },
   ]
-  if (ctxMenuEntry.value && !ctxMenuEntry.value.isDir) {
+  // 仅常见文本文件（白名单扩展名 / 无扩展名 / 隐藏文件）提供编辑入口，
+  // mp3/mp4/zip 等二进制文件不出现「编辑」，与后端 Read/Write 限制一致
+  if (
+    ctxMenuEntry.value &&
+    !ctxMenuEntry.value.isDir &&
+    isEditableFileName(ctxMenuEntry.value.name)
+  ) {
     options.unshift({ key: 'edit', label: '编辑' })
   }
   // 删除不可逆，标红且放最底部；class 通过 props 透传到 dropdown 条目 DOM
@@ -402,9 +410,9 @@ async function onEntryClick(entry: FileEntry) {
   previewImgRef.value?.showPreview()
 }
 
-/** 双击条目：文本文件打开编辑器 */
+/** 双击条目：仅常见文本文件打开编辑器（二进制文件不响应，与右键菜单一致） */
 function onEntryDblClick(entry: FileEntry) {
-  if (!entry.isDir) void openEditor(entry)
+  if (!entry.isDir && isEditableFileName(entry.name)) void openEditor(entry)
 }
 
 // ---------------------------------------------------------------------------
