@@ -61,3 +61,4 @@ coverage.html
 .zacp/
 .qoder
 BUG.md
+*_test.go

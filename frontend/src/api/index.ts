@@ -44,6 +44,7 @@ import type {
   MessageUpdates,
   VersionInfo,
   Workspace,
+  ZliteChannel,
 } from '@/types/models'
 
 /** GET /api/v1/version — 服务端构建版本信息（设置页展示） */
@@ -148,6 +149,26 @@ export async function saveAgentConfigContent(
     `/api/v1/agents/${encodeURIComponent(agentId)}/config-files/content`,
     { body: { path, content, expectedMtime } },
   )
+}
+
+/**
+ * GET /api/v1/agents/zlite/default-channel — 读取 zlite 默认渠道设置。
+ * 文件不存在/未配置时返回默认值（type=openai.chat，其余为空），可直接回填表单。
+ */
+export async function fetchZliteDefaultChannel(): Promise<ZliteChannel> {
+  return http.get<ZliteChannel>('/api/v1/agents/zlite/default-channel')
+}
+
+/**
+ * PUT /api/v1/agents/zlite/default-channel — 保存 zlite 默认渠道设置。
+ * 写回 ~/.zlite/config.toml 的 name='default' [[providers]] 块（api_key 固定引用
+ * ${ZLITE_DEFAULT_API_KEY}）与 ~/.zlite/.env（ZLITE_DEFAULT_API_KEY，为空则删除）。
+ * 失败错误码：bad_request / invalid_zlite_channel / write_zlite_channel。
+ */
+export async function saveZliteDefaultChannel(
+  channel: ZliteChannel,
+): Promise<void> {
+  await http.put('/api/v1/agents/zlite/default-channel', { body: channel })
 }
 
 /** GET /api/v1/workspaces — 工作区列表（按最近使用排序） */

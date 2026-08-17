@@ -37,6 +37,7 @@ declare module 'vue' {
     NDrawer: typeof import('naive-ui')['NDrawer']
     NDrawerContent: typeof import('naive-ui')['NDrawerContent']
     NDropdown: typeof import('naive-ui')['NDropdown']
+    NDynamicTags: typeof import('naive-ui')['NDynamicTags']
     NEmpty: typeof import('naive-ui')['NEmpty']
     NewSessionPane: typeof import('./components/chat/NewSessionPane.vue')['default']
     NForm: typeof import('naive-ui')['NForm']
@@ -76,5 +77,6 @@ declare module 'vue' {
     UserFooter: typeof import('./components/shell/UserFooter.vue')['default']
     UserSettings: typeof import('./components/shell/UserSettings.vue')['default']
     WelcomeHero: typeof import('./components/chat/WelcomeHero.vue')['default']
+    ZliteChannelModal: typeof import('./components/shell/ZliteChannelModal.vue')['default']
   }
 }

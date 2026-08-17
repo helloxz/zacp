@@ -84,6 +84,10 @@ func New(
 			authed.GET("/agents/:agentId/config-files", agentManageHandler.ListConfigFiles)
 			authed.GET("/agents/:agentId/config-files/content", agentManageHandler.ReadConfigFileContent)
 			authed.PUT("/agents/:agentId/config-files/content", agentManageHandler.WriteConfigFileContent)
+			// zlite 官方智能体「默认渠道设置」结构化读写（固定路径 ~/.zlite，仅 zlite 使用；
+			// 静态段与 /agents/:agentId 动态段不冲突，manage 段已有先例）
+			authed.GET("/agents/zlite/default-channel", agentManageHandler.GetZliteDefaultChannel)
+			authed.PUT("/agents/zlite/default-channel", agentManageHandler.SaveZliteDefaultChannel)
 
 			// 本地工具：只返回后端白名单中当前平台已安装的工具。
 			authed.GET("/tools", toolHandler.ListTools)

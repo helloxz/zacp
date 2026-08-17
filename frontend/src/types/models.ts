@@ -77,6 +77,23 @@ export interface AgentConfigContent {
   mtimeUnixMs: number
 }
 
+/**
+ * zlite 默认渠道设置（GET/PUT /api/v1/agents/zlite/default-channel）。
+ * 对应 ~/.zlite/config.toml 的 name='default' [[providers]] 块 + ~/.zlite/.env
+ * 的 ZLITE_DEFAULT_API_KEY；type 三个合法值与后端落盘值完全一致
+ * （openai.chat / openai.responses / anthropic），无映射层。
+ */
+export interface ZliteChannel {
+  /** 渠道类型：openai.chat | openai.responses | anthropic */
+  type: 'openai.chat' | 'openai.responses' | 'anthropic'
+  /** 自定义 BaseURL（如 https://api.domain.com/v1） */
+  baseUrl: string
+  /** API 密钥（存储在 .env，config.toml 以 ${ZLITE_DEFAULT_API_KEY} 引用；可为空） */
+  apiKey: string
+  /** 可用模型列表（可为空 = 继承 zlite 默认模型） */
+  models: string[]
+}
+
 /** 工作目录（GET /api/v1/workspaces → `{ workspaces: Workspace[] }`） */
 export interface Workspace {
   id: number

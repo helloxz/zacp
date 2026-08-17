@@ -2,10 +2,11 @@
 import { onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useDialog, useMessage } from 'naive-ui'
-import { AddOutline, CreateOutline, CubeOutline, TrashOutline } from '@vicons/ionicons5'
+import { AddOutline, CreateOutline, CubeOutline, SettingsOutline, TrashOutline } from '@vicons/ionicons5'
 import { useAgentManageStore } from '@/stores/agentManage'
 import AgentConfigEditorModal from '@/components/shell/AgentConfigEditorModal.vue'
 import AddAgentModal from '@/components/shell/AddAgentModal.vue'
+import ZliteChannelModal from '@/components/shell/ZliteChannelModal.vue'
 import type { ManageAgent } from '@/types/models'
 
 const { t } = useI18n()
@@ -20,8 +21,12 @@ const editorShow = ref(false)
 // 「添加智能体」弹窗开关
 const addShow = ref(false)
 
+// 「删除智能体」确认弹窗逻辑（见 onDelete）。
 // 正在删除的 agentId（防重复点击；删除成功后列表刷新，条目消失）
 const deletingId = ref<string | null>(null)
+
+// zlite 专属「默认渠道设置」弹窗开关
+const zliteShow = ref(false)
 
 /**
  * 白色背景 tooltip 样式：覆盖 Naive UI 主题 CSS 变量（默认 tooltip 为深色底）。
@@ -204,41 +209,64 @@ function onDelete(agent: ManageAgent) {
             </div>
 
             <div class="flex shrink-0 items-center gap-3">
-              <!-- 已安装且后端登记了配置文件路径 → 提供「编辑配置」入口。
-                   用纯文字按钮（text 类型）：quaternary 按钮点击后有 hover 背景残留，
-                   与未点击项不协调；文字按钮 hover 仅变色、无背景块 -->
-              <n-button
-                v-if="agent.installed && agent.hasConfigFiles"
-                size="small"
-                text
-                type="primary"
-                @click="onEditConfig(agent)"
-              >
-                <template #icon>
-                  <n-icon :size="14"><CreateOutline /></n-icon>
-                </template>
-                {{ t('settings.agent.editConfig') }}
-              </n-button>
-              <!-- 未安装：开关禁用，左置白底 hover 提示先安装 -->
+              <!-- 操作区布局（按需求调整）：
+                   设置(zlite专属) → 编辑配置 → 删除 三枚图标按钮相邻，
+                   开关移到最右。图标按钮均为 quaternary circle 风格（hover 有背景色，
+                   与删除按钮一致），tooltip 统一白底。 -->
+              <!-- zlite 专属「默认渠道设置」：仅 zlite 且已安装时显示（见需求约定），
+                   放在操作区最前 -->
               <n-tooltip
-                v-if="!agent.installed"
+                v-if="agent.agentId === 'zlite' && agent.installed"
                 placement="left"
                 trigger="hover"
                 :style="whiteTooltipStyle"
               >
                 <template #trigger>
-                  <n-switch :value="agent.enabled" disabled />
+                  <span class="inline-flex">
+                    <n-button
+                      size="small"
+                      quaternary
+                      circle
+                      :aria-label="t('settings.agent.channelSetting')"
+                      @click="zliteShow = true"
+                    >
+                      <template #icon>
+                        <n-icon :size="14"><SettingsOutline /></n-icon>
+                      </template>
+                    </n-button>
+                  </span>
                 </template>
-                {{ t('settings.agent.notInstalledHint') }}
+                {{ t('settings.agent.channelSetting') }}
               </n-tooltip>
-              <n-switch
-                v-else
-                :value="agent.enabled"
-                :loading="store.isToggling(agent.agentId)"
-                @update:value="(v: boolean) => onToggle(agent, v)"
-              />
+
+              <!-- 编辑配置：已安装且后端登记了配置文件路径时提供入口（仅图标 + tooltip） -->
+              <n-tooltip
+                v-if="agent.installed && agent.hasConfigFiles"
+                placement="left"
+                trigger="hover"
+                :style="whiteTooltipStyle"
+              >
+                <template #trigger>
+                  <span class="inline-flex">
+                    <n-button
+                      size="small"
+                      quaternary
+                      circle
+                      type="primary"
+                      :aria-label="t('settings.agent.editConfig')"
+                      @click="onEditConfig(agent)"
+                    >
+                      <template #icon>
+                        <n-icon :size="14"><CreateOutline /></n-icon>
+                      </template>
+                    </n-button>
+                  </span>
+                </template>
+                {{ t('settings.agent.editConfig') }}
+              </n-tooltip>
+
               <!-- 删除：仅配置来源（source=config）可删；内置项无配置块，灰置禁用 +
-                   hover 提示（左置白底）。放在 switch 右侧，图标按钮即可 -->
+                   hover 提示（左置白底）。已移到编辑配置旁，与上方按钮同风格 -->
               <n-tooltip
                 placement="left"
                 trigger="hover"
@@ -265,6 +293,25 @@ function onDelete(agent: ManageAgent) {
                 </template>
                 {{ t('settings.agent.deleteBuiltinHint') }}
               </n-tooltip>
+
+              <!-- 未安装：开关禁用，左置白底 hover 提示先安装 -->
+              <n-tooltip
+                v-if="!agent.installed"
+                placement="left"
+                trigger="hover"
+                :style="whiteTooltipStyle"
+              >
+                <template #trigger>
+                  <n-switch :value="agent.enabled" disabled />
+                </template>
+                {{ t('settings.agent.notInstalledHint') }}
+              </n-tooltip>
+              <n-switch
+                v-else
+                :value="agent.enabled"
+                :loading="store.isToggling(agent.agentId)"
+                @update:value="(v: boolean) => onToggle(agent, v)"
+              />
             </div>
           </div>
 
@@ -285,6 +332,9 @@ function onDelete(agent: ManageAgent) {
       :agent="editTarget"
       @update:show="editorShow = $event"
     />
+
+    <!-- zlite 默认渠道设置弹窗（仅 zlite 行可见） -->
+    <ZliteChannelModal :show="zliteShow" @update:show="zliteShow = $event" />
 
     <!-- 添加智能体弹窗 -->
     <AddAgentModal :show="addShow" @update:show="addShow = $event" />
