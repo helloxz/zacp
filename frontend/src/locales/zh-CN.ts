@@ -237,6 +237,13 @@ export default {
       zliteLoadFailed: '加载默认渠道设置失败',
       zliteSaveSuccess: '已保存',
       zliteSaveFailed: '保存失败，请重试',
+      install: '安装 Zlite',
+      installTitle: '安装 Zlite',
+      installContent:
+        '即将在本机执行 Zlite 官方安装脚本：\n\n请确保本机网络可以访问 GitHub，否则安装可能失败。\n脚本将由系统终端执行，安装位置为 ~/.zlite 目录。\n\n脚本内容来自远程仓库（helloxz/zlite），执行前请确认网络环境可信。确定继续吗？',
+      installConfirm: '安装',
+      installSuccess: 'Zlite 安装成功',
+      installFailed: 'Zlite 安装失败',
     },
     system: {
       title: '系统设置',

@@ -171,6 +171,16 @@ export async function saveZliteDefaultChannel(
   await http.put('/api/v1/agents/zlite/default-channel', { body: channel })
 }
 
+/**
+ * POST /api/v1/agents/zlite/install — 安装 zlite 官方智能体（远程脚本，最长 5 分钟）。
+ * 调用前前端必须经确认弹窗（后端不做二次确认，只做幂等/并发/超时防护）。
+ * 失败错误码：agent_already_installed / unsupported_platform / installing_in_progress /
+ * zlite_install_timeout / zlite_install_failed（message 带脚本输出尾部）。
+ */
+export async function installZlite(): Promise<void> {
+  await http.post('/api/v1/agents/zlite/install')
+}
+
 /** GET /api/v1/workspaces — 工作区列表（按最近使用排序） */
 export async function fetchWorkspaces(): Promise<Workspace[]> {
   const data = await http.get<{ workspaces: Workspace[] }>('/api/v1/workspaces')

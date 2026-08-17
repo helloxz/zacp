@@ -88,6 +88,8 @@ func New(
 			// 静态段与 /agents/:agentId 动态段不冲突，manage 段已有先例）
 			authed.GET("/agents/zlite/default-channel", agentManageHandler.GetZliteDefaultChannel)
 			authed.PUT("/agents/zlite/default-channel", agentManageHandler.SaveZliteDefaultChannel)
+			// 安装 zlite（未安装时设置页显示安装按钮；5 分钟超时的远程脚本安装）
+			authed.POST("/agents/zlite/install", agentManageHandler.InstallZlite)
 
 			// 本地工具：只返回后端白名单中当前平台已安装的工具。
 			authed.GET("/tools", toolHandler.ListTools)

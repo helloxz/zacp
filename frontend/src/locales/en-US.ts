@@ -230,6 +230,13 @@ export default {
       zliteLoadFailed: 'Failed to load default channel settings',
       zliteSaveSuccess: 'Saved',
       zliteSaveFailed: 'Save failed, please retry',
+      install: 'Install Zlite',
+      installTitle: 'Install Zlite',
+      installContent:
+        'This will run the official Zlite install script on this machine:\n\nMake sure this machine can reach GitHub, otherwise the install may fail.\nThe script runs in your system shell and installs Zlite into the ~/.zlite directory.\n\nThe script comes from a remote repository (helloxz/zlite). Only proceed if you trust the network environment. Continue?',
+      installConfirm: 'Install',
+      installSuccess: 'Zlite installed successfully',
+      installFailed: 'Zlite install failed',
     },
     system: {
       title: 'System',

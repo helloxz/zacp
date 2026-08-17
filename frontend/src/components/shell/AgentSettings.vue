@@ -2,8 +2,9 @@
 import { onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useDialog, useMessage } from 'naive-ui'
-import { AddOutline, CreateOutline, CubeOutline, SettingsOutline, TrashOutline } from '@vicons/ionicons5'
+import { AddOutline, CreateOutline, CubeOutline, DownloadOutline, SettingsOutline, TrashOutline } from '@vicons/ionicons5'
 import { useAgentManageStore } from '@/stores/agentManage'
+import { installZlite } from '@/api'
 import AgentConfigEditorModal from '@/components/shell/AgentConfigEditorModal.vue'
 import AddAgentModal from '@/components/shell/AddAgentModal.vue'
 import ZliteChannelModal from '@/components/shell/ZliteChannelModal.vue'
@@ -27,6 +28,48 @@ const deletingId = ref<string | null>(null)
 
 // zlite 专属「默认渠道设置」弹窗开关
 const zliteShow = ref(false)
+
+// zlite 安装中状态（同一时刻只装一个；按钮 loading + 防重复点击）
+const installing = ref(false)
+
+/**
+ * 安装 zlite：先二次确认（GitHub 可达性 + 安装路径 ~/.zlite + 远程脚本风险），
+ * 确认后立即关闭弹窗并在后台发起安装（按钮转圈，最长 5 分钟），
+ * 完成后刷新智能体列表（安装成功后 installed 变 true，设置/编辑按钮随之出现）。
+ * 安装进度不可中断（页面刷新会取消请求，由后端清理进程组）。
+ */
+function onInstall() {
+  if (installing.value) return
+  dialog.warning({
+    title: t('settings.agent.installTitle'),
+    content: t('settings.agent.installContent'),
+    positiveText: t('settings.agent.installConfirm'),
+    negativeText: t('common.cancel'),
+    closable: false,
+    maskClosable: false,
+    onPositiveClick: () => {
+      // 确认即关弹窗并开始安装（不在确认按钮上挂 5 分钟 loading，交互更自然）
+      void runInstall()
+      return true
+    },
+  })
+}
+
+/** 执行安装：loading 期间按钮禁用，完成/失败后统一刷新列表并提示 */
+async function runInstall() {
+  if (installing.value) return
+  installing.value = true
+  try {
+    await installZlite()
+    message.success(t('settings.agent.installSuccess'))
+  } catch (e) {
+    // 后端错误 message 已带上脚本输出尾部，直接透传便于排查网络/环境问题
+    message.error(e instanceof Error && e.message ? e.message : t('settings.agent.installFailed'))
+  } finally {
+    installing.value = false
+    store.load() // 刷新 installed 状态：成功→设置按钮出现；失败→安装按钮恢复可点
+  }
+}
 
 /**
  * 白色背景 tooltip 样式：覆盖 Naive UI 主题 CSS 变量（默认 tooltip 为深色底）。
@@ -210,11 +253,39 @@ function onDelete(agent: ManageAgent) {
 
             <div class="flex shrink-0 items-center gap-3">
               <!-- 操作区布局（按需求调整）：
-                   设置(zlite专属) → 编辑配置 → 删除 三枚图标按钮相邻，
+                   安装(zlite未装) → 设置(zlite专属) → 编辑配置 → 删除 图标按钮相邻，
                    开关移到最右。图标按钮均为 quaternary circle 风格（hover 有背景色，
-                   与删除按钮一致），tooltip 统一白底。 -->
+                   与删除按钮一致），tooltip 统一白底。
+                   安装按钮仅 zlite 未安装时显示（安装后列表刷新、按钮消失，设置按钮出现）。 -->
+              <!-- 安装 zlite：未安装时提供官方脚本安装入口 -->
+              <n-tooltip
+                v-if="agent.agentId === 'zlite' && !agent.installed"
+                placement="left"
+                trigger="hover"
+                :style="whiteTooltipStyle"
+              >
+                <template #trigger>
+                  <span class="inline-flex">
+                    <n-button
+                      size="small"
+                      quaternary
+                      circle
+                      :loading="installing"
+                      :disabled="installing"
+                      :aria-label="t('settings.agent.install')"
+                      @click="onInstall"
+                    >
+                      <template #icon>
+                        <n-icon :size="14"><DownloadOutline /></n-icon>
+                      </template>
+                    </n-button>
+                  </span>
+                </template>
+                {{ t('settings.agent.install') }}
+              </n-tooltip>
+
               <!-- zlite 专属「默认渠道设置」：仅 zlite 且已安装时显示（见需求约定），
-                   放在操作区最前 -->
+                   放在操作区最前（安装按钮右侧） -->
               <n-tooltip
                 v-if="agent.agentId === 'zlite' && agent.installed"
                 placement="left"
