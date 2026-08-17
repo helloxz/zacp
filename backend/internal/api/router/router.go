@@ -68,7 +68,11 @@ func New(
 			// 设置页智能体管理（全量目录 + 开关，见 handlers.AgentManageHandler）
 			// 注意：/agents/manage 为静态段，与 /agents/:agentId/status 无路由冲突
 			authed.GET("/agents/manage", agentManageHandler.ListManageAgents)
+			// 添加自定义智能体（写 config.toml + 热更新，默认启用）
+			authed.POST("/agents", agentManageHandler.AddAgent)
 			authed.PUT("/agents/:agentId", agentManageHandler.SetAgentEnabled)
+			// 删除自定义智能体（移除 config.toml 块 + 热更新停用）
+			authed.DELETE("/agents/:agentId", agentManageHandler.DeleteAgent)
 			// 智能体配置文件读写（设置页「编辑配置」弹窗；路径白名单在后端校验）
 			authed.GET("/agents/:agentId/config-files", agentManageHandler.ListConfigFiles)
 			authed.GET("/agents/:agentId/config-files/content", agentManageHandler.ReadConfigFileContent)

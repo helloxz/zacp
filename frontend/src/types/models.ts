@@ -37,6 +37,26 @@ export interface ManageAgent {
 }
 
 /**
+ * POST /api/v1/agents — 添加自定义智能体的表单数据。
+ * args 为原始参数字符串（如 `--model "gpt-4o" --acp`），由后端引号感知切分为参数数组。
+ */
+export interface AddAgentInput {
+  name: string
+  id: string
+  command: string
+  args: string
+}
+
+/** POST /api/v1/agents 成功响应的智能体摘要（source 恒为 "config"）。 */
+export interface AddedAgent {
+  agentId: string
+  name: string
+  command: string
+  enabled: boolean
+  source: 'config'
+}
+
+/**
  * 智能体配置文件条目（GET /api/v1/agents/:agentId/config-files → `{ files }`）。
  * 后端已按 HOME 展开检查存在性，只返回真实存在的文件；path 为 `~/...` 相对形式。
  */

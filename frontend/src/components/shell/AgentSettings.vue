@@ -1,19 +1,38 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { useMessage } from 'naive-ui'
-import { CreateOutline, CubeOutline } from '@vicons/ionicons5'
+import { useDialog, useMessage } from 'naive-ui'
+import { AddOutline, CreateOutline, CubeOutline, TrashOutline } from '@vicons/ionicons5'
 import { useAgentManageStore } from '@/stores/agentManage'
 import AgentConfigEditorModal from '@/components/shell/AgentConfigEditorModal.vue'
+import AddAgentModal from '@/components/shell/AddAgentModal.vue'
 import type { ManageAgent } from '@/types/models'
 
 const { t } = useI18n()
 const message = useMessage()
+const dialog = useDialog()
 const store = useAgentManageStore()
 
 // 「编辑配置」弹窗：目标智能体 + 开关
 const editTarget = ref<ManageAgent | null>(null)
 const editorShow = ref(false)
+
+// 「添加智能体」弹窗开关
+const addShow = ref(false)
+
+// 正在删除的 agentId（防重复点击；删除成功后列表刷新，条目消失）
+const deletingId = ref<string | null>(null)
+
+/**
+ * 白色背景 tooltip 样式：覆盖 Naive UI 主题 CSS 变量（默认 tooltip 为深色底）。
+ * --n-color 同时控制气泡与箭头背景色（见 popover 样式实现），
+ * --n-text-color 控制提示文字颜色。设置页内容区 tooltip 统一用白底。
+ */
+const whiteTooltipStyle = {
+  '--n-color': '#ffffff',
+  '--n-text-color': '#3f3f46',
+  '--n-box-shadow': '0 2px 8px rgba(0, 0, 0, 0.12)',
+}
 
 /** 打开某智能体的配置编辑弹窗 */
 function onEditConfig(agent: ManageAgent) {
@@ -48,6 +67,38 @@ function retry() {
   store.error = null
   store.load()
 }
+
+/**
+ * 删除智能体（仅 source=config 可删）：先弹确认框（内容带 agent 名称，
+ * 并提示运行中的会话将中断），确认后调用后端移除配置并热更新停用。
+ * 失败时保持弹窗打开让用户可重试（onPositiveClick 返回 false 阻止关闭）。
+ */
+function onDelete(agent: ManageAgent) {
+  dialog.warning({
+    title: t('settings.agent.deleteTitle'),
+    content: t('settings.agent.deleteContent', { name: agent.name }),
+    positiveText: t('settings.agent.delete'),
+    negativeText: t('common.cancel'),
+    onPositiveClick: () =>
+      new Promise<boolean>(async (resolve) => {
+        if (deletingId.value) {
+          resolve(false)
+          return
+        }
+        deletingId.value = agent.agentId
+        try {
+          await store.remove(agent)
+          message.success(t('settings.agent.deleteSuccess', { name: agent.name }))
+          resolve(true)
+        } catch (e) {
+          message.error(e instanceof Error ? e.message : t('settings.agent.deleteFailed'))
+          resolve(false) // 删除失败：弹窗保持打开，便于重试
+        } finally {
+          deletingId.value = null
+        }
+      }),
+  })
+}
 </script>
 
 <template>
@@ -59,15 +110,32 @@ function retry() {
         </h3>
         <p class="mt-1 text-sm text-ink-muted">{{ t('settings.agent.desc') }}</p>
       </div>
-      <n-tag
-        v-if="!store.loading && store.list.length"
-        size="small"
-        round
-        :bordered="false"
-        type="info"
-      >
-        {{ t('settings.agent.enabledCount', { count: store.enabledCount }) }}
-      </n-tag>
+      <div class="flex shrink-0 items-center gap-2">
+        <!-- 添加自定义智能体（写配置 + 默认启用）。
+             size=tiny 高度 22px 与旁边「已启用」n-tag(small) 对齐；tertiary 无边框
+             浅色填充 + 胶囊圆角（见 .add-agent-btn 样式），与 tag 风格一致 -->
+        <n-button
+          size="tiny"
+          type="primary"
+          tertiary
+          class="add-agent-btn"
+          @click="addShow = true"
+        >
+          <template #icon>
+            <n-icon :size="12"><AddOutline /></n-icon>
+          </template>
+          {{ t('settings.agent.add') }}
+        </n-button>
+        <n-tag
+          v-if="!store.loading && store.list.length"
+          size="small"
+          round
+          :bordered="false"
+          type="info"
+        >
+          {{ t('settings.agent.enabledCount', { count: store.enabledCount }) }}
+        </n-tag>
+      </div>
     </div>
 
     <!-- 加载失败：显示错误与重试 -->
@@ -151,8 +219,13 @@ function retry() {
                 </template>
                 {{ t('settings.agent.editConfig') }}
               </n-button>
-              <!-- 未安装：开关禁用，hover 提示先安装 -->
-              <n-tooltip v-if="!agent.installed" trigger="hover">
+              <!-- 未安装：开关禁用，左置白底 hover 提示先安装 -->
+              <n-tooltip
+                v-if="!agent.installed"
+                placement="left"
+                trigger="hover"
+                :style="whiteTooltipStyle"
+              >
                 <template #trigger>
                   <n-switch :value="agent.enabled" disabled />
                 </template>
@@ -164,6 +237,34 @@ function retry() {
                 :loading="store.isToggling(agent.agentId)"
                 @update:value="(v: boolean) => onToggle(agent, v)"
               />
+              <!-- 删除：仅配置来源（source=config）可删；内置项无配置块，灰置禁用 +
+                   hover 提示（左置白底）。放在 switch 右侧，图标按钮即可 -->
+              <n-tooltip
+                placement="left"
+                trigger="hover"
+                :disabled="agent.source === 'config'"
+                :style="whiteTooltipStyle"
+              >
+                <template #trigger>
+                  <span class="inline-flex">
+                    <n-button
+                      size="small"
+                      quaternary
+                      circle
+                      type="error"
+                      :disabled="agent.source !== 'config' || deletingId !== null"
+                      :loading="deletingId === agent.agentId"
+                      :aria-label="t('settings.agent.delete')"
+                      @click="onDelete(agent)"
+                    >
+                      <template #icon>
+                        <n-icon :size="14"><TrashOutline /></n-icon>
+                      </template>
+                    </n-button>
+                  </span>
+                </template>
+                {{ t('settings.agent.deleteBuiltinHint') }}
+              </n-tooltip>
             </div>
           </div>
 
@@ -184,5 +285,17 @@ function retry() {
       :agent="editTarget"
       @update:show="editorShow = $event"
     />
+
+    <!-- 添加智能体弹窗 -->
+    <AddAgentModal :show="addShow" @update:show="addShow = $event" />
   </div>
 </template>
+
+<style scoped>
+/* 「添加」按钮与旁边「已启用 n 个」n-tag（small + round）视觉统一：
+   tiny 高度同为 22px，这里把按钮圆角覆盖为胶囊形（--n-border-radius
+   是 Naive UI 按钮圆角的 CSS 变量，组件根上覆盖即对内部生效） */
+.add-agent-btn {
+  --n-border-radius: 9999px;
+}
+</style>

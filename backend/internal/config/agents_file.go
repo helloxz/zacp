@@ -102,6 +102,48 @@ func SetAgentEnabled(configPath string, agent AgentConfig, enabled bool) error {
 	return writeFileAtomic(configPath, restoreEOL(out, eol))
 }
 
+// RemoveAgent 从配置文件删除指定 id 的 [[agents]] 块并原子写回：
+//   - 配置中存在该 id：删除其块（含块内所有字段行），块后紧跟的分隔空行一并删除，
+//     避免删除后悬挂多余空行
+//   - 配置中不存在：返回错误（正常流程调用方已先 ReadAgents 校验过，此处兜底）
+//
+// 与 SetAgentEnabled 共用 configWriteMu 互斥锁，保证并发写回不互相覆盖；
+// 文件行尾风格（CRLF）与权限保持。删除不可恢复（config.toml 无备份），
+// 由调用方（前端确认弹窗）负责确认。
+func RemoveAgent(configPath, agentID string) error {
+	configWriteMu.Lock()
+	defer configWriteMu.Unlock()
+
+	raw, err := os.ReadFile(configPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return fmt.Errorf("agent '%s' not found in config", agentID)
+		}
+		return fmt.Errorf("read config: %w", err)
+	}
+	eol := "\n"
+	if strings.Contains(string(raw), "\r\n") {
+		eol = "\r\n"
+	}
+	lines := strings.Split(strings.ReplaceAll(string(raw), "\r\n", "\n"), "\n")
+	blocks := parseAgentBlocks(lines)
+
+	for _, b := range blocks {
+		if strings.EqualFold(b.cfg.ID, agentID) {
+			// 块后紧跟的连续空行随块删除（通常是块与下一段的分隔空行）；
+			// 块前的空行/注释保留（可能归属上一段，无法可靠区分归属，保守保留）
+			end := b.end
+			for end < len(lines) && strings.TrimSpace(lines[end]) == "" {
+				end++
+			}
+			out := append(append([]string{}, lines[:b.start]...), lines[end:]...)
+			joined := strings.TrimRight(strings.Join(out, "\n"), "\n") + "\n"
+			return writeFileAtomic(configPath, restoreEOL(joined, eol))
+		}
+	}
+	return fmt.Errorf("agent '%s' not found in config", agentID)
+}
+
 // restoreEOL 将 LF 内容按目标行尾风格还原（eol 为 "\n" 时原样返回）。
 func restoreEOL(s, eol string) string {
 	if eol == "\n" {

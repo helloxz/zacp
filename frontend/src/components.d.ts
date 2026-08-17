@@ -12,6 +12,7 @@ export {}
 declare module 'vue' {
   export interface GlobalComponents {
     AboutSettings: typeof import('./components/shell/AboutSettings.vue')['default']
+    AddAgentModal: typeof import('./components/shell/AddAgentModal.vue')['default']
     AgentConfigEditorModal: typeof import('./components/shell/AgentConfigEditorModal.vue')['default']
     AgentSettings: typeof import('./components/shell/AgentSettings.vue')['default']
     AppSidebar: typeof import('./components/shell/AppSidebar.vue')['default']
@@ -38,6 +39,8 @@ declare module 'vue' {
     NDropdown: typeof import('naive-ui')['NDropdown']
     NEmpty: typeof import('naive-ui')['NEmpty']
     NewSessionPane: typeof import('./components/chat/NewSessionPane.vue')['default']
+    NForm: typeof import('naive-ui')['NForm']
+    NFormItem: typeof import('naive-ui')['NFormItem']
     NIcon: typeof import('naive-ui')['NIcon']
     NImage: typeof import('naive-ui')['NImage']
     NInput: typeof import('naive-ui')['NInput']

@@ -21,6 +21,8 @@ import { ApiError, type ApiErrorBody } from './types'
 import { apiUrl } from '@/config/env'
 import { readAuthToken } from '@/utils/authStorage'
 import type {
+  AddAgentInput,
+  AddedAgent,
   Agent,
   AvailableCommand,
   ChatMessage,
@@ -81,6 +83,30 @@ export async function setAgentEnabled(
   await http.put(`/api/v1/agents/${encodeURIComponent(agentId)}`, {
     body: { enabled },
   })
+}
+
+/**
+ * POST /api/v1/agents — 添加自定义智能体（写 config.toml + 运行时热更新，默认启用）。
+ * 后端校验：id 全局唯一（与配置及内置目录均大小写不敏感去重）、command 真实存在；
+ * args 为原始参数字符串（如 `--model "gpt-4o"`），由后端按引号感知规则切分，
+ * 前端不重复实现解析逻辑。
+ * 失败错误码：agent_id_invalid / agent_id_exists / agent_command_not_found 等。
+ */
+export async function addAgent(input: AddAgentInput): Promise<AddedAgent> {
+  const data = await http.post<{ agent: AddedAgent }>('/api/v1/agents', {
+    body: input,
+  })
+  return data.agent
+}
+
+/**
+ * DELETE /api/v1/agents/:agentId — 删除自定义智能体（从 config.toml 移除块 + 热更新停用）。
+ * 仅配置来源（source=config）可删；内置智能体不在配置中，后端返回 400
+ * （agent_builtin_not_deletable）；完全不存在返回 404（agent_not_found）。
+ * 删除不可恢复；历史会话数据保留在数据库，不受影响。
+ */
+export async function deleteAgent(agentId: string): Promise<void> {
+  await http.delete(`/api/v1/agents/${encodeURIComponent(agentId)}`)
 }
 
 /**

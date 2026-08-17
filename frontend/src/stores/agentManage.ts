@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia'
 import { computed, reactive, ref } from 'vue'
-import { fetchManageAgents, setAgentEnabled } from '@/api'
-import type { ManageAgent } from '@/types/models'
+import { addAgent, deleteAgent, fetchManageAgents, setAgentEnabled } from '@/api'
+import type { AddAgentInput, ManageAgent } from '@/types/models'
 
 /**
  * 设置页「智能体」目录 store。
@@ -59,5 +59,25 @@ export const useAgentManageStore = defineStore('agentManage', () => {
     return toggling.has(agentId)
   }
 
-  return { list, loading, error, enabledCount, load, toggle, isToggling }
+  /**
+   * 添加自定义智能体：调用后端（写 config.toml + 热更新，默认启用）。
+   * 成功后重新拉取列表（新条目以 source=config、enabled=true 出现在列表）。
+   * 失败时抛出异常由调用方提示；ID 冲突 / 命令不存在等后端错误信息会透传到 message。
+   */
+  async function add(input: AddAgentInput) {
+    const added = await addAgent(input)
+    await load()
+    return added
+  }
+
+  /**
+   * 删除自定义智能体：调用后端（移除 config.toml 块 + 热更新停用），成功后刷新列表。
+   * 删除前由调用方（确认弹窗）与用户确认；失败时抛出异常由调用方提示。
+   */
+  async function remove(agent: ManageAgent) {
+    await deleteAgent(agent.agentId)
+    await load()
+  }
+
+  return { list, loading, error, enabledCount, load, toggle, isToggling, add, remove }
 })
