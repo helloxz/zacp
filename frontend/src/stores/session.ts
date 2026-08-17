@@ -41,6 +41,16 @@ const DEFAULT_SESSION_TITLE = '新会话'
 /** 会话历史与后端首屏消息窗口保持一致；更早消息不参与计划恢复。 */
 const SESSION_HISTORY_LIMIT = 100
 /**
+ * 对话轮次上限与告警阈值（纯前端限制，不做后端拦截）：
+ * - 轮次口径 = 会话内 role=user 的消息数（取消/失败轮也计入；见 turnCountOf）；
+ * - 可靠性不变量：每轮后端落库 2 条（1 user + 1 assistant，取消轮只落 user），
+ *   故 SESSION_HISTORY_LIMIT=100 恰好 = 50 轮 × 2 条。轮次 ≥ 50 后窗口裁剪
+ *   （slice(-100)）正好让 user 计数稳定停在 50，满格禁用不会失效；
+ *   若将来调整窗口 limit 或加「加载更早历史」，需同步复核本方案。
+ */
+export const MAX_TURNS_PER_SESSION = 50
+export const WARN_TURNS_PER_SESSION = 30
+/**
  * 取消确认保险丝：点击停止后，若后端广播 turn.done/error 丢失（如 WS 断线、
  * agent 未响应），cancelling 状态会卡住界面。此处兜底强推收尾。
  * 后端最坏路径为 20s 超时 kill + 广播，这里留 5s 余量。
@@ -312,6 +322,21 @@ export const useSessionStore = defineStore('session', () => {
 	function streamErrorOf(sessionId: number | null | undefined): string | null {
 		if (sessionId === null || sessionId === undefined) return null
 		return streamErrorBySession.value[sessionId] ?? null
+	}
+
+	/**
+	 * 对话轮次数：会话内 role=user 的消息条数（发送即 +1，取消/失败轮也计入，
+	 * 与后端落库口径一致）。封顶 MAX_TURNS_PER_SESSION：窗口裁剪前乐观插入
+	 * 等瞬时窗口 user 计数可能 >50，展示层不出现「55/50」；封顶不影响
+	 * 「>=50 禁用」判定。与窗口 100 条耦合原因见常量处注释。
+	 */
+	function turnCountOf(sessionId: number | null | undefined): number {
+		if (sessionId === null || sessionId === undefined) return 0
+		let count = 0
+		for (const msg of messagesById.value[sessionId] ?? []) {
+			if (msg.role === 'user') count++
+		}
+		return Math.min(count, MAX_TURNS_PER_SESSION)
 	}
 
 	function setSessionStreamError(sessionId: number, message: string | null) {
@@ -1479,6 +1504,7 @@ export const useSessionStore = defineStore('session', () => {
     streaming,
     currentStatus,
     statusOf,
+    turnCountOf,
     streamBlocksOf,
     activeToolCardsOf,
     activePlanOf,

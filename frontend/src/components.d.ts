@@ -72,6 +72,7 @@ declare module 'vue' {
     ToolCallCard: typeof import('./components/chat/ToolCallCard.vue')['default']
     TtyTabs: typeof import('./components/tty/TtyTabs.vue')['default']
     TtyTerminal: typeof import('./components/tty/TtyTerminal.vue')['default']
+    TurnIndicator: typeof import('./components/chat/TurnIndicator.vue')['default']
     UserFooter: typeof import('./components/shell/UserFooter.vue')['default']
     UserSettings: typeof import('./components/shell/UserSettings.vue')['default']
     WelcomeHero: typeof import('./components/chat/WelcomeHero.vue')['default']

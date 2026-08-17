@@ -55,4 +55,5 @@
 - ~~文件编辑需要白名单，不能啥文件都支持编辑，比如mp3等~~
 - 支持显示对话轮次
 - 支持Docker部署：延后
+- 适配移动端
 - 这个消息提示啥意思：time=2026-08-13T19:11:39.561+08:00 level=WARN msg="send buffer full, dropping message"

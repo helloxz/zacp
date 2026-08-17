@@ -102,6 +102,13 @@ export default {
     ttyPopupBlocked: 'The browser blocked the new tab; allow popups and try again',
     toolOpened: 'Local tool started',
     toolOpenFailed: 'Failed to start local tool; check that it is installed',
+    // Turn indicator (TurnIndicator): ring + tooltip status copy; warn at 30 turns, cap at 50
+    turnIndicatorAria: 'Conversation turns {count} / {max}',
+    turnCount: '{count} / {max} turns',
+    turnStatusGood: 'Context is healthy — response quality is good',
+    turnStatusWarn: 'Many turns — quality may degrade. Consider starting a new session.',
+    turnStatusLimit: 'Reached the {max}-turn limit. Sending is disabled — start a new session.',
+    turnLimitBanner: 'Reached the {max}-turn limit. Sending is disabled — start a new session.',
   },
   tool: {
     running: 'Running',

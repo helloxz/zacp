@@ -10,10 +10,11 @@ import {
   TerminalOutline,
 } from '@vicons/ionicons5'
 import HeaderIconButton from '@/components/chat/HeaderIconButton.vue'
+import TurnIndicator from '@/components/chat/TurnIndicator.vue'
 import { acpSocket } from '@/composables/useAcpSocket'
 import { fetchExternalTools, openSessionTool } from '@/api'
 import { useAgentStore } from '@/stores/agent'
-import { useSessionStore } from '@/stores/session'
+import { useSessionStore, MAX_TURNS_PER_SESSION } from '@/stores/session'
 import { useAppStore } from '@/stores/app'
 import type { ExternalTool } from '@/types/models'
 import WelcomeHero from '@/components/chat/WelcomeHero.vue'
@@ -178,6 +179,9 @@ function onGoNewSession() {
 /** 当前会话对象；null → 非会话态 */
 const current = computed(() => sessionStore.activeSession)
 
+/** 当前会话对话轮次（role=user 消息数；口径见 store.turnCountOf）。0 轮不渲染指示器。 */
+const turnCount = computed(() => sessionStore.turnCountOf(current.value?.id))
+
 /** 会话头部 Agent 标签文案 */
 function agentNameOf(agentId: string): string {
   return agentStore.list.find((a) => a.agentId === agentId)?.name ?? agentId
@@ -248,6 +252,8 @@ function onNewProjectFromHero() {
         <span class="min-w-0 flex-1 truncate text-sm font-medium text-ink">
           {{ current.title || t('chat.newChatTitle') }}
         </span>
+        <!-- 对话轮次指示器：圆环展示进度，悬停查看详情；0 轮（草稿/空会话）不显示 -->
+        <TurnIndicator v-if="turnCount > 0" :turns="turnCount" />
         <!-- Web TTY：使用当前会话所属工作区，在新浏览器 Tab 打开临时终端。 -->
         <HeaderIconButton :title="t('chat.openWebTTY')" @click="openWebTTY">
           <TerminalOutline />
@@ -315,6 +321,7 @@ function onNewProjectFromHero() {
           mode="bar"
           :agent-id="current.agentId"
           :status="sessionStore.statusOf(current.id)"
+          :turn-limited="turnCount >= MAX_TURNS_PER_SESSION"
           @submit="onSubmit"
           @cancel="sessionStore.cancelSend(current.id)"
         />

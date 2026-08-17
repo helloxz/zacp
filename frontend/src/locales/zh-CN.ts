@@ -112,6 +112,13 @@ export default {
     ttyPopupBlocked: '浏览器阻止了新窗口，请允许后重试',
     toolOpened: '已启动本地工具',
     toolOpenFailed: '启动本地工具失败，请检查工具是否已安装',
+    // 对话轮次指示器（TurnIndicator）：圆环 + tooltip 状态文案，30 轮告警、50 轮上限
+    turnIndicatorAria: '对话轮次 {count} / {max}',
+    turnCount: '对话 {count} / {max} 轮',
+    turnStatusGood: '轮次正常，回答质量良好',
+    turnStatusWarn: '轮次较多，回答质量可能下降，建议及时新建会话',
+    turnStatusLimit: '已达 {max} 轮上限，已停止发送，建议新建会话',
+    turnLimitBanner: '已达 {max} 轮对话上限，已停止发送，建议新建会话',
   },
   tool: {
     running: '执行中',

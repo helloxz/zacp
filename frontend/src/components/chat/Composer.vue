@@ -5,7 +5,7 @@ import { useI18n } from 'vue-i18n'
 import { SendOutline, StopOutline } from '@vicons/ionicons5'
 import { NIcon, useMessage } from 'naive-ui'
 import type { InputInst, SelectGroupOption, SelectOption } from 'naive-ui'
-import { useSessionStore, type SessionStreamStatus } from '@/stores/session'
+import { useSessionStore, MAX_TURNS_PER_SESSION, type SessionStreamStatus } from '@/stores/session'
 import { uploadFiles } from '@/api'
 import { extractPastedFiles, prepareFile } from '@/utils/fileUpload'
 import type { ConfigOptionValue } from '@/types/models'
@@ -28,8 +28,10 @@ const props = withDefaults(
      * idle=可发送 / queued=已发送排队中（可取消）/ streaming=流式进行中（停止按钮）
      */
     status?: SessionStreamStatus
+    /** 会话轮次达到上限（MAX_TURNS_PER_SESSION）：输入框与发送按钮一并禁用，显示提示条。 */
+    turnLimited?: boolean
   }>(),
-  { mode: 'bar', agentId: undefined, status: 'idle' },
+  { mode: 'bar', agentId: undefined, status: 'idle', turnLimited: false },
 )
 
 const emit = defineEmits<{
@@ -360,9 +362,10 @@ watch(
   },
 )
 
-/** 可发送：bar 模式不要求 Agent（沿用当前会话）；card 模式必须已选 Agent；上传图片期间禁止发送 */
+/** 可发送：bar 模式不要求 Agent（沿用当前会话）；card 模式必须已选 Agent；上传图片期间禁止发送；轮次达上限禁止发送 */
 const canSend = computed(
   () =>
+    !props.turnLimited &&
     !imageUploading.value &&
     text.value.trim().length > 0 &&
     (props.mode === 'bar' || !!selectedAgentId.value),
@@ -458,9 +461,18 @@ function onKeydown(e: KeyboardEvent) {
       :bordered="false"
       :autosize="{ minRows: mode === 'card' ? 3 : 2, maxRows: 8 }"
       :placeholder="t('chat.placeholder')"
+      :disabled="turnLimited"
       @keydown="onKeydown"
       @paste="onPaste"
     />
+
+    <!-- 轮次达上限提示条：禁用输入与发送，引导新建会话（与下方错误条同位，避免布局跳动） -->
+    <div
+      v-if="turnLimited"
+      class="mt-1.5 rounded bg-red-50 px-2 py-1 text-xs leading-relaxed text-red-500 dark:bg-red-950/40 dark:text-red-400"
+    >
+      {{ t('chat.turnLimitBanner', { max: MAX_TURNS_PER_SESSION }) }}
+    </div>
 
     <!-- 配置项更新失败提示条：显示 agent 真实拒绝原因（如列表过期），3 秒自动消失 -->
     <div
