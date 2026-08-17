@@ -19,6 +19,7 @@ import (
 // 各 agent 的 ACP 启动参数并不统一，已按实际 CLI 校准：
 //   - reasonix:  --acp
 //   - omp:       acp（无 -- 前缀）
+//   - zlite:     -acp（单横线，与 reasonix 的 --acp 不同）
 //   - qodercn:   二进制名是 qoderclicn，id 与显示名是 QoderCN
 //   - grok:      agent stdio
 //
@@ -27,6 +28,7 @@ import (
 var BuiltinAgents = []config.AgentConfig{
 	{ID: "reasonix", Name: "Reasonix", Command: "reasonix", Args: []string{"--acp"}},
 	{ID: "omp", Name: "Omp", Command: "omp", Args: []string{"acp"}},
+	{ID: "zlite", Name: "Zlite", Command: "zlite", Args: []string{"-acp"}},
 	{ID: "qodercn", Name: "QoderCN", Command: "qoderclicn", Args: []string{"--acp"}},
 	{ID: "qoder", Name: "Qoder", Command: "qodercli", Args: []string{"--acp"}},
 	{ID: "grok", Name: "Grok", Command: "grok", Args: []string{"agent", "stdio"}},
@@ -61,6 +63,11 @@ var AgentConfigPaths = map[string][]string{
 		"~/.omp/agent/config.yml",
 		"~/.omp/agent/models.yml",
 		"~/.omp/agent/.env",
+	},
+	"zlite": {
+		"~/.zlite/config.toml",
+		"~/.zlite/mcp.json",
+		"~/.zlite/.env",
 	},
 	"opencode": {
 		"~/.config/opencode/opencode.json",

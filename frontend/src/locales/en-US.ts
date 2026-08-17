@@ -166,6 +166,7 @@ export default {
       installed: 'Installed',
       notInstalled: 'Not installed',
       builtin: 'Built-in',
+      official: 'Official',
       notInstalledHint: 'Command not found on this machine, install it first',
       toggleFailed: 'Operation failed, please retry',
       enabledToast: '{name} enabled',

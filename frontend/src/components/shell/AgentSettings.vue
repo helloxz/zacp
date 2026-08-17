@@ -102,6 +102,14 @@ function retry() {
                     {{ agent.name }}
                   </span>
                   <n-tag
+                    v-if="agent.agentId === 'zlite'"
+                    size="tiny"
+                    :bordered="false"
+                    type="info"
+                  >
+                    {{ t('settings.agent.official') }}
+                  </n-tag>
+                  <n-tag
                     v-if="agent.source === 'builtin'"
                     size="tiny"
                     :bordered="false"

@@ -173,6 +173,7 @@ export default {
       installed: '已安装',
       notInstalled: '未安装',
       builtin: '内置',
+      official: '官方',
       notInstalledHint: '未在本机检测到该命令，请先安装后再启用',
       toggleFailed: '操作失败，请重试',
       enabledToast: '已启用 {name}',
