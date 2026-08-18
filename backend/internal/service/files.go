@@ -61,6 +61,9 @@ var (
 	// 如 mp3/mp4/zip 等二进制类型），拒绝在文本编辑器打开/写入。
 	// 放在内容检测（NUL / UTF-8）之前显式拦截，避免漏网二进制被读进编辑器甚至写回破坏。
 	ErrNotEditableFile = errors.New("file type not editable")
+	// ErrDownloadTooLarge 单文件超过下载大小上限（100MB）。
+	// 下载（含图片预览共用）走 raw 直链端点，若不加限制，工作区大文件可被整包拉走。
+	ErrDownloadTooLarge = errors.New("file too large to download")
 )
 
 // 上传大小上限（与前端压缩约定一致：图片 5MB，其余 10MB）。
@@ -74,6 +77,9 @@ const (
 	// MaxEditableSizeBytes 编辑器可打开/写入的文件大小上限（2MB）。
 	// 超过该上限的文件拒绝读/写：避免把超大文件整读进内存、拖垮前端编辑器渲染。
 	MaxEditableSizeBytes = 2 << 20 // 2MB
+	// MaxDownloadSizeBytes 单文件下载大小上限（100MB）。
+	// 应用于 raw 直链端点（下载 / 图片预览共用），超限统一拒绝，防止绕过下载限制。
+	MaxDownloadSizeBytes = 100 << 20 // 100MB
 )
 
 // ignoredDirNames 始终不展示的大目录（无论是否显示隐藏文件）。
@@ -589,6 +595,31 @@ func (s *FileService) ResolveFile(workspaceID uint, rel string) (string, error) 
 	}
 	if info.IsDir() {
 		return "", ErrNotDirectory
+	}
+	return path, nil
+}
+
+// ResolveFileForDownload 校验并解析工作区文件，且强制单文件 ≤100MB 才可通过 raw 端点下载。
+//
+// 与 ResolveFile 边界校验一致；大小上限同时约束下载与图片预览（同一 raw 直链端点），
+// 避免大文件被整包拉走的同时，也防止前端绕过下载限制改用图片预览读取。
+// 返回值是可直接交给静态文件服务的真实路径。
+func (s *FileService) ResolveFileForDownload(workspaceID uint, rel string) (string, error) {
+	path, err := s.ResolveFile(workspaceID, rel)
+	if err != nil {
+		return "", err
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		// ResolveFile 刚 stat 成功过，这里失败几乎只可能是文件被并发删除；
+		// 映射为 404 而不是 500，避免前端收到笼统的服务端错误。
+		if errors.Is(err, os.ErrNotExist) {
+			return "", ErrPathNotFound
+		}
+		return "", fmt.Errorf("stat file: %w", err)
+	}
+	if info.Size() > MaxDownloadSizeBytes {
+		return "", ErrDownloadTooLarge
 	}
 	return path, nil
 }

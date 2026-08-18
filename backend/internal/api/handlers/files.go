@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strconv"
 
 	"github.com/gin-gonic/gin"
@@ -210,8 +211,9 @@ func (h *FileHandler) PreviewToken(c *gin.Context) {
 		return
 	}
 	// 先做与 RawFile 一致的路径合法性/存在性校验（防穿越），
-	// 再以原始相对路径签发绑定 token，保证直链校验与 raw 端点拿到的 path 一致。
-	if _, err := h.svc.ResolveFile(id, req.Path); err != nil {
+	// 并复用下载上限校验（≤100MB）：超限文件提前 413，避免签发 token 后
+	// 在浏览器原生下载/预览阶段才静默失败（图片预览破图、下载无声无息）。
+	if _, err := h.svc.ResolveFileForDownload(id, req.Path); err != nil {
 		writeFileError(c, err)
 		return
 	}
@@ -221,21 +223,32 @@ func (h *FileHandler) PreviewToken(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"url": url})
 }
 
-// RawFile GET /api/v1/workspaces/:id/files/raw?path=<相对路径>
+// RawFile GET /api/v1/workspaces/:id/files/raw?path=<相对路径>[&download=1]
 //
 // 返回文件原始字节（Content-Type 按扩展名推断），供前端图片预览 / 文件下载。
+// 与预览共用同一端点：携带 ≤100MB 下载上限（见 ResolveFileForDownload），
+// 超限返回 413，防止工作区大文件被整包拉走或经预览绕过下载限制。
+// `download=1` 时返回 Content-Disposition: attachment，强制浏览器落盘——
+// 跨源部署下前端 `<a download>` 属性会被浏览器忽略（仅同源/blob URL 生效），
+// 文本类直链会退化为当前窗口内联渲染，必须靠附件响应头触发下载。
 func (h *FileHandler) RawFile(c *gin.Context) {
 	id, err := parseWorkspaceID(c)
 	if err != nil {
 		writeError(c, http.StatusBadRequest, "invalid_workspace_id", err.Error())
 		return
 	}
-	path, err := h.svc.ResolveFile(id, c.Query("path"))
+	path, err := h.svc.ResolveFileForDownload(id, c.Query("path"))
 	if err != nil {
 		writeFileError(c, err)
 		return
 	}
-	// 已通过 symlink 逃逸校验，可安全交给静态文件服务
+	// 已通过边界 + ≤100MB 校验，可安全交给静态文件服务。
+	// 预览（<img src> 子资源加载）不传 download=1，维持 inline；
+	// 下载场景传 download=1，文件名取真实 basename（与工作区条目名一致）。
+	if c.Query("download") == "1" {
+		c.FileAttachment(path, filepath.Base(path))
+		return
+	}
 	c.File(path)
 }
 
@@ -328,6 +341,8 @@ func writeFileError(c *gin.Context, err error) {
 		writeError(c, http.StatusRequestEntityTooLarge, "file_too_large", "文件超过大小上限（图片 5MB / 其他 10MB）")
 	case errors.Is(err, service.ErrFileTooLargeForEdit):
 		writeError(c, http.StatusRequestEntityTooLarge, "file_too_large", "文件超过 2MB，不支持文本编辑")
+	case errors.Is(err, service.ErrDownloadTooLarge):
+		writeError(c, http.StatusRequestEntityTooLarge, "download_too_large", "文件超过 100M，不支持下载")
 	case errors.Is(err, service.ErrBinaryFile):
 		writeError(c, http.StatusUnsupportedMediaType, "binary_file", "二进制文件不支持文本编辑")
 	case errors.Is(err, service.ErrNotEditableFile):

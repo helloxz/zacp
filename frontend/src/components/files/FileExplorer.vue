@@ -195,6 +195,10 @@ const ctxOptions = computed<DropdownOption[]>(() => {
     { key: 'rename', label: '重命名' },
     { key: 'copy-name', label: '复制名称' },
   ]
+  // 下载：仅文件（目录不可下载）；所有文件类型均可，100M 上限在 downloadEntry 拦截
+  if (ctxMenuEntry.value && !ctxMenuEntry.value.isDir) {
+    options.unshift({ key: 'download', label: '下载' })
+  }
   // 仅常见文本文件（白名单扩展名 / 无扩展名 / 隐藏文件）提供编辑入口，
   // mp3/mp4/zip 等二进制文件不出现「编辑」，与后端 Read/Write 限制一致
   if (
@@ -231,6 +235,11 @@ async function onCtxSelect(key: string | number) {
     await openEditor(entry)
     return
   }
+  // 右键【下载】：与图片预览同一链路换直链，浏览器原生落盘
+  if (key === 'download') {
+    await downloadEntry(entry)
+    return
+  }
   if (key === 'rename') {
     renameTarget.value = { workspaceId: workspaceId.value, entry }
     renameValue.value = entry.name
@@ -250,6 +259,37 @@ async function onCtxSelect(key: string | number) {
     message.success(`已复制「${entry.name}」`)
   } else {
     message.error('复制失败，请手动复制名称')
+  }
+}
+
+/** 单文件下载上限（与后端 MaxDownloadSizeBytes 对齐）：超出直接拦截，不发请求 */
+const MAX_DOWNLOAD_SIZE = 100 * 1024 * 1024
+
+/**
+ * 右键【下载】：换 12h 资源 token 直链后，经浏览器原生 <a> 触发下载。
+ * 追加 download=1 让后端返回 Content-Disposition: attachment 强制落盘——
+ * download 属性仅对同源/blob URL 生效，跨源部署下会被浏览器忽略
+ * （跨端口即跨源，如 dev 前端 :8681 直连后端 :8680），必须靠响应头；
+ * 见后端 RawFile 的 download 分支。
+ * 文件名由响应头 basename 决定；不经 JS blob，100M 以内不占前端内存；
+ * 后端 raw 端点仍强校验（≤100M），超限 413 的错误信息透出。
+ */
+async function downloadEntry(entry: FileEntry) {
+  if (entry.size != null && entry.size > MAX_DOWNLOAD_SIZE) {
+    message.warning(`「${entry.name}」超过 100M，不支持下载`)
+    return
+  }
+  if (!workspaceId.value) return
+  try {
+    const url = await fetchPreviewUrl(workspaceId.value, entry.path)
+    const a = document.createElement('a')
+    // 直链已含 path 与 token query，追加 download=1（顺序无关）
+    a.href = `${url}${url.includes('?') ? '&' : '?'}download=1`
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+  } catch (err) {
+    message.error(err instanceof Error ? err.message : '下载失败')
   }
 }
 
