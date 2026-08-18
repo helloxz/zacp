@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { MenuOutline } from '@vicons/ionicons5'
+import { FolderOutline, MenuOutline } from '@vicons/ionicons5'
 import AppSidebar from '@/components/shell/AppSidebar.vue'
 import ChatPane from '@/components/chat/ChatPane.vue'
 import FilePanel from '@/components/files/FilePanel.vue'
@@ -55,6 +55,7 @@ mqlDesktop.addEventListener('change', onDesktopChange)
 onUnmounted(() => mqlDesktop.removeEventListener('change', onDesktopChange))
 
 const route = useRoute()
+const router = useRouter()
 watch(
   () => route.name,
   (name) => {
@@ -81,6 +82,14 @@ const topBarTitle = computed(() => {
 
 function openSettings() {
   appStore.settingsOpen = true
+}
+
+/** 跳转手机端独立文件页（session 态文件夹按钮）；仅移动端入口（按钮所在顶栏 lg:hidden），PC 无此跳转 */
+function openFiles() {
+  const id = sessionStore.activeSession?.id
+  if (id) {
+    void router.push({ name: 'files', params: { sessionId: String(id) } })
+  }
 }
 
 /** 首屏：拉取 agent 列表 + 工作区 + 最近会话（并行，失败不阻塞壳层渲染）+ 建立 WS 长连接 */
@@ -130,6 +139,17 @@ onMounted(() => {
         <span class="min-w-0 flex-1 truncate text-sm font-medium text-ink">
           {{ topBarTitle }}
         </span>
+        <!-- 文件页入口（仅 session 态；lg:hidden 由顶栏整体控制）：手机端右侧面板已隐藏，
+             文件浏览移到独立页 /sessions/:id/files（PC 继续用右侧面板，不走此按钮） -->
+        <button
+          v-if="route.name === 'session'"
+          type="button"
+          aria-label="查看文件"
+          class="flex h-9 w-9 shrink-0 cursor-pointer items-center justify-center rounded-lg text-ink-secondary transition-colors hover:bg-surface-hover active:bg-surface-active focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
+          @click="openFiles"
+        >
+          <FolderOutline class="h-5 w-5" />
+        </button>
       </header>
 
       <ChatPane

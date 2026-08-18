@@ -62,6 +62,7 @@ export default {
     welcomeAfternoon: 'Good afternoon',
     welcomeEvening: 'Good evening',
     welcomeSubtitle: 'Please pick an agent',
+    filesTitle: 'Files',
     newSessionPathHint: 'The conversation will be created under {path}',
     loadingAgent: 'Starting the agent…',
     creatingSession: 'Creating session…',

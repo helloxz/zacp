@@ -44,6 +44,13 @@ const router = createRouter({
       name: 'session',
       component: () => import('@/pages/ShellPage.vue'),
     },
+    {
+      // 手机端独立文件页：与 /sessions/:id 同一会话上下文（workspace），
+      // 走独立布局（不带壳层侧栏/移动顶栏），仅手机端由移动顶栏文件夹按钮进入；PC 不在 UI 内暴露入口。
+      path: '/sessions/:sessionId(\\d+)/files',
+      name: 'files',
+      component: () => import('@/pages/FilesPage.vue'),
+    },
   ],
 })
 
