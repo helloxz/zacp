@@ -30,8 +30,12 @@ const props = withDefaults(
     status?: SessionStreamStatus
     /** 会话轮次达到上限（MAX_TURNS_PER_SESSION）：输入框与发送按钮一并禁用，显示提示条。 */
     turnLimited?: boolean
+    /** card 模式（/new 空态）显式指定上传目标工作区（父级由路由 ?workspaceId 传入）；bar 模式忽略 */
+    workspaceId?: number
   }>(),
-  { mode: 'bar', agentId: undefined, status: 'idle', turnLimited: false },
+  {
+    mode: 'bar', agentId: undefined, status: 'idle', turnLimited: false, workspaceId: undefined,
+  },
 )
 
 const emit = defineEmits<{
@@ -168,24 +172,32 @@ const MAX_OTHER_FILE_BYTES = 10 * 1024 * 1024
 const fileUploading = ref(false)
 
 /**
- * 当前会话所属工作区（与 FileExplorer activeWs 同规则：会话项目 → 默认项目）。
- * bar 模式必在会话内，activeSession 可解析。
+ * 上传目标工作区 id（粘贴上传用）：
+ * - card 模式（/new）：草稿会话不进 sessions 列表、activeSession 恒为 null，
+ *   只能靠父级传入的 ?workspaceId（props.workspaceId）确定上传目标，缺省回落默认工作区；
+ *   注意：若仅依赖回落逻辑，?workspaceId=非默认项目 时文件会传错目录；
+ * - bar 模式（/sessions/:id）：会话自带工作区优先，缺省再回落默认工作区。
  */
 const composerWorkspaceId = computed(() => {
-  const sid = sessionStore.activeSession?.workspace?.id
-  if (sid) return sid
-  return sessionStore.defaultWorkspace()?.id ?? 0
+  if (props.mode === 'card') {
+    return props.workspaceId ?? sessionStore.defaultWorkspace()?.id ?? 0
+  }
+  return (
+    sessionStore.activeSession?.workspace?.id ??
+    sessionStore.defaultWorkspace()?.id ??
+    0
+  )
 })
 
 /**
- * 输入框粘贴（仅 bar 模式）：
+ * 输入框粘贴（bar 与 card 模式均支持；card 为 /new 空态，上传目标由
+ * composerWorkspaceId 解析：props.workspaceId（?workspaceId）→ 默认工作区）：
  * - 剪贴板含文件（图片或其它）且 无纯文本 → 上传第一个文件并插入 @引用；
  * - 含文件 且有纯文本（Word/网页复制文字+图）→ 放行默认粘贴：只留文字、丢弃文件；
  * - 纯文本/无文件 → 放行默认粘贴。
  * 图片与其它文件走同一上传链路（同一批内图片优先；单张限制，多文件只取第一个）。
  */
 function onPaste(e: ClipboardEvent) {
-  if (props.mode !== 'bar') return
   const files = extractPastedFiles(e)
   if (!files.length) return
   // 富文本粘贴（文字+图/文件）：丢弃文件、保留文字，交给浏览器默认行为插入纯文本
@@ -238,8 +250,12 @@ async function pasteUpload(file: File) {
       // 文件已上传成功：无论是否插入引用都刷新列表
       sessionStore.bumpFileList()
       // 上下文已变化 → 不插引用（文件仍在工作区，可手动 @ 引用）
+      // 坑：capture 侧 sid 用 ?? null 归一到 null，而 activeSession?.id 对 null
+      // 会话返回 undefined，undefined !== null 会误判为「上下文已变化」——
+      // card 模式（/new，草稿不在 sessions 列表、activeSession 恒 null）下
+      // sameContext 恒 false、引用永不注入。校验侧同样归一，保证 null === null。
       const sameContext =
-        sessionStore.activeSession?.id === sid &&
+        (sessionStore.activeSession?.id ?? null) === sid &&
         composerWorkspaceId.value === wsId
       // 插入前重新计数：上传耗时期间用户可能已手动输入 @引用，超限则不再自动插入
       const withinLimit = countRefs(text.value) + 1 <= MAX_FILE_REFS

@@ -368,6 +368,7 @@ onUnmounted(() => {
             mode="card"
             :agent-id="selectedAgentId"
             :status="sessionStore.statusOf(draftSession?.id)"
+            :workspace-id="props.workspaceId"
             @submit="onSubmit"
             @cancel="sessionStore.cancelSend(draftSession?.id)"
           />
