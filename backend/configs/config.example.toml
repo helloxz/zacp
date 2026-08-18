@@ -10,7 +10,7 @@ addr = ":8680"
 # 优先级：GIN_MODE 环境变量（显式设置时）> 本配置 > 默认 debug
 # release 下日志自动安静：不打印 gin 请求访问日志（[GIN] 行），
 # 且仅输出 warn 及以上级别（权限请求等 info 日志不显示；排查问题可临时切回 debug）
-mode = "debug"
+mode = "release"
 
 [session]
 # Agent 默认工作目录（不是 $ZACP_DATA，是代码项目路径）
