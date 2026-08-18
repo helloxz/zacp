@@ -53,20 +53,24 @@ const themeTooltip = computed(() =>
       </template>
       {{ themeTooltip }}
     </n-tooltip>
-    <n-tooltip trigger="hover">
-      <template #trigger>
-        <n-button
-          quaternary
-          circle
-          size="small"
-          @click="emit('open-settings')"
-        >
-          <template #icon>
-            <n-icon><SettingsOutline /></n-icon>
-          </template>
-        </n-button>
-      </template>
-      {{ t('shell.settings') }}
-    </n-tooltip>
+    <!-- 设置：仅 lg 及以上显示。移动端（<lg）隐藏——设置弹窗为固定大尺寸布局（SettingsModal），
+         在手机上不兼容，且抽屉顶部已有其他入口；主题切换保留（无弹窗，直接生效）。 -->
+    <div class="hidden lg:block">
+      <n-tooltip trigger="hover">
+        <template #trigger>
+          <n-button
+            quaternary
+            circle
+            size="small"
+            @click="emit('open-settings')"
+          >
+            <template #icon>
+              <n-icon><SettingsOutline /></n-icon>
+            </template>
+          </n-button>
+        </template>
+        {{ t('shell.settings') }}
+      </n-tooltip>
+    </div>
   </div>
 </template>

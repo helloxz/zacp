@@ -10,6 +10,8 @@ import DirectoryPicker from '@/components/shell/DirectoryPicker.vue'
 import { useSessionStore } from '@/stores/session'
 import { useAppStore } from '@/stores/app'
 
+/** open：移动端抽屉开合（lg 及以上忽略，侧栏常驻流内）；desktop：桌面断点判定（inert 只在移动端关闭态启用）。desktop 必填——漏传且窗口 ≥1024 时流内侧栏会被整体 inert */
+defineProps<{ open: boolean; desktop: boolean }>()
 const emit = defineEmits<{
   (e: 'open-settings'): void
 }>()
@@ -72,10 +74,20 @@ async function onCreateProject() {
 </script>
 
 <template>
-  <!-- 固定宽度侧栏（300px，列表常驻展示，不再支持折叠） -->
-  <aside class="flex w-[300px] flex-col border-r border-divider bg-surface">
-    <div class="flex items-center gap-1 p-3">
-      <!-- 新建项目：Tailwind 实现的次级按钮（点击打开与 WelcomeHero 共享的项目弹窗） -->
+  <!-- 侧栏：lg 及以上流内常驻 300px（PC 现状不变）；lg 以下 fixed overlay 抽屉（280px），
+       开合由 open + translate-x 控制，transition 实现平滑滑出。
+       fixed 抽离流内后主区自动占满全宽；static 时恢复 flex 布局占位。
+       顶部/底部加 env() 安全区：刘海屏竖屏时抽屉首尾的按钮不被刘海与底部横条遮挡
+       （PC 无安全区时 env() 为 0，行为不变）。 -->
+  <aside
+    class="flex w-[280px] shrink-0 flex-col border-r border-divider bg-surface transition-transform duration-300 ease-out fixed inset-y-0 left-0 z-50 lg:static lg:z-auto lg:w-[300px] lg:translate-x-0"
+    :class="open ? 'translate-x-0' : '-translate-x-full'"
+    style="padding-bottom: env(safe-area-inset-bottom)"
+    :inert="!open && !desktop"
+  >
+    <div class="flex items-center gap-1 pt-[max(env(safe-area-inset-top),0.75rem)] pl-[max(env(safe-area-inset-left),0.75rem)] pr-3 pb-3">
+      <!-- 新建项目：Tailwind 实现的次级按钮（点击打开与 WelcomeHero 共享的项目弹窗）。
+           注意：不做单独的抽屉关闭按钮——点遮罩区域即可关闭（移动端交互更轻） -->
       <button
         type="button"
         class="flex cursor-pointer flex-1 items-center justify-center gap-1.5 rounded-lg border border-divider bg-surface-raised px-3 py-2 text-sm font-medium text-ink-secondary shadow-sm transition-colors hover:border-divider hover:bg-surface-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-divider"

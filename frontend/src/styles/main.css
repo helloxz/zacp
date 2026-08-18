@@ -172,3 +172,23 @@ body {
 .content-container {
   @apply mx-auto w-full max-w-4xl;
 }
+
+/*
+ * 移动端安全区（刘海屏 / 底部横条机型）：
+ * 底部输入条等贴底元素的下边距叠加 env(safe-area-inset-bottom)。
+ * PC 无安全区时 env() 为 0，退化为 1rem，与 Tailwind pb-4 等值（行为不变）。
+ */
+.safe-bottom {
+  padding-bottom: max(env(safe-area-inset-bottom), 1rem);
+}
+
+/*
+ * 移动端输入字号 ≥16px：iOS Safari 对 <16px 的 input/textarea 聚焦会自动放大页面，
+ * 体验极差且易误触。Composer 的 n-input 有 .composer-input 根类（模板内已挂），
+ * 仅在窄屏媒体查询内覆盖其内部 textarea 字号，PC 保持原字号不变。
+ */
+@media (max-width: 1023.5px) {
+  .composer-input .n-input__textarea-el {
+    font-size: 16px;
+  }
+}

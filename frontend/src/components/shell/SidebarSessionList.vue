@@ -229,9 +229,10 @@ async function onRemoveWorkspace(ws: Workspace) {
             </span>
           </span>
           <!-- hover 显示的操作区：移除（左）+ 新建会话（右）；n-button text 纯图标按钮，不占宽度；
-               @click.stop 防止点击操作按钮误触项目头的展开/折叠 -->
+               @click.stop 防止点击操作按钮误触项目头的展开/折叠。
+               pointer-coarse 变体：触屏设备无 hover，操作区常显，保证手机端功能可达 -->
           <div
-            class="flex shrink-0 items-center gap-1 opacity-0 transition-opacity focus-within:opacity-100 group-hover/header:opacity-100"
+            class="flex shrink-0 items-center gap-1 opacity-0 transition-opacity focus-within:opacity-100 group-hover/header:opacity-100 pointer-coarse:opacity-100"
             @click.stop
           >
             <!-- 移除项目：图标按钮 + tooltip（顶部弹出，白底浅字，避免遮挡右侧的新建会话图标）；

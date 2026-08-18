@@ -242,8 +242,10 @@ function onNewProjectFromHero() {
   <!-- 已有会话：对话列表 + bar 输入（agent 已锁定，无切换 tab） -->
   <template v-else-if="routeName === 'session' && current">
     <div class="flex min-h-0 flex-1 flex-col">
-      <!-- 会话头部：Agent 标签（左）+ 标题 + 右侧面板开关（最右） -->
-      <div class="flex items-center gap-2 border-b border-divider px-4 py-2.5">
+      <!-- 会话头部：Agent 标签（左）+ 标题 + 轮次指示 + 右侧面板开关（最右）。
+           整行仅 lg 及以上显示（手机端隐藏）：手机上该行的轮次圆圈等对窄屏无价值，
+           消息区直接由壳层移动顶栏（汉堡+标题）统领，PC 保持现状不变。 -->
+      <div class="hidden items-center gap-2 border-b border-divider px-4 py-2.5 lg:flex">
         <span
           class="shrink-0 rounded bg-surface-hover px-1.5 py-0.5 text-xs text-ink-muted"
         >
@@ -254,38 +256,47 @@ function onNewProjectFromHero() {
         </span>
         <!-- 对话轮次指示器：圆环展示进度，悬停查看详情；0 轮（草稿/空会话）不显示 -->
         <TurnIndicator v-if="turnCount > 0" :turns="turnCount" />
-        <!-- Web TTY：使用当前会话所属工作区，在新浏览器 Tab 打开临时终端。 -->
-        <HeaderIconButton :title="t('chat.openWebTTY')" @click="openWebTTY">
-          <TerminalOutline />
-        </HeaderIconButton>
-        <!-- 本地工具：后端仅返回当前平台已安装的白名单工具；悬停展开，点击直接启动。 -->
-        <n-dropdown
-          v-if="externalToolsLoaded && externalTools.length"
-          trigger="hover"
-          placement="bottom-end"
-          :options="externalToolOptions"
-          @select="onExternalToolSelect"
-        >
-          <HeaderIconButton
-            :title="t('chat.openTool')"
-            :disabled="externalToolOpening !== null"
-          >
-            <OpenOutline />
+        <!-- Web TTY / 本地工具 / 右侧面板：仅 lg 及以上显示（手机端精简，且避免 hover 触发在触屏失效） -->
+        <div class="hidden lg:block">
+          <HeaderIconButton :title="t('chat.openWebTTY')" @click="openWebTTY">
+            <TerminalOutline />
           </HeaderIconButton>
-        </n-dropdown>
-        <!-- 右侧面板（信息|文件|Git）展开/收起：箭头随状态指向收起方向，图标色随壳 hover 加深 -->
-        <HeaderIconButton title="侧边面板" @click="emit('toggle-right-panel')">
-          <ChevronForwardOutline v-if="rightOpen" />
-          <ChevronBackOutline v-else />
-        </HeaderIconButton>
+        </div>
+        <div class="hidden lg:block">
+          <!-- 本地工具：后端仅返回当前平台已安装的白名单工具；悬停展开，点击直接启动。 -->
+          <n-dropdown
+            v-if="externalToolsLoaded && externalTools.length"
+            trigger="hover"
+            placement="bottom-end"
+            :options="externalToolOptions"
+            @select="onExternalToolSelect"
+          >
+            <HeaderIconButton
+              :title="t('chat.openTool')"
+              :disabled="externalToolOpening !== null"
+            >
+              <OpenOutline />
+            </HeaderIconButton>
+          </n-dropdown>
+        </div>
+        <div class="hidden lg:block">
+          <!-- 右侧面板（信息|文件|Git）展开/收起：箭头随状态指向收起方向，图标色随壳 hover 加深 -->
+          <HeaderIconButton title="侧边面板" @click="emit('toggle-right-panel')">
+            <ChevronForwardOutline v-if="rightOpen" />
+            <ChevronBackOutline v-else />
+          </HeaderIconButton>
+        </div>
       </div>
 
       <div class="relative min-h-0 flex-1">
         <MessageList class="h-full min-h-0" />
-        <PlanDock
-          :session-id="current.id"
-          class="absolute left-2 top-1/2 z-20 -translate-y-1/2"
-        />
+        <!-- PlanDock 计划面板：仅 lg 及以上显示（手机端精简；absolute 相对于上方 relative 容器定位） -->
+        <div class="hidden lg:block">
+          <PlanDock
+            :session-id="current.id"
+            class="absolute left-2 top-1/2 z-20 -translate-y-1/2"
+          />
+        </div>
       </div>
 
       <!-- 当前会话发送/流式错误条（按 session 隔离） -->
@@ -314,9 +325,11 @@ function onNewProjectFromHero() {
         <span>{{ t('chat.disconnectedBanner') }}</span>
       </div>
 
-      <!-- 底部输入条：与 AI 内容共用 content-container 宽度（max-w-4xl 居中）；
-           左右不加 padding/margin，输入框卡片直接占满容器全宽 -->
-      <div class="content-container pb-4 pt-2">
+      <!-- 底部输入条：与 AI 内容共用 content-container 宽度（max-w-4xl 居中）。
+           PC 上输入框卡片占满容器全宽（无左右内边距，现状不变）；
+           手机端（<lg）左右加 12px 内边距，避免输入框贴屏幕边缘（用户反馈贴边不友好）。
+           safe-bottom：PC 上等同于 pb-4，手机端叠加 env(safe-area-inset-bottom) 防底部横条遮挡。 -->
+      <div class="content-container safe-bottom px-3 pt-2 lg:px-0">
         <Composer
           mode="bar"
           :agent-id="current.agentId"

@@ -191,7 +191,7 @@ async function onDelete() {
         size="tiny"
         circle
         class="shrink-0 transition-opacity"
-        :class="actionsVisible ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'"
+        :class="actionsVisible ? 'opacity-100' : 'opacity-0 group-hover:opacity-100 pointer-coarse:opacity-100'"
         aria-label="session actions"
         @click.stop
       >
