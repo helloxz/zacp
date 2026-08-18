@@ -143,24 +143,29 @@ const selectedAgentId = ref(props.agentId ?? '')
 const inputRef = ref<InputInst | null>(null)
 
 // ---------------------------------------------------------------------------
-// 粘贴上传图片（仅 bar 模式启用）：Ctrl/Cmd+V 粘贴图片 → 转 webp 上传到
-// 当前会话工作区根目录 → 在文本最前面插入 @文件名 引用 → 通知文件列表刷新。
+// 粘贴上传文件（仅 bar 模式启用）：Ctrl/Cmd+V 粘贴图片或其它文件 →
+// 图片经 prepareFile 转 webp、其它文件原样直传，上传到当前会话工作区根目录 →
+// 在文本最前面插入 @文件名 引用 → 通知文件列表刷新。
 // 与「文件」面板共用 utils/fileUpload 的提取/压缩逻辑，行为保持一致。
 // ---------------------------------------------------------------------------
 
-/** 输入框中已引用图片的数量上限（已有引用 + 本次 1 张 > 上限则拒绝） */
-const MAX_IMAGE_REFS = 3
+/** 输入框中已引用文件的数量上限（图片与其它文件统一计数；已有引用 + 本次 1 个 > 上限则拒绝） */
+const MAX_FILE_REFS = 3
 /**
- * 统计文本中 @引用图片 的数量。粘贴上传的图片统一转 webp，
- * 正则同时兼容手动输入的其它图片格式（png/jpg/gif 等）。
+ * 统计文本中 @引用文件 的数量。粘贴上传统一插入 @文件名 引用，
+ * 正则按通用文件名匹配（字母数字/点/连字符，可带或不带扩展名）；
+ * 会误计邮件地址等含 @ 的文本，但仅影响上限拦截，可接受。
  */
-const IMAGE_REF_RE = /@[\w.-]+\.(?:webp|png|jpe?g|gif|bmp|svg|avif|ico)\b/gi
-function countImageRefs(t: string): number {
-  return (t.match(IMAGE_REF_RE) ?? []).length
+const FILE_REF_RE = /@[\w.-]+/g
+function countRefs(t: string): number {
+  return (t.match(FILE_REF_RE) ?? []).length
 }
 
+/** 非图片文件上传大小上限（与后端 service.MaxOtherSizeBytes 一致；图片由 prepareFile 压缩，不受此限） */
+const MAX_OTHER_FILE_BYTES = 10 * 1024 * 1024
+
 /** 上传进行中：禁止发送（避免引用还没插入文本就被发走） */
-const imageUploading = ref(false)
+const fileUploading = ref(false)
 
 /**
  * 当前会话所属工作区（与 FileExplorer activeWs 同规则：会话项目 → 默认项目）。
@@ -174,49 +179,57 @@ const composerWorkspaceId = computed(() => {
 
 /**
  * 输入框粘贴（仅 bar 模式）：
- * - 剪贴板含图片 且 无纯文本 → 上传图片（单张，只取第一张）并插入 @引用；
- * - 含图片 且有纯文本（Word/网页复制文字+图）→ 放行默认粘贴：只留文字、丢弃图片；
- * - 非图片文件 → 静默忽略（textarea 粘贴文件本就无效果，不给提示）。
+ * - 剪贴板含文件（图片或其它）且 无纯文本 → 上传第一个文件并插入 @引用；
+ * - 含文件 且有纯文本（Word/网页复制文字+图）→ 放行默认粘贴：只留文字、丢弃文件；
+ * - 纯文本/无文件 → 放行默认粘贴。
+ * 图片与其它文件走同一上传链路（同一批内图片优先；单张限制，多文件只取第一个）。
  */
 function onPaste(e: ClipboardEvent) {
   if (props.mode !== 'bar') return
   const files = extractPastedFiles(e)
-  // 仅图片可上传；其它文件不支持，直接放行不提示
-  const images = files.filter((f) => f.type.startsWith('image/'))
-  if (!images.length) return
-  // 富文本粘贴（文字+图）：丢弃图片、保留文字，交给浏览器默认行为插入纯文本
+  if (!files.length) return
+  // 富文本粘贴（文字+图/文件）：丢弃文件、保留文字，交给浏览器默认行为插入纯文本
   const hasPlainText =
     (e.clipboardData?.getData('text/plain') ?? '').trim().length > 0
   if (hasPlainText) return
+  const target = files.find((f) => f.type.startsWith('image/')) ?? files[0]
   e.preventDefault()
-  if (imageUploading.value) {
-    // 上一张还在传：吞掉本次并明确提示，避免用户误以为粘贴失败
-    message.info('正在上传图片，请稍候')
+  if (fileUploading.value) {
+    // 上一个还在传：吞掉本次并明确提示，避免用户误以为粘贴失败
+    message.info('正在上传文件，请稍候')
     return
   }
-  void pasteUploadImage(images[0]) // 单张限制：多图只取第一张，其余忽略
+  void pasteUpload(target) // 单张限制：多文件只取第一个，其余忽略
 }
 
 /**
- * 粘贴图片上传：压缩转 webp → 上传到工作区根目录（dir=''）→
+ * 粘贴上传（图片或其它文件，单张）：图片经 prepareFile 压缩转 webp、
+ * 其它文件原样直传 → 上传到工作区根目录（dir=''）→
  * 成功后在文本最前面插入引用并通知文件列表刷新。
  */
-async function pasteUploadImage(file: File) {
+async function pasteUpload(file: File) {
   const wsId = composerWorkspaceId.value
   if (!wsId) {
     // 会话无工作区（如默认项目缺失）时上传无处可去，明确提示而非静默丢弃
-    message.warning('请先添加项目，再粘贴上传图片')
+    message.warning('请先添加项目，再粘贴上传文件')
     return
   }
-  // 引用数上限：已有引用 + 本次 1 张 > 3 → 提示并跳过上传
-  if (countImageRefs(text.value) + 1 > MAX_IMAGE_REFS) {
-    message.warning(`最多引用 ${MAX_IMAGE_REFS} 张图片`)
+  // 引用数上限：已有引用 + 本次 1 个 > 3 → 提示并跳过上传（图片与文件统一计数）
+  if (countRefs(text.value) + 1 > MAX_FILE_REFS) {
+    message.warning(`最多引用 ${MAX_FILE_REFS} 个文件`)
+    return
+  }
+  // 大小预检：图片由 prepareFile 压缩（不在此限）；其它文件原样直传，
+  // 受后端 10MB 上限约束，超限提前拒绝，避免上传到一半才被 413
+  const isImage = file.type.startsWith('image/')
+  if (!isImage && file.size > MAX_OTHER_FILE_BYTES) {
+    message.error('文件超过 10MB 上限，无法上传')
     return
   }
   // 上传前捕获上下文：上传期间用户可能切换会话/项目，完成时需双重校验
   // （同会话 + 同工作区）才把引用插回输入框，避免污染新会话文本
   const sid = sessionStore.activeSession?.id ?? null
-  imageUploading.value = true
+  fileUploading.value = true
   try {
     const prepared = await prepareFile(file)
     const uploaded = await uploadFiles(wsId, '', [prepared])
@@ -229,21 +242,21 @@ async function pasteUploadImage(file: File) {
         sessionStore.activeSession?.id === sid &&
         composerWorkspaceId.value === wsId
       // 插入前重新计数：上传耗时期间用户可能已手动输入 @引用，超限则不再自动插入
-      const withinLimit = countImageRefs(text.value) + 1 <= MAX_IMAGE_REFS
+      const withinLimit = countRefs(text.value) + 1 <= MAX_FILE_REFS
       if (sameContext && withinLimit) {
         insertRefs([name])
       } else if (sameContext && !withinLimit) {
-        message.info('图片已上传，但引用数超过上限，未自动插入')
+        message.info('文件已上传，但引用数超过上限，未自动插入')
       }
     }
   } catch (err) {
-    message.error(`图片上传失败：${err instanceof Error ? err.message : '未知错误'}`)
+    message.error(`文件上传失败：${err instanceof Error ? err.message : '未知错误'}`)
   } finally {
-    imageUploading.value = false
+    fileUploading.value = false
   }
 }
 
-/** 把引用（@文件名）插入到文本最前面，多张用空格分隔；末尾带尾随空格，用户可直接继续输入 */
+/** 把引用（@文件名）插入到文本最前面，多个用空格分隔；末尾带尾随空格，用户可直接继续输入 */
 function insertRefs(names: string[]) {
   const refs = names.map((n) => `@${n}`).join(' ') + ' '
   text.value = text.value ? `${refs}${text.value}` : refs
@@ -362,11 +375,11 @@ watch(
   },
 )
 
-/** 可发送：bar 模式不要求 Agent（沿用当前会话）；card 模式必须已选 Agent；上传图片期间禁止发送；轮次达上限禁止发送 */
+/** 可发送：bar 模式不要求 Agent（沿用当前会话）；card 模式必须已选 Agent；上传文件期间禁止发送；轮次达上限禁止发送 */
 const canSend = computed(
   () =>
     !props.turnLimited &&
-    !imageUploading.value &&
+    !fileUploading.value &&
     text.value.trim().length > 0 &&
     (props.mode === 'bar' || !!selectedAgentId.value),
 )
@@ -482,13 +495,13 @@ function onKeydown(e: KeyboardEvent) {
       {{ t('chat.configUpdateFailed') }}：{{ configError }}
     </div>
 
-    <!-- 图片上传中提示条：粘贴上传进行时显示；与错误条同位避免卡片高度跳动 -->
+    <!-- 文件上传中提示条：粘贴上传进行时显示；与错误条同位避免卡片高度跳动 -->
     <div
-      v-if="imageUploading"
+      v-if="fileUploading"
       class="mt-1.5 flex items-center gap-2 rounded bg-blue-50 px-2 py-1 text-xs leading-relaxed text-blue-500 dark:bg-blue-950/40 dark:text-blue-400"
     >
       <n-spin :size="13" />
-      正在上传图片…
+      正在上传文件…
     </div>
 
     <!-- 底部选项行：左侧配置项（模型/思考强度等），右侧仅图标发送按钮；与输入框同卡片，构成整体 -->
@@ -570,7 +583,7 @@ function onKeydown(e: KeyboardEvent) {
           type="primary"
           size="small"
           circle
-          :loading="imageUploading"
+          :loading="fileUploading"
           :disabled="!canSend"
           @click="onSend"
         >
