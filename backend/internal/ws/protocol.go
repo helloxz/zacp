@@ -9,6 +9,7 @@ const (
 	MsgTypeCancel     MessageType = "cancel"     // 取消当前操作
 	MsgTypePermission MessageType = "permission" // 权限选择结果
 	MsgTypePing       MessageType = "ping"       // 心跳
+	MsgTypeResync     MessageType = "resync"     // 刷新/重连后查询会话执行状态并重新订阅（只订阅不发 prompt）
 
 	// 服务端 → 客户端
 	MsgTypeSessionReady      MessageType = "session.ready"      // 会话就绪确认
@@ -20,6 +21,7 @@ const (
 	MsgTypeSlashCommands     MessageType = "slashCommands"      // 可用 / 命令更新（agent 经 available_commands_update 推送）
 	MsgTypeSessionInfo       MessageType = "sessionInfo"        // 会话信息更新（agent 经 session_info_update 推送，如 AI 总结标题）
 	MsgTypeSessionRecovered  MessageType = "session.recovered"  // ACP 会话恢复/重建完成：旧 id → 新 id（订阅已自动迁移，前端据此更新 id 映射）
+	MsgTypeSessionResynced   MessageType = "session.resynced"   // resync 响应：该 ACP 会话是否仍在执行（running=true 前端据此恢复 streaming 续流）
 	MsgTypeError             MessageType = "error"              // 错误通知
 	MsgTypePong              MessageType = "pong"               // 心跳响应
 )
@@ -58,6 +60,10 @@ type ServerMessage struct {
 	PermissionID string      `json:"permissionId,omitempty"`
 	ToolCall     interface{} `json:"toolCall,omitempty"`
 	Options      interface{} `json:"options,omitempty"`
+
+	// session.resynced 消息字段（omitempty：false 时不下发，前端按 falsy 处理；
+	// 避免 Running 字段污染 pong 等其它消息的序列化）
+	Running bool `json:"running,omitempty"`
 
 	// configOptions 消息字段（agent 经 session/update 推送的配置项列表）
 	ConfigOptions interface{} `json:"configOptions,omitempty"`

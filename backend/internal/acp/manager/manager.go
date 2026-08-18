@@ -232,6 +232,15 @@ func IsPromptCancelledErr(err error) bool {
 	return errors.Is(err, ErrPromptCancelled)
 }
 
+// HasPromptInProgress 报告指定 agent+ACP session 是否正处于 prompt 执行/排队中。
+// 供 WS resync 使用：页面刷新/重连后据此恢复「正在执行」会话的实时流。
+func (m *Manager) HasPromptInProgress(agentID, sessionID string) bool {
+	m.promptMu.Lock()
+	defer m.promptMu.Unlock()
+	_, exists := m.prompts[promptKey{agentID: agentID, sessionID: sessionID}]
+	return exists
+}
+
 // acquire 获取全局槽位；ctx 取消时从 FIFO 队列撤销，不占用槽位。
 func (g *promptGate) acquire(ctx context.Context) (func(), error) {
 	return g.acquireWithAdmission(ctx, nil)

@@ -71,6 +71,12 @@ func (b *EventBridge) newPromptOrderTicket() (<-chan struct{}, func()) {
 	return wait, release
 }
 
+// HasPromptInProgress 报告指定 ACP 会话是否处于 prompt 执行/排队中。
+// 供 WS resync 查询：running=true 表示前端可恢复 streaming 续流。
+func (b *EventBridge) HasPromptInProgress(agentID, sessionID string) bool {
+	return b.manager.HasPromptInProgress(agentID, sessionID)
+}
+
 // NewEventBridge 组装完成后，由调用方（cmd/server）注入「prompt 开始执行」钩子：
 // 全局三槽位获取成功（真正执行）时注册该会话的事件处理并广播 turn.started，
 // 排队期间不注册，避免未开始的 session 覆盖正在执行的回调。

@@ -9,6 +9,7 @@ import type { AvailableCommand, ConfigOption } from '@/types/models'
 export type WsClientMessage =
   | { type: 'prompt'; sessionId: string; agentId: string; message: string }
   | { type: 'cancel'; sessionId: string; agentId: string }
+  | { type: 'resync'; sessionId: string; agentId: string }
   | { type: 'permission'; permissionId: string; optionId: string }
   | { type: 'ping' }
 
@@ -79,5 +80,6 @@ export type WsServerMessage =
       oldSessionId?: string
       newSessionId?: string
     }
+  | { type: 'session.resynced'; sessionId?: string; running?: boolean }
   | { type: 'error'; sessionId?: string; code?: string; message?: string }
   | { type: 'pong' }

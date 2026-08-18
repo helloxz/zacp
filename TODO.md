@@ -56,4 +56,8 @@
 - ~~支持显示对话轮次~~
 - 支持Docker部署：延后
 - 适配移动端
+- session消息没有加载完毕的时候，提示暂无消息
+- 手机底部对话框的模型选择啥的缓存图标。
+- 支持html查看消息
+- 支持刷新重连
 - 这个消息提示啥意思：time=2026-08-13T19:11:39.561+08:00 level=WARN msg="send buffer full, dropping message"

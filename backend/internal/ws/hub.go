@@ -235,6 +235,24 @@ func (c *Client) handleMessage(ctx context.Context, msg ClientMessage) {
 			bridge.ResolvePermission(msg.PermissionID, msg.OptionID)
 		}
 
+	case MsgTypeResync:
+		// resync：前端刷新/重连后重新订阅进行中的会话并查询其执行状态。
+		// 只订阅、不发 prompt——对仍在执行/排队的会话重发 prompt 会触发
+		// ErrPromptInProgress；running=true 时前端恢复 streaming 继续接收
+		// 后续事件，running=false 时前端按 DB 全量收尾（列表已完整，无需动作）。
+		if msg.SessionID != "" {
+			c.SubscribeSession(msg.SessionID, msg.AgentID)
+		}
+		running := false
+		if bridge != nil {
+			running = bridge.HasPromptInProgress(msg.AgentID, msg.SessionID)
+		}
+		c.Send(ServerMessage{
+			Type:      MsgTypeSessionResynced,
+			SessionID: msg.SessionID,
+			Running:   running,
+		})
+
 	case MsgTypePing:
 		c.Send(ServerMessage{Type: MsgTypePong})
 

@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import {
   createSession as apiCreateSession,
   createWorkspace as apiCreateWorkspace,
@@ -67,6 +67,13 @@ const CANCEL_FUSE_MS = 25_000
 const TURN_FUSE_IDLE_MS = 3 * 60_000
 /** 保险丝轮询间隔 */
 const TURN_FUSE_INTERVAL_MS = 60_000
+
+/**
+ * 刷新/重连后视为「可能仍在执行」的会话活跃窗口：会话 updatedAt 距今小于此值
+ * 才发起 resync（远端裁决是否 running）。窗口覆盖到「刚好跑完」的边界足够宽，
+ * idle 旧会话不参与，避免无谓的订阅与查询。
+ */
+const RESYNC_ACTIVE_WINDOW_MS = 15 * 60_000
 
 /**
  * 会话解析超时：进入 /sessions/:id 时以 GET /sessions/:id 校验会话存在性，
@@ -598,6 +605,11 @@ export const useSessionStore = defineStore('session', () => {
     }
     const page = await fetchMessages(sessionId, SESSION_HISTORY_LIMIT, 0)
     messagesById.value[sessionId] = page.messages
+    // 续流会话（resync 恢复中）切换进来：列表重建后补建占位，
+    // 保证后续事件仍有落点（createStreamPlaceholder 会把已累积实时块回灌正文）
+    if (streamMsgIdBySession.value[sessionId] !== undefined) {
+      createStreamPlaceholder(sessionId)
+    }
   }
 
   /** 返回当前缓存中最大的数据库消息 ID；临时乐观消息使用负数 ID，会被忽略。 */
@@ -921,17 +933,59 @@ export const useSessionStore = defineStore('session', () => {
   let wsRegistered = false
 
   /**
+   * 建立流式占位消息（无则建；sendViaWs 发 prompt、resync 续流、事件先到兜底、
+   * 切换会话补建共用同一套「槽位 + 列表落点」语义）：
+   * - 槽位（streamMsgIdBySession）已有且列表已含该占位：直接返回；
+   * - 槽位已有但列表缺占位（切会话重载列表）：补 push，并把已累积实时块回灌正文；
+   * - 全新：生成占位 id（负值，与 DB 正 id 区分；-Date.now()-1 与用户消息
+   *   -Date.now() 错开，防同毫秒撞 key）并记录槽位；列表已加载则追加到末尾。
+   * 占位内容默认空串（正文由 appendStreamChunk 原地追加）；首次创建时若
+   * streamBlocks 已有累积（非当前会话先收到事件），回灌已累积文本。
+   */
+  function createStreamPlaceholder(sessionId: number): number {
+    const list = messagesById.value[sessionId]
+    let placeholderId = streamMsgIdBySession.value[sessionId]
+    if (placeholderId !== undefined && list !== undefined && list.some((m) => m.id === placeholderId)) {
+      return placeholderId
+    }
+    if (placeholderId === undefined) {
+      placeholderId = -(Date.now() + 1)
+      streamMsgIdBySession.value[sessionId] = placeholderId
+    }
+    if (list !== undefined) {
+      const text = (streamBlocksBySession.value[sessionId] ?? [])
+        .filter((b) => b.kind === 'text')
+        .map((b) => b.content)
+        .join('')
+      const placeholder: ChatMessage = {
+        id: placeholderId,
+        sessionId,
+        role: 'assistant',
+        content: text,
+        reasoning: '',
+        createdAt: new Date().toISOString(),
+      }
+      messagesById.value[sessionId] = [...list, placeholder]
+      touch(sessionId, placeholder.createdAt)
+    }
+    return placeholderId
+  }
+
+  /**
    * 追加流式文本到占位消息（热路径约束：改最后一条，不重建列表）。
    * 同时维护 streamBlocks：追加到末尾 text block 或创建新的 text block，
    * 保持文本与工具调用的时间线交错顺序。会话隔离：只动指定会话的槽位。
    */
   function appendStreamChunk(sessionId: number, text: string) {
-    if (streamMsgIdBySession.value[sessionId] === undefined) {
-      return
+    let msgId = streamMsgIdBySession.value[sessionId]
+    if (msgId === undefined) {
+      // 无占位（刷新后 resync 恢复的会话，事件可能先于 session.resynced 到达）：
+      // 自动补建占位，避免实时块丢失
+      msgId = createStreamPlaceholder(sessionId)
     }
     const list = messagesById.value[sessionId]
     const last = list?.[list.length - 1]
-    if (last && last.id === streamMsgIdBySession.value[sessionId]) {
+    if (last && last.id === msgId) {
       last.content += text
     }
     // 维护 streamBlocks：追加到末尾 text block 或创建新 text block
@@ -946,9 +1000,9 @@ export const useSessionStore = defineStore('session', () => {
 
   /** 追加思维/推理流式文本到占位消息的 reasoning 字段（与正文分离展示） */
   function appendThoughtChunk(sessionId: number, text: string) {
-    const msgId = streamMsgIdBySession.value[sessionId]
+    let msgId = streamMsgIdBySession.value[sessionId]
     if (msgId === undefined) {
-      return
+      msgId = createStreamPlaceholder(sessionId)
     }
     const list = messagesById.value[sessionId]
     const last = list?.[list.length - 1]
@@ -1133,6 +1187,31 @@ export const useSessionStore = defineStore('session', () => {
     }
   }
 
+  /**
+   * 刷新/重连后的续流扫描：对「最近活跃（updatedAt 距今 < RESYNC_ACTIVE_WINDOW_MS）」
+   * 的会话发 resync，由服务端裁决其 ACP turn 是否仍在执行：
+   * - running=true  → 恢复 streaming + 订阅，后半段实时续流（收尾时落库补全）；
+   * - running=false → 已结束，列表本身是 DB 全量，无需额外动作。
+   * 只扫描第一轮：断线重连场景由 P0 保险丝兜底，重复扫描无意义。
+   */
+  let resyncScanned = false
+  function rescanRunningSessions() {
+    if (resyncScanned) {
+      return
+    }
+    resyncScanned = true
+    const cutoff = Date.now() - RESYNC_ACTIVE_WINDOW_MS
+    for (const s of sessions.value) {
+      if (new Date(s.updatedAt).getTime() < cutoff) {
+        continue
+      }
+      if (!s.acpSessionId) {
+        continue
+      }
+      acpSocket.send({ type: 'resync', sessionId: s.acpSessionId, agentId: s.agentId })
+    }
+  }
+
   /** 流式结束后的数据对齐：同步本轮新增消息；会话详情只在首轮默认标题场景刷新一次。 */
   async function refreshAfterTurn(sessionId: number) {
     const afterId = latestPersistedMessageId(sessionId)
@@ -1305,6 +1384,26 @@ export const useSessionStore = defineStore('session', () => {
           }
           break
         }
+        case 'session.resynced': {
+          // 刷新/重连后的续流裁决（sid 已在此前统一解析；sessionId 为 ACP id）：
+          // running=true 且当前无人主动操作（idle）→ 恢复 streaming + 占位，
+          // 后续事件继续实时追加；running=false 说明会话已结束，列表本就是
+          // DB 全量，无需额外动作；用户已发新消息（非 idle）时不覆盖其状态。
+          if (sid === null) {
+            break
+          }
+          if (msg.running && statusOf(sid) === 'idle') {
+            statusBySession.value[sid] = 'streaming'
+            runningSessionIds.value.add(sid)
+            createStreamPlaceholder(sid)
+          } else if (statusOf(sid) === 'idle' && streamMsgIdBySession.value[sid] !== undefined) {
+            // 竞态：事件先于 resync 响应到达时兜底建了占位，但后端裁决已结束
+            //（turn 恰在此刻收尾）。走一次收尾：增量拉取把已落库结果补全，
+            // 无落库则清理残留占位，避免空白气泡。
+            void finalizeStream(sid)
+          }
+          break
+        }
         case 'turn.done': {
           // 收尾目标：优先按广播 sessionId 路由；解析失败（如执行中 agent 重启、
           // recoverSession 换了新 ACP id，索引尚未更新）时回退「唯一运行中会话」——
@@ -1370,6 +1469,12 @@ export const useSessionStore = defineStore('session', () => {
     if (!session) {
       throw new Error('session not found')
     }
+    // 发送前守卫：该会话 turn 仍在执行/排队（含 resync 恢复的续流）时拒绝发送，
+    // 避免在旧 turn 上串联新 prompt——后端会 ErrPromptInProgress，新消息变孤儿。
+    //（UI 层有同类 guard，这里是状态机层防御，防未来 UI 变化回归。）
+    if (statusOf(sessionId) !== 'idle') {
+      throw new Error('session is still processing, wait for the current turn to finish')
+    }
     // 发送前刷新会话：服务端重启后 ACP session 可能已被后端重建（acpSessionId 变化），
     // 用 DB 最新值发送可避免「unknown session」报错（后端恢复逻辑见 ws/bridge.go）
     try {
@@ -1387,31 +1492,22 @@ export const useSessionStore = defineStore('session', () => {
     } catch {
       // 刷新失败：沿用本地缓存值
     }
+    // await 期间 resync 响应可能已恢复该会话为 streaming（TOCTOU 复检）：
+    // 仅当此刻仍为 idle 才继续，否则拒绝发送。
+    if (statusOf(sessionId) !== 'idle') {
+      throw new Error('session is still processing, wait for the current turn to finish')
+    }
     // 发送前刷新可能拿到服务端生成的标题；只对仍是默认标题的会话安排首轮收尾同步。
     markInitialSessionDetailRefresh(session)
     if (!session.acpSessionId) {
       throw new Error('session has no acp session id')
     }
 
-    // 乐观展示用户消息 + 空占位（流式追加目标）
+    // 乐观展示用户消息 + 空占位（流式追加目标；createStreamPlaceholder 统一占位
+    // 创建，与 resync 续流共用同一套「槽位 + 列表落点」语义）
     const userMsg = appendLocal(sessionId, 'user', content)
     streamUserIdBySession.value[sessionId] = userMsg.id
-    // 占位 id 必须与 user 消息不同（appendLocal 用 -Date.now()，同一毫秒会撞 key）
-    const placeholderId = -(Date.now() + 1)
-    streamMsgIdBySession.value[sessionId] = placeholderId
-    const placeholder: ChatMessage = {
-      id: placeholderId,
-      sessionId,
-      role: 'assistant',
-      content: '',
-      reasoning: '',
-      createdAt: new Date().toISOString(),
-    }
-    messagesById.value[sessionId] = [
-      ...(messagesById.value[sessionId] ?? []),
-      placeholder,
-    ]
-    touch(sessionId, placeholder.createdAt)
+    streamMsgIdBySession.value[sessionId] = createStreamPlaceholder(sessionId)
 
     // 状态机：发送后先置 queued（「排队中」+ 停止按钮），后端全局槽位获取成功
     // 后广播 turn.started；事件/permission.request 兜底切换，保证不会卡在 queued。
@@ -1490,6 +1586,17 @@ export const useSessionStore = defineStore('session', () => {
   setInterval(() => {
     void checkStalledTurns()
   }, TURN_FUSE_INTERVAL_MS)
+  // 刷新/重连后的续流恢复：WS 建立且会话列表就绪后，对最近活跃会话发 resync
+  // （服务端裁决是否仍在执行；只扫一轮，见 rescanRunningSessions）
+  watch(
+    [() => acpSocket.state.status, () => sessions.value.length],
+    ([status, sessionCount]) => {
+      if (status === 'open' && sessionCount > 0) {
+        rescanRunningSessions()
+      }
+    },
+    { immediate: true },
+  )
 
   return {
     workspaces,

@@ -19,7 +19,4 @@ services:
       # 映射 Web 服务端口（宿主端口可自行调整，如 8681:8680）
       - "8680:8680"
     volumes:
-      - ${HOME}/.zacp:/app/data/.zacp
-      - ${HOME}/.zlite:/app/data/.zlite
-      - ${HOME}/bin:/app/data/bin
-      - ${HOME}/work:/app/data/work
+      - ./data:/app/data
