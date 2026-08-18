@@ -118,6 +118,13 @@ export const useSessionStore = defineStore('session', () => {
   /** 各会话消息缓存（进入会话时按需加载） */
   const messagesById = ref<Record<number, ChatMessage[]>>({})
 
+  /**
+   * 各会话消息历史加载状态：切换会话时区分「加载中 / 失败 / 空」，
+   * 避免历史还在请求中就误显「暂无消息」；失败后切走再切回会自动重试。
+   */
+  type MessagesLoadStatus = 'loading' | 'ready' | 'error'
+  const messagesStatus = ref<Record<number, MessagesLoadStatus>>({})
+
   /** 当前选中会话 id（进入 /sessions/:id 时由 ChatPane 同步） */
   const currentId = ref<number | null>(null)
 
@@ -299,6 +306,7 @@ export const useSessionStore = defineStore('session', () => {
 		}
 		sentSessions.delete(sessionId)
 		initialSessionDetailRefresh.delete(sessionId)
+		delete messagesStatus.value[sessionId]
 		delete statusBySession.value[sessionId]
 		runningSessionIds.value.delete(sessionId)
 		delete streamErrorBySession.value[sessionId]
@@ -597,14 +605,57 @@ export const useSessionStore = defineStore('session', () => {
 
   /**
    * 加载某会话最新消息窗口。
-   * force=true 时无视缓存强制拉取最新窗口，仅供显式重载场景使用。
+   * force=true 时无视缓存强制拉取最新窗口，仅供显式重载场景使用；
+   * 上次加载失败（status=error）时即使非 force 也重新拉取（切走再切回即自动重试）。
+   * 结果状态写入 messagesStatus：loading 加载中 / ready 成功（含 0 条）/
+   * error 失败（UI 据此显示报错而非「暂无消息」），失败不向上抛、由 UI 提供重试。
    */
   async function loadMessages(sessionId: number, force = false) {
-    if (!force && messagesById.value[sessionId] !== undefined) {
+    if (
+      !force &&
+      messagesById.value[sessionId] !== undefined &&
+      messagesStatus.value[sessionId] !== 'error'
+    ) {
+      messagesStatus.value[sessionId] = 'ready'
       return
     }
-    const page = await fetchMessages(sessionId, SESSION_HISTORY_LIMIT, 0)
-    messagesById.value[sessionId] = page.messages
+    messagesStatus.value[sessionId] = 'loading'
+    // 快照 fetch 发起时的当前轮乐观 user（连发竞态去重基准，见下方重建规则）
+    const fetchUserIdSnapshot = streamUserIdBySession.value[sessionId]
+    try {
+      const page = await fetchMessages(sessionId, SESSION_HISTORY_LIMIT, 0)
+      // 合并本地快照外的新数据，避免窗口覆盖并发产生的消息：
+      // - 负 id：保留未转正 assistant 占位与 fetch 之后才发送的更新轮乐观 user
+      //   （page 不含其正版）；已转正占位（streamFinalized）与 fetch 发起时的
+      //   当前轮 user 必须排除，否则同一轮消息渲染两份。当前轮排除的前提：
+      //   后端 prompt 到达即同步落库 user（先于 admission/排队），fetch 的
+      //   GET 晚于落库时 page 已含其正 id 版——与 loadMessageUpdates 重建
+      //   （752-764 行）的快照语义同构，差异只是「本轮由 page 正版回归替换」。
+      // - 正 id 但比窗口最大 id 更新（refreshAfterTurn 等并发落库的消息）：保留。
+      // 顺序：历史窗口升序在前，本地新数据追加在尾部（负 id 数值最小但语义最新，置尾正确）。
+      const existing = messagesById.value[sessionId] ?? []
+      const pageMaxId = page.messages.at(-1)?.id ?? 0
+      const currentUserId = streamUserIdBySession.value[sessionId]
+      const local = existing.filter((m) => {
+        if (m.id < 0 && !m.streamFinalized) {
+          if (m.role === 'user') {
+            return (
+              currentUserId !== undefined &&
+              m.id === currentUserId &&
+              m.id !== fetchUserIdSnapshot
+            )
+          }
+          return true // 未转正 assistant 占位：page 中必无其正版（未落库）
+        }
+        return m.id > pageMaxId
+      })
+      messagesById.value[sessionId] = [...page.messages, ...local]
+      messagesStatus.value[sessionId] = 'ready'
+    } catch {
+      // 历史加载失败不阻塞会话页打开（会话校验失败才决定错误态）；
+      // 记录 error 供 UI 显示「加载失败 + 重试」，而不是误显「暂无消息」。
+      messagesStatus.value[sessionId] = 'error'
+    }
     // 续流会话（resync 恢复中）切换进来：列表重建后补建占位，
     // 保证后续事件仍有落点（createStreamPlaceholder 会把已累积实时块回灌正文）
     if (streamMsgIdBySession.value[sessionId] !== undefined) {
@@ -811,6 +862,8 @@ export const useSessionStore = defineStore('session', () => {
     indexAcpSession(session)
     markInitialSessionDetailRefresh(session)
     messagesById.value[session.id] = []
+    // 新会话无历史：标记 ready（空态），避免进入会话页时被当成「加载中」
+    messagesStatus.value[session.id] = 'ready'
     return { session, configOptions }
   }
 
@@ -1604,6 +1657,7 @@ export const useSessionStore = defineStore('session', () => {
     bumpFileList,
     sessions,
     messagesById,
+    messagesStatus,
     currentId,
     loading,
     loadingError,

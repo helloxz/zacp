@@ -101,6 +101,8 @@ export default {
     noAgentHint: '尚未启用任何智能体：请先安装 Agent，再到【设置 - 智能体】中启用',
     goSettings: '前往设置',
     emptyMessages: '暂无消息，发送第一条消息开始对话',
+    loadingMessages: '消息加载中…',
+    messagesLoadFailed: '消息加载失败',
     user: '你',
     assistant: 'Agent',
     errorTitle: '出错了',

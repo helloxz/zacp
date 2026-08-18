@@ -91,6 +91,8 @@ export default {
     noAgentHint: 'No agents enabled yet. Install an agent first, then enable it in Settings → Agents',
     goSettings: 'Open settings',
     emptyMessages: 'No messages yet. Send the first message to begin.',
+    loadingMessages: 'Loading messages…',
+    messagesLoadFailed: 'Failed to load messages',
     user: 'You',
     assistant: 'Agent',
     errorTitle: 'Something went wrong',

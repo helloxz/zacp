@@ -27,6 +27,21 @@ const messageTick = computed(
     `${sessionStore.activeMessages.length}:${sessionStore.activeMessages.at(-1)?.content.length ?? 0}:${sessionStore.activeMessages.at(-1)?.reasoning?.length ?? 0}`,
 )
 
+/** 当前会话消息历史加载状态：未开始（缓存缺失且请求未发）时按加载中处理，
+ * 避免切换会话瞬间把「还没加载」误显成「暂无消息」。 */
+const messagesLoadStatus = computed<'loading' | 'ready' | 'error'>(() => {
+  const id = sessionStore.currentId
+  return id === null ? 'ready' : (sessionStore.messagesStatus[id] ?? 'loading')
+})
+
+/** 历史加载失败后手动重试（force 强制重新拉取最新窗口） */
+function onRetryMessages() {
+  const id = sessionStore.currentId
+  if (id !== null) {
+    void sessionStore.loadMessages(id, true)
+  }
+}
+
 /**
  * 切换会话待吸附标记：消息历史是异步加载的（loadMessages 完成后才渲染），
  * currentId 变化时直接滚动往往发生在消息渲染前（空列表），需等列表变化后再贴底。
@@ -97,8 +112,28 @@ watch(
         <!-- 实时工具调用卡片已移入 MessageItem 流式占位消息内部（AI 内容上方），
              与历史工具卡片位置统一，避免 turn 结束后工具条跳动 -->
 
+        <!-- 消息历史三态：加载中 / 加载失败（可重试）/ 确认空。
+             空态只在 ready 后才显示，避免请求在途时误显「暂无消息」。 -->
         <n-text
-          v-if="!sessionStore.activeMessages.length"
+          v-if="messagesLoadStatus === 'loading'"
+          depth="3"
+          class="self-center py-10 text-sm"
+        >
+          {{ t('chat.loadingMessages') }}
+        </n-text>
+        <div
+          v-else-if="messagesLoadStatus === 'error'"
+          class="flex flex-col items-center gap-2 self-center py-10"
+        >
+          <n-text depth="3" class="text-sm">
+            {{ t('chat.messagesLoadFailed') }}
+          </n-text>
+          <n-button size="small" secondary @click="onRetryMessages">
+            {{ t('chat.retry') }}
+          </n-button>
+        </div>
+        <n-text
+          v-else-if="!sessionStore.activeMessages.length"
           depth="3"
           class="self-center py-10 text-sm"
         >
