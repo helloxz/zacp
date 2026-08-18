@@ -14,8 +14,9 @@
  *   仅 Chrome/Edge/Firefox 支持（Safari 剪贴板不向网页暴露文件）；
  *   粘贴/拖拽单次统一上限 10 个文件，超过拒绝整批；截图自动命名并转 webp。
  * - 图片自动压缩转 webp（等比不裁剪，>5MB 降采样兜底），非图片原样直传。
- * - 单击图片文件 → n-image 原生预览；双击文本文件 → 编辑器；右键 →
- *   「重命名 / 复制名称」（文件另加「编辑」，非文本文件不显示）。
+ * - 单击图片文件 → n-image 原生预览；单击 html 文件 → 新标签页预览；
+ *   双击文本文件 → 编辑器；右键 → 「预览」(html/htm) /「编辑」(文本文件)
+ *   /「下载」「重命名 / 复制名称」。
  *   可编辑判定见 utils/fileEditable.ts（扩展名白名单，与后端 Read/Write 限制一致）。
  *
  * 数据根 = 当前会话所属 workspace；无会话时用默认 workspace。
@@ -189,7 +190,10 @@ const ctxMenuShow = ref(false)
 const ctxMenuX = ref(0)
 const ctxMenuY = ref(0)
 const ctxMenuEntry = ref<FileEntry | null>(null)
-/** 右键菜单：文件多一个「编辑」项（目录不可编辑；非白名单文本类型的文件同样不显示） */
+/**
+ * 右键菜单：文件多一个「编辑」项（目录不可编辑；非白名单文本类型的文件同样不显示）；
+ * html/htm 文件额外多一个「预览」项（新标签页渲染，判定与单击预览一致）。
+ */
 const ctxOptions = computed<DropdownOption[]>(() => {
   const options: DropdownOption[] = [
     { key: 'rename', label: '重命名' },
@@ -207,6 +211,10 @@ const ctxOptions = computed<DropdownOption[]>(() => {
     isEditableFileName(ctxMenuEntry.value.name)
   ) {
     options.unshift({ key: 'edit', label: '编辑' })
+  }
+  // html/htm 文件提供新标签预览入口（仅在编辑之后 unshift，保证排在菜单最前）
+  if (ctxMenuEntry.value && !ctxMenuEntry.value.isDir && isHtmlEntry(ctxMenuEntry.value)) {
+    options.unshift({ key: 'preview', label: '预览' })
   }
   // 删除不可逆，标红且放最底部；class 通过 props 透传到 dropdown 条目 DOM
   options.push({ key: 'delete', label: '删除', props: { class: 'text-red-500!' } })
@@ -230,6 +238,11 @@ async function onCtxSelect(key: string | number) {
   const entry = ctxMenuEntry.value
   if (!entry) return
 
+  // 右键【预览】：仅 html/htm 文件，与单击预览同一链路（新标签页渲染）
+  if (key === 'preview') {
+    void openHtmlPreview(entry)
+    return
+  }
   // 右键【编辑】：与双击行为一致，打开文本编辑器
   if (key === 'edit') {
     await openEditor(entry)
@@ -409,6 +422,12 @@ function isImageEntry(e: FileEntry): boolean {
   )
 }
 
+/** html 判定：按 mimeType 或扩展名（与 isImageEntry 同风格；双击仍走编辑器，单击走预览） */
+function isHtmlEntry(e: FileEntry): boolean {
+  const t = e.mimeType ?? ''
+  return t === 'text/html' || /\.(html?)$/i.test(e.name)
+}
+
 const previewEntry = ref<FileEntry | null>(null)
 /** 预览直链（异步换取：12 小时资源 token，绑定 workspace+path，不进日志泄露主 token） */
 const previewSrc = ref('')
@@ -437,10 +456,40 @@ watch([previewEntry, workspaceId], () => {
   void refreshPreviewUrl()
 })
 
-/** 单击条目：文件夹进入；图片文件直接弹出 n-image 原生预览（不经过中间弹窗） */
+/**
+ * 单击 html → 新标签页预览：换 12h 短 token 直链后导航（RawFile 不带
+ * download=1 时内联输出，浏览器直接渲染）。
+ *
+ * 弹窗拦截规避：fetchPreviewUrl 是异步请求，await 后再 open 不视为用户手势
+ * 会被拦截，故先在同步手势内 open('about:blank') 占位拿窗口引用，换到 URL
+ * 后再导航。opener 置空防页面内脚本反向操作父窗口（reverse tabnabbing）。
+ */
+async function openHtmlPreview(entry: FileEntry) {
+  if (!workspaceId.value) return
+  const win = window.open('about:blank', '_blank')
+  if (!win) {
+    message.warning('浏览器拦截了新窗口，请允许弹出窗口后重试')
+    return
+  }
+  // 占位窗口导航前先切断 opener 引用，再改 location 加载 html
+  win.opener = null
+  try {
+    const url = await fetchPreviewUrl(workspaceId.value, entry.path)
+    if (!win.closed) win.location.href = url
+  } catch {
+    if (!win.closed) win.close()
+    message.error('获取预览链接失败')
+  }
+}
+
+/** 单击条目：文件夹进入；html 新标签预览；图片文件直接弹出 n-image 原生预览（不经过中间弹窗） */
 async function onEntryClick(entry: FileEntry) {
   if (entry.isDir) {
     enterDir(entry)
+    return
+  }
+  if (isHtmlEntry(entry)) {
+    void openHtmlPreview(entry)
     return
   }
   if (!isImageEntry(entry)) return
