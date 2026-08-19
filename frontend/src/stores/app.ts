@@ -15,6 +15,17 @@ const THEME_MODE_KEY = 'zacp.themeMode'
 /** 主题模式：仅两态（浅色/深色），默认浅色保持现状 */
 export type ThemeMode = 'light' | 'dark'
 
+/** 本地存储 key：右侧边栏自动展开偏好（仅本机；与会话页右侧面板手动切换双向同步） */
+const RIGHT_PANEL_AUTO_EXPAND_KEY = 'zacp.autoExpandRightPanel'
+
+function readStoredRightPanelAutoExpand(): boolean {
+  if (typeof localStorage === 'undefined') {
+    return false
+  }
+  // localStorage 存储的均为字符串，需显式判等 'true'，避免 'false' 被当 truthy
+  return localStorage.getItem(RIGHT_PANEL_AUTO_EXPAND_KEY) === 'true'
+}
+
 function readStoredDisplayName(): string {
   if (typeof localStorage === 'undefined') {
     return DEFAULT_DISPLAY_NAME
@@ -99,6 +110,21 @@ export const useAppStore = defineStore('app', () => {
   /** 设置弹窗开关（AppShell 与各页面的「前往设置」入口共享；默认定位「智能体」目录） */
   const settingsOpen = ref(false)
 
+  /**
+   * 右侧边栏自动展开偏好：进入会话页时是否自动展开右侧面板。
+   * 与会话标题栏的手动切换（AppShell 的 toggle）双向同步——手动切换会写回本状态，
+   * 从而与【设置 - 系统设置】中的开关保持一致。
+   */
+  const rightPanelAutoExpand = ref(readStoredRightPanelAutoExpand())
+
+  /** 设置/同步右侧边栏自动展开偏好到 localStorage；两处入口（设置开关与面板手动切换）共用 */
+  function setRightPanelAutoExpand(next: boolean) {
+    rightPanelAutoExpand.value = next
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem(RIGHT_PANEL_AUTO_EXPAND_KEY, next ? 'true' : 'false')
+    }
+  }
+
   return {
     locale,
     naiveLocale,
@@ -111,5 +137,7 @@ export const useAppStore = defineStore('app', () => {
     toggleTheme,
     newProjectModalOpen,
     settingsOpen,
+    rightPanelAutoExpand,
+    setRightPanelAutoExpand,
   }
 })

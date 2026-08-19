@@ -251,6 +251,9 @@ export default {
       displayNamePlaceholder: 'Enter a display name',
       displayNameHint:
         'Stored locally in your browser (localStorage), never uploaded.',
+      rightPanelAutoExpandLabel: 'Auto-expand right sidebar',
+      rightPanelAutoExpandHint:
+        'Expand the right panel when entering a session; synced with the title-bar toggle.',
     },
     about: {
       title: 'About',

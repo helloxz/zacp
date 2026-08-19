@@ -19,8 +19,12 @@ import { acpSocket } from '@/composables/useAcpSocket'
 const appStore = useAppStore()
 
 /**
- * 右侧面板（信息|文件|Git）折叠状态：默认收起（不持久化）。
+ * 右侧面板（信息|文件|Git）折叠状态：默认收起。
  * 展开/收起按钮在会话标题栏最右侧（ChatPane 转发切换事件）。
+ *
+ * 状态来源：进入会话页时按【设置-系统设置】的「右侧边栏自动展开」偏好恢复
+ * （localStorage，由 appStore 管理与持久化）；会话内手动切换经由 toggleRightPanel
+ * 写回同一偏好，二者双向同步——即「自动展开 = 记住右侧面板最后的状态」。
  *
  * 关键约束：非会话态（/ 与 /new）一律强制收起——新建对话时不得展示右侧面板，
  * 且 /new 下没有切换按钮，若残留展开态用户将无法关闭。
@@ -28,6 +32,12 @@ const appStore = useAppStore()
  * 只收起、不重置：FilePanel 一直挂载在 DOM（w-0 + overflow-hidden），内部状态保留。
  */
 const rightPanelOpen = ref(false)
+
+/** 会话标题栏手动切换右侧面板；写回 appStore 偏好，使设置开关与面板状态保持同步 */
+function toggleRightPanel() {
+  rightPanelOpen.value = !rightPanelOpen.value
+  appStore.setRightPanelAutoExpand(rightPanelOpen.value)
+}
 
 /**
  * 移动端左侧栏抽屉开关（<lg 生效；lg 及以上侧栏常驻流内，与现状一致）。
@@ -59,7 +69,10 @@ const router = useRouter()
 watch(
   () => route.name,
   (name) => {
-    if (name !== 'session') {
+    if (name === 'session') {
+      // 进入会话页：按「右侧边栏自动展开」偏好恢复（已持久化；默认 false 则保持收起）
+      rightPanelOpen.value = appStore.rightPanelAutoExpand
+    } else {
       rightPanelOpen.value = false
     }
     // 路由切换时自动关闭移动端侧栏抽屉（避免切页后残留遮罩盖住内容）
@@ -154,7 +167,7 @@ onMounted(() => {
 
       <ChatPane
         :right-open="rightPanelOpen"
-        @toggle-right-panel="rightPanelOpen = !rightPanelOpen"
+        @toggle-right-panel="toggleRightPanel"
       />
     </main>
 

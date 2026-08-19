@@ -45,5 +45,21 @@ function onNameChange() {
         {{ t('settings.system.displayNameHint') }}
       </p>
     </section>
+
+    <!-- 右侧边栏自动展开：进入会话页时是否自动展开右侧面板；与标题栏手动切换双向同步 -->
+    <section class="flex items-center justify-between gap-4">
+      <div class="flex flex-col gap-1">
+        <span class="text-sm font-medium text-ink-secondary">
+          {{ t('settings.system.rightPanelAutoExpandLabel') }}
+        </span>
+        <span class="text-xs text-ink-muted">
+          {{ t('settings.system.rightPanelAutoExpandHint') }}
+        </span>
+      </div>
+      <n-switch
+        :value="appStore.rightPanelAutoExpand"
+        @update:value="appStore.setRightPanelAutoExpand"
+      />
+    </section>
   </div>
 </template>

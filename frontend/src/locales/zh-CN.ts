@@ -256,6 +256,8 @@ export default {
       displayNameLabel: '显示名',
       displayNamePlaceholder: '输入显示名',
       displayNameHint: '仅保存在本机浏览器（localStorage），不会上传。',
+      rightPanelAutoExpandLabel: '右侧边栏自动展开',
+      rightPanelAutoExpandHint: '进入会话页时自动展开右侧面板；与标题栏手动切换同步。',
     },
     about: {
       title: '关于',
