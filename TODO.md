@@ -61,3 +61,4 @@
 - ~~支持html查看~~
 - ~~支持刷新重连~~
 - 这个消息提示啥意思：time=2026-08-13T19:11:39.561+08:00 level=WARN msg="send buffer full, dropping message"
+- 右侧边栏上传文件不在自动压缩图片，支持同名覆盖

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 import { useMessage } from 'naive-ui'
@@ -12,15 +12,13 @@ const router = useRouter()
 const message = useMessage()
 const authStore = useAuthStore()
 
+// 用户名/密码留空由用户手动输入，不做任何预填：
+// 免认证的 /auth/status 已不回传用户名，登录页也不从 store 回填，
+// 避免把登录用户名暴露给浏览器自动填充或第三方。
 const username = ref('')
 const password = ref('')
 const submitting = ref(false)
 const errorMsg = ref('')
-
-// 预填上一次的用户名（仅展示用，非信任来源；未启用认证时为空）
-onMounted(() => {
-  username.value = authStore.username ?? ''
-})
 
 /** 登录成功后回跳地址（守卫写入的 redirect；默认首页） */
 const redirectTo = computed(

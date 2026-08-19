@@ -624,7 +624,6 @@ export async function login(username: string, password: string): Promise<LoginRe
 /** GET /api/v1/auth/status — 认证启用状态（免认证；前端守卫据此决定是否拦截） */
 export interface AuthStatus {
   enabled: boolean
-  username: string
 }
 
 export async function fetchAuthStatus(): Promise<AuthStatus> {

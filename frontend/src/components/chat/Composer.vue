@@ -2,7 +2,7 @@
 import { computed, h, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import type { VNodeChild } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { OptionsOutline, SendOutline, StopOutline } from '@vicons/ionicons5'
+import { AddOutline, OptionsOutline, SendOutline, StopOutline } from '@vicons/ionicons5'
 import { NIcon, useMessage } from 'naive-ui'
 import type { InputInst, SelectGroupOption, SelectOption } from 'naive-ui'
 import { useSessionStore, MAX_TURNS_PER_SESSION, type SessionStreamStatus } from '@/stores/session'
@@ -236,12 +236,20 @@ function onPaste(e: ClipboardEvent) {
   if (hasPlainText) return
   const target = files.find((f) => f.type.startsWith('image/')) ?? files[0]
   e.preventDefault()
-  if (fileUploading.value) {
-    // 上一个还在传：吞掉本次并明确提示，避免用户误以为粘贴失败
-    message.info('正在上传文件，请稍候')
-    return
-  }
   void pasteUpload(target) // 单张限制：多文件只取第一个，其余忽略
+}
+
+/**
+ * 用户手动选择的文件（移动端 [+] 按钮，accept=image/*）：与粘贴上传走完全相同的链路。
+ * 把 fileUploading 并发保护收敛在 pasteUpload 内，粘贴与手动选择共用一份。
+ */
+function onPickFile(e: Event) {
+  const input = e.target as HTMLInputElement
+  const file = input.files?.[0]
+  input.value = '' // 重置，支持连续选择同一文件
+  if (file) {
+    void pasteUpload(file)
+  }
 }
 
 /**
@@ -250,6 +258,11 @@ function onPaste(e: ClipboardEvent) {
  * 文本最前面插入 @绝对路径 引用（临时文件与会话/工作区无关，无需上下文校验）。
  */
 async function pasteUpload(file: File) {
+  // 上传进行中：吞掉本次并明确提示，避免用户误以为粘贴/选择失败
+  if (fileUploading.value) {
+    message.info('正在上传文件，请稍候')
+    return
+  }
   // 引用数上限：已有引用 + 本次 1 个 > 3 → 提示并跳过上传（图片与文件统一计数）
   if (countRefs(text.value) + 1 > MAX_FILE_REFS) {
     message.warning(`最多引用 ${MAX_FILE_REFS} 个文件`)
@@ -564,17 +577,32 @@ function onKeydown(e: KeyboardEvent) {
         <span v-else class="text-xs text-ink-muted">{{ t('chat.enterHint') }}</span>
       </div>
 
-      <!-- 移动端配置入口（仅配置项存在时显示；lg 及以上不渲染）：调校按钮固定居左，
-           发送/停止按钮仍在右侧（按钮区），两钮分离。 -->
-      <button
-        v-if="sessionStore.configOptions.length"
-        type="button"
-        aria-label="会话配置"
-        class="flex h-9 w-9 shrink-0 cursor-pointer items-center justify-center rounded-lg text-ink-secondary transition-colors hover:bg-surface-hover active:bg-surface-active focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 lg:hidden"
-        @click="configPanelOpen = true"
-      >
+      <!-- 移动端工具组（[+] 图片上传 + 调校配置）：同一容器内部 gap 紧挨，整组固定居左。
+           与右侧发送/停止按钮区构成整行 justify-between 的两个子元素，避免调校被挤到中间。 -->
+      <div class="flex shrink-0 items-center gap-1 lg:hidden">
+        <!-- [+] 图片上传：input 以透明度0覆盖整个按钮，直接原生点击呼起相册/图库
+             （iOS 上 display:none 的 file input click() 不可靠）；accept=image/* 单张，与粘贴一致 -->
+        <div class="relative flex h-9 w-9 items-center justify-center">
+          <input
+            type="file"
+            accept="image/*"
+            aria-label="选择图片"
+            class="absolute inset-0 h-full w-full cursor-pointer opacity-0"
+            @change="onPickFile"
+          />
+          <AddOutline class="pointer-events-none h-4.5 w-4.5 text-ink-secondary" />
+        </div>
+        <!-- 调校配置入口（仅配置项存在时显示）：点开底部配置抽屉 -->
+        <button
+          v-if="sessionStore.configOptions.length"
+          type="button"
+          aria-label="会话配置"
+          class="flex h-9 w-9 shrink-0 cursor-pointer items-center justify-center rounded-lg text-ink-secondary transition-colors hover:bg-surface-hover active:bg-surface-active focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
+          @click="configPanelOpen = true"
+        >
         <OptionsOutline class="h-4.5 w-4.5" />
-      </button>
+        </button>
+      </div>
 
       <div class="flex shrink-0 items-center gap-2">
         <!-- 排队中：停止按钮 + 状态文案（可取消排队；A 结束后自动开跑） -->

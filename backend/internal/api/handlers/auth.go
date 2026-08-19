@@ -51,12 +51,13 @@ func (h *AuthHandler) Login(c *gin.Context) {
 
 // Status GET /api/v1/auth/status
 //
-// 返回认证启用状态与用户名。免认证：前端路由守卫与登录页依赖它决定是否拦截，
-// 且该接口不泄露任何敏感信息（username 为空说明未启用）。
+// 返回认证启用状态。免认证：前端路由守卫依赖它决定是否拦截。
+// 刻意不回传 username：该接口无需任何凭证即可访问，回传用户名会
+// 与 Login 的防枚举提示（不区分「用户名不存在/密码错误」）相矛盾，
+// 相当于对外公开了正确用户名，此处只暴露 enabled 布尔值。
 func (h *AuthHandler) Status(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
-		"enabled":  h.svc.Enabled(),
-		"username": h.svc.Username(),
+		"enabled": h.svc.Enabled(),
 	})
 }
 

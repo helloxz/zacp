@@ -25,8 +25,12 @@ export const useAuthStore = defineStore('auth', () => {
   /** 是否有可用登录 token */
   const hasToken = computed(() => token.value !== '')
 
-  /** 用后端状态更新本地（login / ensureStatus 共用） */
-  function applyStatus(s: { enabled: boolean; username: string }) {
+  /**
+   * 用后端状态更新本地（login / ensureStatus 共用）。
+   * username 仅供已登录上下文（login 响应）回填，供设置页回显当前用户名；
+   * 免认证的 /auth/status 不再返回 username，故 ensureStatus 走这里时不会写入。
+   */
+  function applyStatus(s: { enabled: boolean; username?: string }) {
     enabled.value = s.enabled
     if (s.username) {
       username.value = s.username
