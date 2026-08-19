@@ -42,22 +42,34 @@ detect_arch() {
   esac
 }
 
-# --- 网络拉取：curl 优先，wget 兜底；out 为空时输出到 stdout ---
+# --- 网络拉取：curl 优先，wget 兜底；out 为空时 body 输出到 stdout ---
 # 失败时打印 HTTP 状态码（便于区分限流 403/429 与网络不通 000/超时）；
 # 设 GH_TOKEN/GITHUB_TOKEN 可将匿名 API 限额(60/h)提升到 5000/h，规避限流。
+# 注意：body 与状态码必须分离——body 先入临时文件，状态码单独打 stderr，
+#      成功后 body 才进 stdout/out 文件。切勿用 `>&2` 挂整条 curl（会把 body
+#      一并转走，导致命令替换拿到空串而误报 no tag_name）。
 fetch() {
-  local url="${1:-}" out="${2:-}" auth=()
+  local url="${1:-}" out="${2:-}" auth=() code rc body
   # 认证参数（可选）：提升 GitHub API 速率上限
   if [ -n "${GH_TOKEN:-}" ]; then
     auth=(-H "Authorization: Bearer ${GH_TOKEN}")
   fi
   if command -v curl >/dev/null 2>&1; then
+    body="$(mktemp)"
+    # -w 把状态码输出到 stdout，由命令替换捕获；body 落临时文件，互不干扰
+    code="$(curl -fsSL --max-time 60 "${auth[@]}" "$url" -o "$body" -sS -w '%{http_code}')"
+    rc=$?
+    printf '  fetch: HTTP %s\n' "$code" >&2
+    if [ "$rc" -ne 0 ]; then
+      echo "  error: curl failed (exit ${rc}): ${url}" >&2
+      rm -f "$body"
+      return 1
+    fi
     if [ -n "$out" ]; then
-      curl -fsSL --max-time 60 "${auth[@]}" "$url" -o "$out" -w $'  fetch: HTTP %{http_code}\n' >&2 \
-        || { echo "  error: curl failed: ${url}" >&2; return 1; }
+      mv "$body" "$out"
     else
-      curl -fsSL --max-time 60 "${auth[@]}" "$url" -w $'  fetch: HTTP %{http_code}\n' >&2 \
-        || { echo "  error: curl failed: ${url}" >&2; return 1; }
+      cat "$body"
+      rm -f "$body"
     fi
   elif command -v wget >/dev/null 2>&1; then
     if [ -n "$out" ]; then wget -q "$url" -O "$out"; else wget -qO- "$url"; fi
