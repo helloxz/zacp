@@ -72,6 +72,7 @@ export default {
     welcomeEvening: '晚上好',
     welcomeSubtitle: '请选择一个 Agent',
     filesTitle: '文件',
+    configTitle: '会话配置',
     newSessionPathHint: '您将在 {path} 下创建对话',
     loadingAgent: '正在启动智能体…',
     creatingSession: '正在创建会话…',

@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import { computed, h, onMounted, ref, watch } from 'vue'
+import { computed, h, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import type { VNodeChild } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { SendOutline, StopOutline } from '@vicons/ionicons5'
+import { OptionsOutline, SendOutline, StopOutline } from '@vicons/ionicons5'
 import { NIcon, useMessage } from 'naive-ui'
 import type { InputInst, SelectGroupOption, SelectOption } from 'naive-ui'
 import { useSessionStore, MAX_TURNS_PER_SESSION, type SessionStreamStatus } from '@/stores/session'
@@ -145,6 +145,55 @@ function filterSelectOption(pattern: string, option: SelectOption | SelectGroupO
 const text = ref('')
 const selectedAgentId = ref(props.agentId ?? '')
 const inputRef = ref<InputInst | null>(null)
+
+/** 移动端配置面板开关：手机端配置项收进底部抽屉（进入按钮在发送按钮左侧，lg 及以上不显示） */
+const configPanelOpen = ref(false)
+/** 抽屉高度（px，动态测量）：打开前用占位值避免首次弹出抖动 */
+const configDrawerHeight = ref('300px')
+/** 配置内容区 ref：以其实测高度决定抽屉高度（内容自适应，避免固定百分比内容少时大片空白） */
+const configPanelContentRef = ref<HTMLElement | null>(null)
+let configDrawerRO: ResizeObserver | null = null
+
+/**
+ * 根据内容实际高度计算抽屉高度：内容高 + 顶部标题栏估算，夹在 [300px, 70vh] 之间——
+ * 单行配置不会过矮、内容多时不会超屏（内部滚动）。
+ */
+function measureConfigDrawer() {
+  const el = configPanelContentRef.value
+  if (!el) return
+  const contentH = el.offsetHeight
+  const headerEstimate = 64 // n-drawer-content 标题栏 + 底边距估算
+  const maxH = window.innerHeight * 0.7
+  const h = Math.min(Math.max(contentH + headerEstimate, 300), maxH)
+  configDrawerHeight.value = `${Math.round(h)}px`
+}
+watch(
+  configPanelOpen,
+  (open) => {
+    if (open) {
+      // 首次打开注册 ResizeObserver：异步配置加载完成/行数变化时高度自动跟随
+      configDrawerRO ??= new ResizeObserver(() => measureConfigDrawer())
+      if (configPanelContentRef.value) configDrawerRO.observe(configPanelContentRef.value)
+      measureConfigDrawer()
+    } else {
+      configDrawerRO?.disconnect()
+      configDrawerRO = null
+    }
+  },
+  { flush: 'post' },
+)
+onBeforeUnmount(() => configDrawerRO?.disconnect())
+
+/**
+ * 配置抽屉内下拉菜单的局部主题覆盖：把菜单底色设为 var(--color-surface)，
+ * 与配置卡片背景一致（浅/暗色自动跟随），避免白底菜单和灰底卡片不融合。
+ * 通过外层 n-config-provider 限定作用域，不影响 PC/其它下拉。
+ */
+const drawerSelectMenuTheme = {
+  InternalSelectMenu: {
+    color: 'var(--color-surface)',
+  },
+}
 
 // ---------------------------------------------------------------------------
 // 粘贴上传文件（仅 bar 模式启用）：Ctrl/Cmd+V 粘贴图片或其它文件 →
@@ -520,10 +569,11 @@ function onKeydown(e: KeyboardEvent) {
       正在上传文件…
     </div>
 
-    <!-- 底部选项行：左侧配置项（模型/思考强度等），右侧仅图标发送按钮；与输入框同卡片，构成整体 -->
-    <!-- flex-1：选项容器占满除发送按钮外的剩余宽度；flex-nowrap：选项强制一行，极端情况才横向滚动兜底 -->
+    <!-- 底部选项行：左侧配置项（模型/思考强度等），右侧图标按钮（发送/停止 + 移动端调校入口）；与输入框同卡片。
+           mobile（<lg）：左侧配置项容器隐藏（配置收进底部抽屉，见下方 n-drawer），
+           右侧按钮区保留——避免窄屏下多个下拉把宽度撑爆；整行不能隐藏，否则发送按钮跟着消失。 -->
     <div class="mt-2 flex items-center justify-between gap-2">
-      <div class="flex min-w-0 flex-1 flex-nowrap items-center gap-2 overflow-x-auto">
+      <div class="hidden min-w-0 flex-1 flex-nowrap items-center gap-2 overflow-x-auto lg:flex">
         <!-- 配置项（模型/思维强度等）融合进输入卡片；card（新建会话空态）与 bar（会话中）风格一致。
              外层 div 定宽限制下拉宽度（n-select 根样式 width:100% 会撑满父级，直接设 class 不生效）；
              模型下拉内容最长（渠道/模型 完整名），固定更宽；其余选项保持窄宽，避免一行放不下 -->
@@ -557,6 +607,18 @@ function onKeydown(e: KeyboardEvent) {
         </template>
         <span v-else class="text-xs text-ink-muted">{{ t('chat.enterHint') }}</span>
       </div>
+
+      <!-- 移动端配置入口（仅配置项存在时显示；lg 及以上不渲染）：调校按钮固定居左，
+           发送/停止按钮仍在右侧（按钮区），两钮分离。 -->
+      <button
+        v-if="sessionStore.configOptions.length"
+        type="button"
+        aria-label="会话配置"
+        class="flex h-9 w-9 shrink-0 cursor-pointer items-center justify-center rounded-lg text-ink-secondary transition-colors hover:bg-surface-hover active:bg-surface-active focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 lg:hidden"
+        @click="configPanelOpen = true"
+      >
+        <OptionsOutline class="h-4.5 w-4.5" />
+      </button>
 
       <div class="flex shrink-0 items-center gap-2">
         <!-- 排队中：停止按钮 + 状态文案（可取消排队；A 结束后自动开跑） -->
@@ -610,6 +672,69 @@ function onKeydown(e: KeyboardEvent) {
       </div>
     </div>
   </div>
+
+  <!-- 移动端配置抽屉（底部 action-sheet）：仅 <lg 的调校按钮触发，PC 永不打开。
+       配置项完整罗列，select 下拉保留 filterable；复用 PC 内嵌行同款构建/过滤/提交函数，
+       数据源同为 sessionStore.configOptions（双实例字段同步，无状态分裂）。
+       注意 height 用默认 40%：'auto' 会让 content body（flex:1+overflow）塌缩为 0，仅剩标题栏。
+       视觉：抽屉顶部圆角（action-sheet 质感）；每项一行卡片（圆角+浅底+细边框，浅/暗色均有层次）；左 label 右控件对齐 -->
+  <n-drawer
+    v-model:show="configPanelOpen"
+    placement="bottom"
+    :height="configDrawerHeight"
+    :style="{ borderRadius: '16px 16px 0 0', overflow: 'hidden' }"
+  >
+    <n-drawer-content :title="t('chat.configTitle')" :native-scrollbar="false">
+      <!-- n-config-provider：仅对本抽屉内 select 生效（菜单挂 body 后依然继承 provide 上下文），
+           统一菜单底色与配置卡片融合；两个 n-select 的 :to="'body'" 让菜单脱离抽屉 DOM，
+           避免配置项很多时被抽屉容器（overflow:hidden 圆角裁切）裁剪导致显示不全 -->
+      <n-config-provider :theme-overrides="drawerSelectMenuTheme">
+      <div ref="configPanelContentRef" class="px-1 pb-[env(safe-area-inset-bottom)]">
+        <div v-if="sessionStore.configOptions.length" class="flex flex-col gap-2.5 py-1">
+          <!-- select 型配置项：左 label、右下拉；不带 description 简介文字 -->
+          <div
+            v-for="opt in selectConfigOptions"
+            :key="opt.id"
+            class="flex items-center justify-between gap-3 rounded-xl border border-divider bg-surface px-3.5 py-3"
+          >
+            <span class="min-w-0 flex-1 truncate text-sm font-medium text-ink">{{ opt.name }}</span>
+            <div class="w-44 shrink-0">
+              <n-select
+                :value="String(opt.currentValue)"
+                size="small"
+                class="opt-select"
+                :to="'body'"
+                :filterable="opt.category === 'model'"
+                :options="buildSelectOptions(opt.options)"
+                :render-label="renderConfigOptionLabel"
+                :consistent-menu-width="false"
+                :filter="filterSelectOption"
+                @update:value="(v: string) => onConfigChange(opt.id, v)"
+              />
+            </div>
+          </div>
+          <!-- boolean 型配置项：左 label、右开关 -->
+          <div
+            v-for="opt in booleanConfigOptions"
+            :key="opt.id"
+            class="flex items-center justify-between gap-3 rounded-xl border border-divider bg-surface px-3.5 py-3"
+          >
+            <span class="min-w-0 flex-1 truncate text-sm font-medium text-ink">{{ opt.name }}</span>
+            <n-switch
+              :value="Boolean(opt.currentValue)"
+              size="small"
+              class="shrink-0"
+              @update:value="(v: boolean) => onConfigChange(opt.id, v ? 'true' : 'false')"
+            />
+          </div>
+        </div>
+        <p v-else class="py-4 text-center text-xs text-ink-muted">
+          {{ t('chat.enterHint') }}
+        </p>
+      </div>
+      </n-config-provider>
+    </n-drawer-content>
+  </n-drawer>
 </template>
 
 <style scoped>
