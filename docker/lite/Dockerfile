@@ -1,7 +1,7 @@
 # zacp + zlite 一体化镜像（精简版）
 #
-# 构建（build context 必须是仓库根，COPY 路径相对它）：
-#   docker build -f docker/lite/Dockerfile -t zacp:lite .
+# 构建（本目录即 build context，脚本已随镜像放在同级）：
+#   cd docker/lite && docker build -t zacp:lite .
 #
 # 基础镜像：debian:12-slim（bookworm）
 # 构建时从 GitHub Releases 拉取最新版 zacp / zlite 安装到 /usr/bin。
@@ -19,8 +19,8 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends curl ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-# 安装最新版 zacp / zlite 到 /usr/bin（逻辑见 scripts/install-bins.sh）
-COPY scripts/install-bins.sh /tmp/install-bins.sh
+# 安装最新版 zacp / zlite 到 /usr/bin（脚本为同级 install-bins.sh，同步自 scripts/install-bins.sh）
+COPY install-bins.sh /tmp/install-bins.sh
 RUN bash /tmp/install-bins.sh --arch "${TARGETARCH}" \
     && rm -f /tmp/install-bins.sh
 
