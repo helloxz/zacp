@@ -1,4 +1,7 @@
-# zacp + zlite 一体化镜像
+# zacp + zlite 一体化镜像（精简版）
+#
+# 构建（build context 必须是仓库根，COPY 路径相对它）：
+#   docker build -f docker/lite/Dockerfile -t zacp:lite .
 #
 # 基础镜像：debian:12-slim（bookworm）
 # 构建时从 GitHub Releases 拉取最新版 zacp / zlite 安装到 /usr/bin。
