@@ -26,7 +26,9 @@ RUN bash /tmp/install-bins.sh --arch "${TARGETARCH}" \
 
 # HOME 必须显式设置：容器默认 HOME=/root，
 # zacp 按 $HOME 找状态目录（ZACP_DATA），设为 /app/data 使数据落在挂载卷内
-ENV HOME=/app/data
+# PATH 追加 /root/.local/bin：有些工具(如部分 CLI 安装器)会装到该目录，需纳入可执行搜索路径
+ENV HOME=/app/data \
+    PATH="/root/.local/bin:${PATH}"
 
 # 数据持久化挂载点：ZACP_DATA（默认 ~/.zacp）会落在该卷内
 VOLUME ["/app/data"]
