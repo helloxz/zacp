@@ -43,10 +43,22 @@ detect_arch() {
 }
 
 # --- 网络拉取：curl 优先，wget 兜底；out 为空时输出到 stdout ---
+# 失败时打印 HTTP 状态码（便于区分限流 403/429 与网络不通 000/超时）；
+# 设 GH_TOKEN/GITHUB_TOKEN 可将匿名 API 限额(60/h)提升到 5000/h，规避限流。
 fetch() {
-  local url="${1:-}" out="${2:-}"
+  local url="${1:-}" out="${2:-}" auth=()
+  # 认证参数（可选）：提升 GitHub API 速率上限
+  if [ -n "${GH_TOKEN:-}" ]; then
+    auth=(-H "Authorization: Bearer ${GH_TOKEN}")
+  fi
   if command -v curl >/dev/null 2>&1; then
-    if [ -n "$out" ]; then curl -fsSL "$url" -o "$out"; else curl -fsSL "$url"; fi
+    if [ -n "$out" ]; then
+      curl -fsSL --max-time 60 "${auth[@]}" "$url" -o "$out" -w $'  fetch: HTTP %{http_code}\n' >&2 \
+        || { echo "  error: curl failed: ${url}" >&2; return 1; }
+    else
+      curl -fsSL --max-time 60 "${auth[@]}" "$url" -w $'  fetch: HTTP %{http_code}\n' >&2 \
+        || { echo "  error: curl failed: ${url}" >&2; return 1; }
+    fi
   elif command -v wget >/dev/null 2>&1; then
     if [ -n "$out" ]; then wget -q "$url" -O "$out"; else wget -qO- "$url"; fi
   else
@@ -63,11 +75,13 @@ resolve_latest() {
   local api api_url tag url
   local os="linux"
   api_url="${API_BASE}/repos/${repo}/releases/latest"
+  # 首次试探 latest：静默（失败可能是网络不通或无 stable release，需回退判断）
   api="$(fetch "$api_url" 2>/dev/null || true)"
   if [ -z "$api" ] || ! printf '%s' "$api" | grep -q '"tag_name"'; then
     echo "==> No stable release for ${repo}, falling back to the newest release..." >&2
-    api="$(fetch "${API_BASE}/repos/${repo}/releases?per_page=1" 2>/dev/null)" || {
-      echo "error: failed to fetch release info for ${repo}（网络问题或 API 限流？）" >&2
+    # 回退请求不再吞错误：下方 fetch 的 HTTP 状态行会指出是限流(403/429)还是网络不通(000/超时)
+    api="$(fetch "${API_BASE}/repos/${repo}/releases?per_page=1")" || {
+      echo "error: failed to fetch release info for ${repo}（见上方 fetch 状态行：限流则设 GH_TOKEN，网络不通则检查代理/DNS）" >&2
       exit 1
     }
   fi
