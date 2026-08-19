@@ -14,9 +14,10 @@ FROM node:slim
 ARG TARGETARCH
 
 # 基础依赖：curl 用于下载、ca-certificates 用于 GitHub HTTPS 证书校验；
-# 二者也保留在最终镜像，供运行时 zlite 智能体执行 shell 命令时使用
+# libicu76 为某些工具(如 OfficeCLI 依赖)所需；三者也保留在最终镜像，
+# 供运行时 zlite 智能体执行 shell 命令时使用
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends curl ca-certificates \
+    && apt-get install -y --no-install-recommends curl ca-certificates libicu76 \
     && rm -rf /var/lib/apt/lists/*
 
 # 安装最新版 zacp / zlite（脚本为同级 install-bins.sh，同步自 scripts/install-bins.sh）
