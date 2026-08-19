@@ -185,6 +185,57 @@ func (h *FileHandler) Upload(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"files": results})
 }
 
+// UploadTemp POST /api/v1/files/upload-temp
+//
+// 聊天输入框快捷键（Ctrl/Cmd+V）粘贴上传专用：文件写入系统临时目录
+// /tmp/{yyyyMMddHH}/（目录由后端生成，不接受客户端路径），返回绝对路径列表，
+// 前端据此填充 @/tmp/... 引用。与工作区上传（/workspaces/:id/files/upload）不同：
+// 允许同名覆盖、不依赖 workspace、返回绝对路径；临时目录不做清理，交由系统回收。
+//
+// multipart 表单：files（一个或多个文件字段）。无 dir 参数。
+func (h *FileHandler) UploadTemp(c *gin.Context) {
+	// 请求体整体限流，防止超大 multipart 打爆内存/磁盘（与工作区上传同一上限）
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, service.MaxUploadBodyBytes)
+	if err := c.Request.ParseMultipartForm(4 << 20); err != nil {
+		var maxErr *http.MaxBytesError
+		if errors.As(err, &maxErr) {
+			writeError(c, http.StatusRequestEntityTooLarge, "upload_body_too_large", "上传内容超过 11MB 上限")
+			return
+		}
+		writeError(c, http.StatusBadRequest, "invalid_multipart", "multipart 表单解析失败")
+		return
+	}
+
+	headers := c.Request.MultipartForm.File["files"]
+	if len(headers) == 0 {
+		writeError(c, http.StatusBadRequest, "missing_files", "缺少 files 字段")
+		return
+	}
+
+	files := make([]service.UploadFile, 0, len(headers))
+	for _, fh := range headers {
+		src, err := fh.Open()
+		if err != nil {
+			writeError(c, http.StatusBadRequest, "invalid_file", "文件读取失败: "+err.Error())
+			return
+		}
+		defer src.Close()
+		files = append(files, service.UploadFile{
+			Name:     fh.Filename,
+			MimeType: fh.Header.Get("Content-Type"),
+			Size:     fh.Size,
+			Reader:   src,
+		})
+	}
+
+	results, err := h.svc.UploadTempFiles(files)
+	if err != nil {
+		writeFileError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"files": results})
+}
+
 // PreviewToken POST /api/v1/workspaces/:id/files/preview-token
 //
 // 换取文件直链（raw URL + 12 小时资源 token，绑定 workspace+path）。

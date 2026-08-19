@@ -390,6 +390,59 @@ export async function uploadFiles(
   })
 }
 
+/**
+ * POST /api/v1/files/upload-temp — 聊天输入框快捷键（Ctrl/Cmd+V）粘贴上传。
+ * 文件写入后端系统临时目录 /tmp/{yyyyMMddHH}/（目录由后端生成、同名覆盖），
+ * 返回 FileEntry[]，其中 Path 为绝对路径（如 /tmp/2026081913/123.webp），
+ * 前端直接填充 @/tmp/... 引用。与 uploadFiles（工作区上传）不同：不依赖
+ * workspace、允许同名覆盖、返回绝对路径。
+ */
+export async function uploadTempFiles(files: File[]): Promise<FileEntry[]> {
+  const form = new FormData()
+  for (const f of files) form.append('files', f, f.name)
+
+  return new Promise<FileEntry[]>((resolve, reject) => {
+    const xhr = new XMLHttpRequest()
+    xhr.open('POST', apiUrl('/api/v1/files/upload-temp'))
+    // 上传走 XHR，无法复用 http.ts 的 fetch 封装：这里手动带登录 token
+    const token = readAuthToken()
+    if (token) {
+      xhr.setRequestHeader('Authorization', `Bearer ${token}`)
+    }
+    xhr.onload = () => {
+      try {
+        const body = JSON.parse(xhr.responseText || '{}') as {
+          files?: FileEntry[]
+          error?: ApiErrorBody
+        }
+        if (xhr.status >= 200 && xhr.status < 300 && body.files) {
+          resolve(body.files)
+        } else {
+          reject(
+            new ApiError({
+              status: xhr.status,
+              code: body.error?.code ?? 'upload_failed',
+              message: body.error?.message ?? `上传失败（HTTP ${xhr.status}）`,
+              body,
+            }),
+          )
+        }
+      } catch {
+        reject(
+          new ApiError({
+            status: xhr.status,
+            code: 'upload_failed',
+            message: '上传失败：响应解析错误',
+          }),
+        )
+      }
+    }
+    xhr.onerror = () =>
+      reject(new ApiError({ status: 0, code: 'network_error', message: '网络错误，上传失败' }))
+    xhr.send(form)
+  })
+}
+
 /** GET /api/v1/sessions — 最近活跃会话（侧栏数据源；后端上限 1000，渲染截断在侧栏组件层） */
 export async function fetchRecentSessions(limit = 1000): Promise<ChatSession[]> {
   const data = await http.get<{ sessions: ChatSession[] }>('/api/v1/sessions', {

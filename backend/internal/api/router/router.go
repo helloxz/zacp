@@ -116,6 +116,9 @@ func New(
 			// 目录浏览（新建项目弹窗用）：列出任意绝对路径下的子文件夹，与 workspace 无关
 			authed.GET("/fs/directories", fileHandler.ListDirectories)
 
+			// 临时目录上传（聊天输入框快捷键粘贴上传专用；不依赖 workspace）
+			authed.POST("/files/upload-temp", fileHandler.UploadTemp)
+
 			// 会话管理
 			authed.POST("/sessions", sessionHandler.CreateSession)
 			authed.GET("/sessions", sessionHandler.ListRecentSessions)

@@ -6,7 +6,7 @@ import { OptionsOutline, SendOutline, StopOutline } from '@vicons/ionicons5'
 import { NIcon, useMessage } from 'naive-ui'
 import type { InputInst, SelectGroupOption, SelectOption } from 'naive-ui'
 import { useSessionStore, MAX_TURNS_PER_SESSION, type SessionStreamStatus } from '@/stores/session'
-import { uploadFiles } from '@/api'
+import { uploadTempFiles } from '@/api'
 import { extractPastedFiles, prepareFile } from '@/utils/fileUpload'
 import type { ConfigOptionValue } from '@/types/models'
 
@@ -30,12 +30,8 @@ const props = withDefaults(
     status?: SessionStreamStatus
     /** 会话轮次达到上限（MAX_TURNS_PER_SESSION）：输入框与发送按钮一并禁用，显示提示条。 */
     turnLimited?: boolean
-    /** card 模式（/new 空态）显式指定上传目标工作区（父级由路由 ?workspaceId 传入）；bar 模式忽略 */
-    workspaceId?: number
   }>(),
-  {
-    mode: 'bar', agentId: undefined, status: 'idle', turnLimited: false, workspaceId: undefined,
-  },
+  { mode: 'bar', agentId: undefined, status: 'idle', turnLimited: false },
 )
 
 const emit = defineEmits<{
@@ -196,20 +192,23 @@ const drawerSelectMenuTheme = {
 }
 
 // ---------------------------------------------------------------------------
-// 粘贴上传文件（仅 bar 模式启用）：Ctrl/Cmd+V 粘贴图片或其它文件 →
-// 图片经 prepareFile 转 webp、其它文件原样直传，上传到当前会话工作区根目录 →
-// 在文本最前面插入 @文件名 引用 → 通知文件列表刷新。
+// 粘贴上传文件（bar 与 card 模式均启用）：Ctrl/Cmd+V 粘贴图片或其它文件 →
+// 图片经 prepareFile 转 webp、其它文件原样直传，写入后端系统临时目录
+// /tmp/{yyyyMMddHH}/（目录由后端生成、同名覆盖）→
+// 在文本最前面插入 @绝对路径 引用（如 @/tmp/2026081913/123.webp），
+// 供 agent 通过 ACP 读文件按绝对路径读取。
 // 与「文件」面板共用 utils/fileUpload 的提取/压缩逻辑，行为保持一致。
 // ---------------------------------------------------------------------------
 
 /** 输入框中已引用文件的数量上限（图片与其它文件统一计数；已有引用 + 本次 1 个 > 上限则拒绝） */
 const MAX_FILE_REFS = 3
 /**
- * 统计文本中 @引用文件 的数量。粘贴上传统一插入 @文件名 引用，
- * 正则按通用文件名匹配（字母数字/点/连字符，可带或不带扩展名）；
- * 会误计邮件地址等含 @ 的文本，但仅影响上限拦截，可接受。
+ * 统计文本中 @引用 的数量。粘贴上传后插入的是 @绝对路径（如 @/tmp/.../x.webp），
+ * 也可能手动输入 @相对文件名；正则按通用「文件名/路径片段」匹配
+ * （字母数字/点/连字符/路径分隔符）；会误计邮件地址等含 @ 的文本，
+ * 但仅影响上限拦截，可接受。
  */
-const FILE_REF_RE = /@[\w.-]+/g
+const FILE_REF_RE = /@[\w./-]+/g
 function countRefs(t: string): number {
   return (t.match(FILE_REF_RE) ?? []).length
 }
@@ -221,26 +220,8 @@ const MAX_OTHER_FILE_BYTES = 10 * 1024 * 1024
 const fileUploading = ref(false)
 
 /**
- * 上传目标工作区 id（粘贴上传用）：
- * - card 模式（/new）：草稿会话不进 sessions 列表、activeSession 恒为 null，
- *   只能靠父级传入的 ?workspaceId（props.workspaceId）确定上传目标，缺省回落默认工作区；
- *   注意：若仅依赖回落逻辑，?workspaceId=非默认项目 时文件会传错目录；
- * - bar 模式（/sessions/:id）：会话自带工作区优先，缺省再回落默认工作区。
- */
-const composerWorkspaceId = computed(() => {
-  if (props.mode === 'card') {
-    return props.workspaceId ?? sessionStore.defaultWorkspace()?.id ?? 0
-  }
-  return (
-    sessionStore.activeSession?.workspace?.id ??
-    sessionStore.defaultWorkspace()?.id ??
-    0
-  )
-})
-
-/**
- * 输入框粘贴（bar 与 card 模式均支持；card 为 /new 空态，上传目标由
- * composerWorkspaceId 解析：props.workspaceId（?workspaceId）→ 默认工作区）：
+ * 输入框粘贴（bar 与 card 模式均支持；上传目标为后端系统临时目录，
+ * 不依赖会话/工作区）：
  * - 剪贴板含文件（图片或其它）且 无纯文本 → 上传第一个文件并插入 @引用；
  * - 含文件 且有纯文本（Word/网页复制文字+图）→ 放行默认粘贴：只留文字、丢弃文件；
  * - 纯文本/无文件 → 放行默认粘贴。
@@ -265,16 +246,10 @@ function onPaste(e: ClipboardEvent) {
 
 /**
  * 粘贴上传（图片或其它文件，单张）：图片经 prepareFile 压缩转 webp、
- * 其它文件原样直传 → 上传到工作区根目录（dir=''）→
- * 成功后在文本最前面插入引用并通知文件列表刷新。
+ * 其它文件原样直传 → 后端写入系统临时目录 /tmp/{yyyyMMddHH}/ → 成功后在
+ * 文本最前面插入 @绝对路径 引用（临时文件与会话/工作区无关，无需上下文校验）。
  */
 async function pasteUpload(file: File) {
-  const wsId = composerWorkspaceId.value
-  if (!wsId) {
-    // 会话无工作区（如默认项目缺失）时上传无处可去，明确提示而非静默丢弃
-    message.warning('请先添加项目，再粘贴上传文件')
-    return
-  }
   // 引用数上限：已有引用 + 本次 1 个 > 3 → 提示并跳过上传（图片与文件统一计数）
   if (countRefs(text.value) + 1 > MAX_FILE_REFS) {
     message.warning(`最多引用 ${MAX_FILE_REFS} 个文件`)
@@ -287,32 +262,13 @@ async function pasteUpload(file: File) {
     message.error('文件超过 10MB 上限，无法上传')
     return
   }
-  // 上传前捕获上下文：上传期间用户可能切换会话/项目，完成时需双重校验
-  // （同会话 + 同工作区）才把引用插回输入框，避免污染新会话文本
-  const sid = sessionStore.activeSession?.id ?? null
   fileUploading.value = true
   try {
     const prepared = await prepareFile(file)
-    const uploaded = await uploadFiles(wsId, '', [prepared])
-    const name = uploaded[0]?.name
-    if (name) {
-      // 文件已上传成功：无论是否插入引用都刷新列表
-      sessionStore.bumpFileList()
-      // 上下文已变化 → 不插引用（文件仍在工作区，可手动 @ 引用）
-      // 坑：capture 侧 sid 用 ?? null 归一到 null，而 activeSession?.id 对 null
-      // 会话返回 undefined，undefined !== null 会误判为「上下文已变化」——
-      // card 模式（/new，草稿不在 sessions 列表、activeSession 恒 null）下
-      // sameContext 恒 false、引用永不注入。校验侧同样归一，保证 null === null。
-      const sameContext =
-        (sessionStore.activeSession?.id ?? null) === sid &&
-        composerWorkspaceId.value === wsId
-      // 插入前重新计数：上传耗时期间用户可能已手动输入 @引用，超限则不再自动插入
-      const withinLimit = countRefs(text.value) + 1 <= MAX_FILE_REFS
-      if (sameContext && withinLimit) {
-        insertRefs([name])
-      } else if (sameContext && !withinLimit) {
-        message.info('文件已上传，但引用数超过上限，未自动插入')
-      }
+    const uploaded = await uploadTempFiles([prepared])
+    const path = uploaded[0]?.path
+    if (path) {
+      insertRefs([path])
     }
   } catch (err) {
     message.error(`文件上传失败：${err instanceof Error ? err.message : '未知错误'}`)
