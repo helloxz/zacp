@@ -11,9 +11,8 @@
  *   输入校验拒绝绝对路径与 `..`（后端 resolveInWorkspace 另有硬校验兜底）。
  * - 拖拽上传：拖入列表 = 上传到当前目录（根目录时上传到项目根）。
  * - 粘贴上传：焦点在列表区域时 Ctrl/Cmd+V 粘贴文件/截图，同样上传到当前目录。
- *   仅 Chrome/Edge/Firefox 支持（Safari 剪贴板不向网页暴露文件）；
- *   粘贴/拖拽单次统一上限 10 个文件，超过拒绝整批；截图自动命名并转 webp。
- * - 图片自动压缩转 webp（等比不裁剪，>5MB 降采样兜底），非图片原样直传。
+ *   粘贴/拖拽单次统一上限 10 个文件，超过拒绝整批；截图自动命名（保留原扩展名）。
+ * - 文件原图直传（不再压缩转 webp），大小统一 10MB 上限由后端校验。
  * - 单击图片文件 → n-image 原生预览；单击 html 文件 → 新标签页预览；
  *   双击文本文件 → 编辑器；右键 → 「预览」(html/htm) /「编辑」(文本文件)
  *   /「下载」「重命名 / 复制名称」。
@@ -35,7 +34,6 @@ import {
   extractPastedFiles,
   isEditableTarget,
   isPasteSupported,
-  prepareFile,
   MAX_UPLOAD_FILES,
 } from '@/utils/fileUpload'
 import type { FileEntry } from '@/types/models'
@@ -536,7 +534,7 @@ async function onDrop(e: DragEvent) {
 }
 
 /**
- * 执行上传：图片逐个串行压缩（避免并行解码多张大图撑爆内存），随后顺序上传。
+ * 执行上传：文件原图直传（不再压缩），随后顺序上传。
  * 单个文件上传原子成功/失败；批次中途失败时已落盘文件保留，最后统一汇总提示。
  */
 async function doUpload(files: File[], dir: string) {
@@ -555,8 +553,7 @@ async function doUpload(files: File[], dir: string) {
     for (const file of files) {
       uploadingName.value = file.name
       try {
-        const prepared = await prepareFile(file)
-        const uploaded = await uploadFiles(workspaceId.value, dir, [prepared], (p) => {
+        const uploaded = await uploadFiles(workspaceId.value, dir, [file], (p) => {
           uploadProgress.value = (done + p) / total
         })
         done += 1
@@ -575,11 +572,9 @@ async function doUpload(files: File[], dir: string) {
     uploadingName.value = ''
   }
 }
-
 // ---------------------------------------------------------------------------
 // 粘贴上传：Ctrl/Cmd+V 在列表区域粘贴文件/截图，上传到当前目录
 // ---------------------------------------------------------------------------
-
 /** 列表容器 ref：点击列表区域时聚焦容器，使 paste 事件能落到容器上 */
 const listRef = ref<HTMLElement | null>(null)
 

@@ -66,9 +66,9 @@ var (
 	ErrDownloadTooLarge = errors.New("file too large to download")
 )
 
-// 上传大小上限（与前端压缩约定一致：图片 5MB，其余 10MB）。
+// 上传大小上限：图片与其它文件统一 10MB（文件面板已改为原图直传，不再依赖前端压缩）。
 const (
-	MaxImageSizeBytes = 5 << 20 // 5MB
+	MaxImageSizeBytes = 10 << 20 // 10MB
 	MaxOtherSizeBytes = 10 << 20 // 10MB
 	// MaxUploadBodyBytes 单次上传请求体上限（10MB 单文件 + multipart 开销余量）。
 	// 余量必须大于 0：multipart 的 boundary/表单头占数百字节，若上限等于单文件
@@ -326,7 +326,7 @@ func (s *FileService) UploadFiles(workspaceID uint, relDir string, files []Uploa
 		if name == "" || name == "." || name == ".." {
 			return nil, ErrInvalidFileName
 		}
-		// 大小分档：图片 5MB，其他 10MB（与前端压缩约定一致）
+		// 大小分档：图片与其它文件统一 10MB（原图直传）
 		limit := int64(MaxOtherSizeBytes)
 		if strings.HasPrefix(f.MimeType, "image/") || isImageExt(name) {
 			limit = MaxImageSizeBytes

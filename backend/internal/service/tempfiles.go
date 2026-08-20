@@ -27,13 +27,11 @@ import (
 
 // UploadTempFiles 把上传文件写入系统临时目录 /tmp/{yyyyMMddHH}/ 下，
 // 返回落盘文件的绝对路径列表。
-//
 // 安全不变量：
 //   - 目录由后端生成（os.TempDir() + 当前小时），客户端只能传文件名；
 //   - 文件名经 validateFileName 清洗（拒空名 / "." / ".." / 路径分隔符 / NUL），
 //     再 filepath.Join 进时间目录，不可能逃逸出该目录；
-//   - 大小分档沿用工作区上传约定（图片 5MB / 其他 10MB），LimitReader 兜底
-//     虚报大小的极端情况。
+//   - 大小分档统一 10MB（图片与其它文件一致，文件面板原图直传；输入框粘贴仍经前端 webp 压缩，此处为兜底）。
 func (s *FileService) UploadTempFiles(files []UploadFile) ([]model.FileEntryDTO, error) {
 	// 小时级时间目录：/tmp/2026081913（yyyyMMddHH，Go 参考格式 '2006010215'）。
 	// 同小时内的同名文件落在同一目录 → 后粘的覆盖先粘的（覆盖语义按小时生效）。
@@ -50,8 +48,7 @@ func (s *FileService) UploadTempFiles(files []UploadFile) ([]model.FileEntryDTO,
 		if err := validateFileName(name); err != nil {
 			return nil, err
 		}
-		// 大小分档：图片 5MB，其他 10MB（与工作区上传同一约定；图片上传前
-		// 前端已压缩转 webp，此处分档仅兜底未压缩的直传场景）。
+		// 大小分档：统一 10MB（图片与其它文件一致）。
 		limit := int64(MaxOtherSizeBytes)
 		if strings.HasPrefix(f.MimeType, "image/") || isImageExt(name) {
 			limit = MaxImageSizeBytes
