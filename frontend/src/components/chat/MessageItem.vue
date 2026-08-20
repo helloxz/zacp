@@ -283,16 +283,16 @@ const blocks = computed<MessageBlock[]>(() => {
       </summary>
       <div
         ref="reasoningBodyRef"
-        class="reasoning-scroll mt-1.5 max-h-80 overflow-y-auto overscroll-contain whitespace-pre-wrap pr-2"
+        class="reasoning-scroll mt-1.5 max-h-80 overflow-y-auto overscroll-contain wrap-anywhere break-words whitespace-pre-wrap [overflow-wrap:anywhere] pr-2 [word-break:break-word]"
       >
         {{ reasoningLoadState === 'loading' ? t('chat.reasoningLoading') : reasoning }}
       </div>
     </details>
 
-    <!-- user：右对齐气泡 -->
+    <!-- user：右对齐气泡（max-w 限宽 + 强制换行，避免纯英文/长 token 无空格时溢出边框） -->
     <div
       v-if="isUser"
-      class="max-w-[85%] whitespace-pre-wrap rounded-2xl rounded-br-md bg-sky-50 px-3.5 py-2.5 text-sm leading-relaxed text-slate-900 ring-1 ring-inset ring-sky-100 dark:bg-sky-500/15 dark:text-sky-50 dark:ring-sky-500/30"
+      class="max-w-[85%] min-w-0 wrap-anywhere break-words whitespace-pre-wrap [overflow-wrap:anywhere] rounded-2xl rounded-br-md bg-sky-50 px-3.5 py-2.5 text-sm leading-relaxed text-slate-900 ring-1 ring-inset ring-sky-100 dark:bg-sky-500/15 dark:text-sky-50 dark:ring-sky-500/30"
     >
       {{ message.content }}
     </div>
@@ -304,7 +304,7 @@ const blocks = computed<MessageBlock[]>(() => {
            流式期间仅最后一个 text block 有内容（其余为空占位） -->
       <div
         v-if="block.kind === 'text'"
-        class="w-full min-w-0"
+        class="w-full min-w-0 overflow-hidden"
       >
         <!-- 流式占位：content 为空且 turn 未结束时显示加载动画 -->
         <div
@@ -316,7 +316,7 @@ const blocks = computed<MessageBlock[]>(() => {
         </div>
         <IncremarkContent
           v-else-if="block.content"
-          class="w-full min-w-0 rounded-xl border border-divider bg-surface-raised px-4 py-3 text-sm leading-relaxed shadow-sm"
+          class="w-full min-w-0 wrap-anywhere break-words [overflow-wrap:anywhere] [word-break:break-word] overflow-hidden rounded-xl border border-divider bg-surface-raised px-4 py-3 text-sm leading-relaxed shadow-sm"
           :content="block.content"
           :is-finished="isFinished"
           :incremark-options="{ htmlTree: true }"
@@ -396,10 +396,26 @@ html.dark .loading-dot-sm {
  * 这里只在 AI markdown 内容区域局部恢复列表符号，不动全局。
  * 任务列表（task-list）保持无圆点（checkbox 形态，主题自带处理）。
  */
-:deep(ul.incremark-list) {
+::deep(ul.incremark-list) {
   list-style: disc;
 }
-:deep(ol.incremark-list) {
+::deep(ol.incremark-list) {
   list-style: decimal;
+}
+/*
+ * 纯英文/长 token 无空格时溢出修复：
+ * - user 气泡已用 wrap-anywhere/break-words 兜底；
+ * - AI 侧 IncremarkContent 内段落/标题/列表/引用等文本容器同样需强制换行，
+ *   否则超长连续英文会撑破卡片边框（flex + w-full 仍会溢出）。
+ * - 代码块（.incremark-code / pre / code）保留横向滚动，不强制换行。
+ */
+::deep(.incremark-paragraph),
+::deep(.incremark-heading),
+::deep(.incremark-list-item),
+::deep(.incremark-blockquote),
+::deep(.incremark-paragraph a),
+::deep(.incremark-inline-code) {
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 </style>
