@@ -5,6 +5,21 @@
     <link rel="icon" type="image/png" href="/favicon.png" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <title>zacp</title>
+    <!-- PWA：manifest link 由 vite-plugin-pwa 构建时自动注入，这里只放插件不生成的 meta -->
+    <!-- iOS 主屏图标 / 独立全屏运行（PWA 支持 iOS 的必需项） -->
+    <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="apple-mobile-web-app-title" content="Zacp" />
+    <!-- 状态栏/浏览器地址栏颜色：跟随系统明暗（浅 #0ea5e9 / 暗 #38bdf8，
+         与 config/theme.ts 及 main.css 的主题色一致） -->
+    <meta name="theme-color" content="#0ea5e9" />
+    <meta
+      name="theme-color"
+      media="(prefers-color-scheme: dark)"
+      content="#38bdf8"
+    />
     <script>
       // 防闪白：Vue 挂载前按本地偏好设置主题（key 与 stores/app.ts 保持一致）
       // Tailwind 依赖 .dark class，incremark markdown 依赖 data-theme 属性，二者都要同步
