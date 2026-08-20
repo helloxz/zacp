@@ -13,12 +13,21 @@
  * 打开时 GET 拉取当前值回填；保存时前端 trim 字段、提交 PUT，成功即关闭。
  * 保存成功后后端会自动停止运行中的 zlite ACP 进程（下次对话按新配置自动拉起），
  * 因此无需再提示手动重启。
+ *
+ * 新增探活能力（通用 /api/v1/providers）：
+ * - 获取模型：POST /providers/models → 可用模型列表，支持 openai/anthropic 兼容
+ * - 测试：POST /providers/models/test → 首个模型 hi/5 token 试探
  */
 import { computed, reactive, ref, watch } from 'vue'
 import { useMessage, type FormInst, type FormRules } from 'naive-ui'
-import { CloseOutline } from '@vicons/ionicons5'
+import { CloseOutline, TrashOutline } from '@vicons/ionicons5'
 import { useI18n } from 'vue-i18n'
-import { fetchZliteDefaultChannel, saveZliteDefaultChannel } from '@/api'
+import {
+  fetchZliteDefaultChannel,
+  saveZliteDefaultChannel,
+  fetchProviderModels,
+  testProviderModel,
+} from '@/api'
 import type { ZliteChannel } from '@/types/models'
 
 const props = defineProps<{ show: boolean }>()
@@ -30,6 +39,10 @@ const message = useMessage()
 const formRef = ref<FormInst | null>(null)
 const loading = ref(false)
 const submitting = ref(false)
+const fetching = ref(false)
+const testing = ref(false)
+const availableModels = ref<string[]>([])
+const pickedModel = ref<string | null>(null)
 
 /** 渠道类型选项：label 为中文展示名，value 与后端 config.toml 落盘值一致 */
 const typeOptions: Array<{ label: string; value: string }> = [
@@ -51,6 +64,13 @@ const baseUrlPlaceholder = computed(() =>
   form.type === 'anthropic'
     ? 'https://api.domain.com'
     : 'https://api.domain.com/v1',
+)
+
+/** 底部按钮显隐：获取模型需 baseUrl+apiKey；测试还需至少一个模型 */
+const canFetchVisible = computed(() => form.baseUrl.trim() !== '' && form.apiKey.trim() !== '')
+const canTestVisible = computed(() => canFetchVisible.value && form.models.length > 0)
+const availableOptions = computed(() =>
+  availableModels.value.map((m) => ({ label: m, value: m })),
 )
 
 const rules: FormRules = {
@@ -84,6 +104,10 @@ async function open() {
   form.baseUrl = ''
   form.apiKey = ''
   form.models = []
+  availableModels.value = []
+  pickedModel.value = null
+  fetching.value = false
+  testing.value = false
   loading.value = true
   try {
     const data = await fetchZliteDefaultChannel()
@@ -146,6 +170,87 @@ async function submit() {
     submitting.value = false
   }
 }
+
+/** 获取模型：调通用 /providers/models，成功后展示可用列表供挑选 */
+async function fetchModels() {
+  if (!canFetchVisible.value) return
+  fetching.value = true
+  try {
+    const baseUrl = form.baseUrl.trim()
+    const apiKey = form.apiKey.trim()
+    const res = await fetchProviderModels({ type: form.type as ZliteChannel['type'], baseUrl, apiKey })
+    availableModels.value = res.models
+    pickedModel.value = null
+    message.success(t('settings.agent.zliteFetchSuccess', { count: res.models.length }))
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e)
+    message.error(msg || t('settings.agent.zliteFetchFailed'))
+  } finally {
+    fetching.value = false
+  }
+}
+
+/** 测试首个模型：调 /providers/models/test，hi/5 token 试探 */
+async function testModel() {
+  if (!canTestVisible.value) return
+  const model = form.models[0]?.trim()
+  if (!model) {
+    message.warning(t('settings.agent.zliteTestNoModel'))
+    return
+  }
+  testing.value = true
+  try {
+    await testProviderModel({
+      type: form.type as ZliteChannel['type'],
+      baseUrl: form.baseUrl.trim(),
+      apiKey: form.apiKey.trim(),
+      model,
+    })
+    message.success(t('settings.agent.zliteTestSuccess', { model }))
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e)
+    message.error(msg || t('settings.agent.zliteTestFailed'))
+  } finally {
+    testing.value = false
+  }
+}
+
+/** 一键清空已选模型 */
+function clearModels() {
+  form.models = []
+  pickedModel.value = null
+}
+
+/** 全部填充：去重合并所有可用模型到 form.models */
+function fillAll() {
+  if (availableModels.value.length === 0) return
+  const seen = new Set(form.models.map((m) => m.trim()))
+  const toAdd = availableModels.value.filter((m) => m.trim() !== '' && !seen.has(m))
+  if (toAdd.length === 0) {
+    message.warning(t('settings.agent.zliteFillAllNoNew'))
+    return
+  }
+  form.models = [...form.models, ...toAdd]
+  message.success(t('settings.agent.zliteFillAllSuccess', { count: toAdd.length }))
+}
+
+/** 单个填充：下拉选择一个模型追加 */
+function fillSingle(value: string | null) {
+  if (!value) return
+  const v = value.trim()
+  if (!v) {
+    pickedModel.value = null
+    return
+  }
+  if (form.models.includes(v)) {
+    message.warning(t('settings.agent.zliteModelExists'))
+    pickedModel.value = null
+    return
+  }
+  form.models = [...form.models, v]
+  pickedModel.value = null
+  message.success(t('settings.agent.zliteFillOneSuccess', { model: v }))
+}
 </script>
 
 <template>
@@ -207,29 +312,100 @@ async function submit() {
             </n-form-item>
 
             <n-form-item :label="t('settings.agent.zliteModelsLabel')" path="models">
-              <n-dynamic-tags
-                v-model:value="form.models"
-                :placeholder="t('settings.agent.zliteModelsHint')"
-              />
+              <div class="flex flex-wrap items-center gap-2">
+                <n-dynamic-tags
+                  v-model:value="form.models"
+                  :placeholder="t('settings.agent.zliteModelsHint')"
+                  style="width: auto; max-width: 100%;"
+                  class="!w-auto"
+                />
+                <n-button
+                  v-if="form.models.length > 0"
+                  size="small"
+                  dashed
+                  :disabled="loading || submitting || fetching || testing"
+                  :aria-label="t('settings.agent.zliteClear')"
+                  @click="clearModels"
+                >
+                  <template #icon>
+                    <n-icon><TrashOutline /></n-icon>
+                  </template>
+                </n-button>
+              </div>
             </n-form-item>
+
+            <!-- 获取成功后的可用模型挑选区：全选 + 单选下拉 -->
+            <div
+              v-if="availableModels.length > 0"
+              class="rounded-xl border border-divider bg-surface p-3 flex flex-col gap-2"
+            >
+              <div class="flex items-center justify-between">
+                <span class="text-xs text-ink-muted">
+                  {{ t('settings.agent.zliteAvailableModels', { count: availableModels.length }) }}
+                </span>
+                <n-button size="tiny" type="primary" secondary @click="fillAll">
+                  {{ t('settings.agent.zliteFillAll') }}
+                </n-button>
+              </div>
+              <n-select
+                v-model:value="pickedModel"
+                :options="availableOptions"
+                :placeholder="t('settings.agent.zlitePickModel')"
+                clearable
+                filterable
+                @update:value="fillSingle"
+              />
+            </div>
           </n-form>
         </n-spin>
 
-        <div class="flex justify-end gap-3">
-          <n-button size="small" tertiary :disabled="submitting" @click="onShowChange(false)">
-            {{ t('common.cancel') }}
-          </n-button>
-          <n-button
-            size="small"
-            type="primary"
-            :loading="submitting"
-            :disabled="submitting || loading"
-            @click="submit"
-          >
-            {{ t('common.save') }}
-          </n-button>
+        <div class="flex items-center justify-between gap-3">
+          <div class="flex gap-2">
+            <n-button
+              v-if="canFetchVisible"
+              size="small"
+              secondary
+              :loading="fetching"
+              :disabled="fetching || testing || submitting || loading"
+              @click="fetchModels"
+            >
+              {{ t('settings.agent.zliteFetchModels') }}
+            </n-button>
+            <n-button
+              v-if="canTestVisible"
+              size="small"
+              secondary
+              :loading="testing"
+              :disabled="fetching || testing || submitting || loading"
+              @click="testModel"
+            >
+              {{ t('settings.agent.zliteTestModel') }}
+            </n-button>
+          </div>
+          <div class="flex gap-3">
+            <n-button size="small" tertiary :disabled="submitting || fetching || testing" @click="onShowChange(false)">
+              {{ t('common.cancel') }}
+            </n-button>
+            <n-button
+              size="small"
+              type="primary"
+              :loading="submitting"
+              :disabled="submitting || loading || fetching || testing"
+              @click="submit"
+            >
+              {{ t('common.save') }}
+            </n-button>
+          </div>
         </div>
       </div>
     </div>
   </n-modal>
 </template>
+
+<style scoped>
+/* 清空按钮紧挨着 + 号：覆盖 n-dynamic-tags 默认的 width:100%，使其宽度自适应内容 */
+:deep(.n-dynamic-tags) {
+  width: auto !important;
+  max-width: 100%;
+}
+</style>

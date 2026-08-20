@@ -88,6 +88,11 @@ func New(
 			// 静态段与 /agents/:agentId 动态段不冲突，manage 段已有先例）
 			authed.GET("/agents/zlite/default-channel", agentManageHandler.GetZliteDefaultChannel)
 			authed.PUT("/agents/zlite/default-channel", agentManageHandler.SaveZliteDefaultChannel)
+			// 通用上游模型探活（供 zlite 及后续其它 openai/anthropic 兼容渠道复用，去掉 zlite 前缀）
+			// List: POST /api/v1/providers/models {type, baseUrl, apiKey} → {models}
+			// Test: POST /api/v1/providers/models/test {type, baseUrl, apiKey, model} → {ok}
+			authed.POST("/providers/models", agentManageHandler.ListProviderModels)
+			authed.POST("/providers/models/test", agentManageHandler.TestProviderModel)
 			// 安装 zlite（未安装时设置页显示安装按钮；5 分钟超时的远程脚本安装）
 			authed.POST("/agents/zlite/install", agentManageHandler.InstallZlite)
 

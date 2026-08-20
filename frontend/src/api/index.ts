@@ -181,6 +181,34 @@ export async function installZlite(): Promise<void> {
   await http.post('/api/v1/agents/zlite/install')
 }
 
+// ---------------------------------------------------------------------------
+// 通用上游 Provider 探活（兼容 openai/anthropic，去掉 zlite 前缀供后续复用）
+// ---------------------------------------------------------------------------
+
+export interface ProviderChannelInput {
+  type: 'openai.chat' | 'openai.responses' | 'anthropic'
+  baseUrl: string
+  apiKey: string
+}
+
+/** POST /api/v1/providers/models — 获取上游可用模型列表（8s 超时） */
+export async function fetchProviderModels(
+  input: ProviderChannelInput,
+): Promise<{ models: string[] }> {
+  return http.post<{ models: string[] }>('/api/v1/providers/models', {
+    body: input,
+  })
+}
+
+/** POST /api/v1/providers/models/test — 试探指定模型是否可响应（15s 超时，hi/5 token） */
+export async function testProviderModel(
+  input: ProviderChannelInput & { model: string },
+): Promise<{ ok: boolean }> {
+  return http.post<{ ok: boolean }>('/api/v1/providers/models/test', {
+    body: input,
+  })
+}
+
 /** GET /api/v1/workspaces — 工作区列表（按最近使用排序） */
 export async function fetchWorkspaces(): Promise<Workspace[]> {
   const data = await http.get<{ workspaces: Workspace[] }>('/api/v1/workspaces')
