@@ -5,9 +5,6 @@
 # （zacp / zlite 由 scripts/install-bins.sh 安装；本脚本只负责 full 镜像多出的工具）
 set -euo pipefail
 
-echo "==> Installing @wecom/cli (npm global)..."
-npm install -g @wecom/cli
-
 echo "==> Installing OfficeCLI (iOfficeAI)..."
 curl -fsSL https://raw.githubusercontent.com/iOfficeAI/OfficeCLI/main/install.sh | bash
 
