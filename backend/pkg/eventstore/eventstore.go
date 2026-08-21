@@ -45,14 +45,50 @@ var toolEventTypes = map[string]bool{
 // Agent 流式输出会把一段 thought/message 切成很多小块；历史前端本来就按顺序
 // 拼接这些文本，因此合并不会改变展示内容，只减少重复的 JSON 元数据。工具调用、
 // plan、带额外元数据的文本事件以及跨工具边界的文本事件都不会被合并。
+// 优化：同一合并组内复用 strings.Builder，避免 `+=` 导致的 O(n²) 重复拷贝与多次分配。
 func compactTextEvents(events []client.Event) []client.Event {
 	compacted := make([]client.Event, 0, len(events))
+	var builder strings.Builder
+	builderActive := false
 	for _, event := range events {
-		if len(compacted) > 0 && canMergeTextEvents(compacted[len(compacted)-1], event) {
-			compacted[len(compacted)-1].Text += event.Text
+		canMerge := false
+		if len(compacted) > 0 {
+			if builderActive {
+				// Builder 持有当前合并组的文本，compacted[last].Text 已清空为 ""，
+				// 需按组语义判断：同类型+同会话且当前块为纯文本即可续接
+				last := compacted[len(compacted)-1]
+				if last.Type == event.Type && last.SessionID == event.SessionID && isPlainTextEvent(event) {
+					canMerge = true
+				}
+			} else {
+				canMerge = canMergeTextEvents(compacted[len(compacted)-1], event)
+			}
+		}
+		if canMerge {
+			if !builderActive {
+				// 首个合并：用 Builder 承载 prev.Text + cur.Text，后续追加仅 WriteString
+				builder.Reset()
+				prev := compacted[len(compacted)-1].Text
+				builder.Grow(len(prev) + len(event.Text))
+				builder.WriteString(prev)
+				builder.WriteString(event.Text)
+				builderActive = true
+				compacted[len(compacted)-1].Text = ""
+			} else {
+				builder.WriteString(event.Text)
+			}
 			continue
 		}
+		// 遇到不可合并块，先刷出之前 Builder 累积的文本
+		if builderActive {
+			compacted[len(compacted)-1].Text = builder.String()
+			builder.Reset()
+			builderActive = false
+		}
 		compacted = append(compacted, event)
+	}
+	if builderActive {
+		compacted[len(compacted)-1].Text = builder.String()
 	}
 	return compacted
 }
@@ -89,7 +125,8 @@ func isPlainTextEvent(event client.Event) bool {
 func SplitToolDetails(events []client.Event) ([]client.Event, map[string]ToolDetail) {
 	compacted := compactTextEvents(events)
 	slim := make([]client.Event, 0, len(compacted))
-	details := make(map[string]ToolDetail)
+	// 预分配：工具事件数通常 < 总事件数/2，预分配减少 map 扩容
+	details := make(map[string]ToolDetail, len(compacted)/2+1)
 	for _, ev := range compacted {
 		// SessionID 必须只在持久化副本中清空：实时路由在调用本函数前已经
 		// 使用原始 event.SessionID 完成广播；range 变量为值副本，不会改动原切片。

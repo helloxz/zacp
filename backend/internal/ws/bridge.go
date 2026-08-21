@@ -358,10 +358,19 @@ func (b *EventBridge) HandlePermissionRequest(agentID string, req acp.RequestPer
 	b.handler.BroadcastPermissionRequest(sessionID, permissionID, toolCall, options)
 	b.log.Info("permission requested", "permissionID", permissionID, "sessionID", sessionID)
 
+	// 使用 NewTimer 替代 time.After，避免超时前已响应仍常驻 5 分钟 Timer 直至触发
+	timer := time.NewTimer(permissionTimeout)
+	defer timer.Stop()
 	select {
 	case resp := <-ch:
+		if !timer.Stop() {
+			select {
+			case <-timer.C:
+			default:
+			}
+		}
 		return resp, nil
-	case <-time.After(permissionTimeout):
+	case <-timer.C:
 		b.pendingPermissions.Delete(permissionID)
 		b.log.Warn("permission request timed out", "permissionID", permissionID)
 		return acp.RequestPermissionResponse{

@@ -49,6 +49,10 @@ type Event struct {
 // Bridge is an ACP Client that buffers session updates and forwards live events.
 // 事件缓存按 ACP session id 隔离：同一 Agent 连接上的多个 prompt 并发执行时，
 // 一个 session 的回复和工具事件不能覆盖另一个 session。
+// 优化：单会话事件软上限防止异常洪峰无界增长（push 内裁剪头部保尾）。
+const maxEventsPerSession = 5000
+const keepEventsPerSession = 4000
+
 type Bridge struct {
 	log         *slog.Logger
 	autoApprove bool
@@ -57,8 +61,8 @@ type Bridge struct {
 	eventsBySession map[string][]Event
 	// mutedSessions 会话级静音集合：session/load 恢复期间 agent 会把磁盘会话文件
 	// 里的历史上下文回放成 session/update 通知（agent_message_chunk 等），这些是
-	// 历史回放、不是本轮输出。静音期间该 session 的 push 事件直接丢弃（不入缓存、
-	// 不触发 onEvent 广播），否则前端会把历史消息追加到当前 turn 的占位消息上。
+	// 历史回放、不是本轮输出。静音期间该 session 的 push 事件直接丢弃：不入缓存、
+	// 不触发 onEvent 广播。
 	mutedSessions map[string]bool
 	// onEvent is optional live callback (e.g. print to stdout).
 	onEvent func(Event)
@@ -151,9 +155,18 @@ func (b *Bridge) Events(sessionID string) []Event {
 }
 
 // AgentText joins all agent message text chunks for one ACP session.
+// 优化：预先估算总长度并 Grow，避免 Builder 多次扩容拷贝。
 func (b *Bridge) AgentText(sessionID string) string {
+	events := b.Events(sessionID)
+	total := 0
+	for _, e := range events {
+		if e.Type == "agent_message" {
+			total += len(e.Text)
+		}
+	}
 	var sb strings.Builder
-	for _, e := range b.Events(sessionID) {
+	sb.Grow(total)
+	for _, e := range events {
 		if e.Type == "agent_message" {
 			sb.WriteString(e.Text)
 		}
@@ -180,6 +193,30 @@ func (b *Bridge) push(e Event) {
 		// 直接丢弃（不入缓存、不广播），历史内容已由 DB 持久化，无损失。
 		b.mu.Unlock()
 		return
+	}
+	events := b.eventsBySession[e.SessionID]
+	if len(events) >= maxEventsPerSession {
+		// 软上限：头部裁剪保尾，避免异常会话无界堆积导致 OOM。
+		// 保留最近 keepEventsPerSession 条，丢弃最老部分，记录 Warn 便于排查。
+		oldLen := len(events)
+		trim := oldLen - keepEventsPerSession + 1
+		if trim > 0 && trim < oldLen {
+			copy(events, events[trim:])
+			// 清理被裁剪尾部的旧引用，避免底层数组持续持有大字符串导致 GC 失效
+			for i := keepEventsPerSession - 1; i < oldLen; i++ {
+				events[i] = Event{}
+			}
+			events = events[:keepEventsPerSession-1]
+			b.log.Warn("events capped, trimming oldest", "sessionID", e.SessionID, "dropped", trim, "kept", len(events))
+		} else {
+			// 极端情况直接重置并清理
+			for i := range events {
+				events[i] = Event{}
+			}
+			events = events[:0]
+			b.log.Warn("events capped, reset", "sessionID", e.SessionID)
+		}
+		b.eventsBySession[e.SessionID] = events
 	}
 	b.eventsBySession[e.SessionID] = append(b.eventsBySession[e.SessionID], e)
 	fn := b.onEvent

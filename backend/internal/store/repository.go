@@ -130,11 +130,30 @@ func (r *SessionRepository) CountByAgent(agentID string) (int64, error) {
 	return count, err
 }
 
-// ListByWorkspace 列出工作目录下的所有会话（排除草稿：草稿不进项目会话列表）
-func (r *SessionRepository) ListByWorkspace(workspaceID uint) ([]model.Session, error) {
+// ListByWorkspace 列出工作目录下的会话（排除草稿：草稿不进项目会话列表）
+// 按 updated_at 倒序，limit/offset 分页（limit 默认 20，上限 100；offset 按 20 分页，前端最多 60，后端防御 100）。
+func (r *SessionRepository) ListByWorkspace(workspaceID uint, limit, offset int) ([]model.Session, error) {
+	if limit <= 0 {
+		limit = 20
+	}
+	if limit > 100 {
+		limit = 100
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	if offset >= 100 {
+		return []model.Session{}, nil
+	}
+	// 防御：单项目最多 100，前端最多 60，offset+limit 超 100 则截断
+	if offset+limit > 100 {
+		limit = 100 - offset
+	}
 	var sessions []model.Session
 	err := r.db.Where("workspace_id = ? AND is_draft = ?", workspaceID, false).
 		Order("updated_at DESC").
+		Limit(limit).
+		Offset(offset).
 		Find(&sessions).Error
 	return sessions, err
 }

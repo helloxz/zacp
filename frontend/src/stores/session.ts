@@ -11,6 +11,7 @@ import {
   fetchMessageUpdates,
   fetchMessages,
   fetchRecentSessions,
+  fetchSessionsByWorkspace,
   fetchSlashCommands,
   fetchWorkspaces,
   fetchSession as apiFetchSession,
@@ -80,7 +81,11 @@ const RESYNC_ACTIVE_WINDOW_MS = 15 * 60_000
  * 若后端挂起（无响应而非明确报错），超时后强制转错误态，避免无限「加载中」。
  */
 const SESSION_RESOLVE_TIMEOUT_MS = 15_000
-
+/** 单项目前端最多展示会话数（分页 20*3=60，后端防御 100） */
+export const MAX_SESSIONS_PER_WORKSPACE = 60
+export const SESSIONS_PAGE_SIZE = 20
+/** 同时打开的项目数上限（前端创建限制） */
+export const MAX_WORKSPACES = 10
 /** 实时工具调用卡片（流式 turn 中显示，turn.done 后随历史 events 持久化渲染） */
 export interface ToolCard {
   toolId: string
@@ -113,8 +118,16 @@ export const useSessionStore = defineStore('session', () => {
   const workspaces = ref<Workspace[]>([])
   /** 文件列表版本号：任意入口上传/删除文件后 +1，FileExplorer 监听后刷新当前目录 */
   const fileListVersion = ref(0)
-  /** 侧栏会话列表（GET /api/v1/sessions，后端按 updatedAt 倒序） */
+  /** 侧栏会话列表（按项目分页懒加载，首包 20，最多 60） */
   const sessions = ref<ChatSession[]>([])
+  /** 已加载过会话列表的项目 id 集合（按需懒加载） */
+  const loadedWorkspaceIds = ref<Set<number>>(new Set())
+  /** 各项目会话列表加载状态（点击项目时按需触发） */
+  const workspaceSessionsLoading = ref<Record<number, boolean>>({})
+  const workspaceSessionsError = ref<Record<number, string | null>>({})
+  /** 各项目分页偏移与是否有更多（后端 offset 分页，前端上限 60） */
+  const workspaceSessionsOffset = ref<Record<number, number>>({})
+  const workspaceSessionsHasMore = ref<Record<number, boolean>>({})
   /** 各会话消息缓存（进入会话时按需加载） */
   const messagesById = ref<Record<number, ChatMessage[]>>({})
 
@@ -462,8 +475,12 @@ export const useSessionStore = defineStore('session', () => {
   /**
    * 创建工作区（POST /api/v1/workspaces，后端校验路径存在），成功后刷新列表。
    * 解决「无工作区时下拉为空无法开启」的死循环：由 Composer 提供路径输入入口。
+   * 前端限制最多 MAX_WORKSPACES 个项目。
    */
   async function createWorkspace(path: string): Promise<Workspace> {
+    if (workspaces.value.length >= MAX_WORKSPACES) {
+      throw new Error(`项目数量已达上限（${MAX_WORKSPACES} 个），请先移除旧项目`)
+    }
     const ws = await apiCreateWorkspace(path)
     await loadWorkspaces()
     return ws
@@ -472,37 +489,141 @@ export const useSessionStore = defineStore('session', () => {
   /**
    * 移除项目（DELETE /api/v1/workspaces/:id，后端软删除）：
    * 项目从侧栏隐藏（其下会话与消息保留），同路径再次添加时整体恢复。
+   * 懒加载模式：仅清理本地该项目的会话缓存与加载标记，刷新工作区列表即可。
    */
   async function removeWorkspace(workspaceId: number) {
     await apiRemoveWorkspace(workspaceId)
-    await Promise.all([loadWorkspaces(), loadSessions()])
+    // 清理本地该项目的会话与加载标记
+    sessions.value = sessions.value.filter((s) => s.workspaceId !== workspaceId)
+    loadedWorkspaceIds.value.delete(workspaceId)
+    delete workspaceSessionsLoading.value[workspaceId]
+    delete workspaceSessionsError.value[workspaceId]
+    delete workspaceSessionsOffset.value[workspaceId]
+    delete workspaceSessionsHasMore.value[workspaceId]
+    // 清理 ACP 反向索引中属于该项目的条目
+    dbIdByAcpSession.forEach((dbId, acpId) => {
+      if (!sessions.value.some((s) => s.id === dbId)) {
+        dbIdByAcpSession.delete(acpId)
+      }
+    })
+    await loadWorkspaces()
+  }
+
+  /**
+   * 按项目懒加载会话（分页 20*3=60，后端防御 100）。
+   * 点击项目展开时调用；已加载过且非 force 时直接返回缓存。
+   * 首包 20 条，查看更多按需增量 20。
+   */
+  async function loadSessionsByWorkspace(workspaceId: number, force = false): Promise<void> {
+    if (!force && loadedWorkspaceIds.value.has(workspaceId)) {
+      return
+    }
+    if (workspaceSessionsLoading.value[workspaceId]) {
+      return
+    }
+    workspaceSessionsLoading.value[workspaceId] = true
+    workspaceSessionsError.value[workspaceId] = null
+    try {
+      const list = await fetchSessionsByWorkspace(workspaceId, SESSIONS_PAGE_SIZE, 0)
+      // 合并：移除该项目旧会话（保留草稿），再并入首包
+      const drafts = sessions.value.filter((s) => s.workspaceId === workspaceId && s.isDraft)
+      const other = sessions.value.filter((s) => s.workspaceId !== workspaceId)
+      const draftsToKeep = drafts.filter((d) => !list.some((s) => s.id === d.id))
+      const merged = [...other, ...list, ...draftsToKeep]
+      merged.sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())
+      sessions.value = merged
+      loadedWorkspaceIds.value.add(workspaceId)
+      workspaceSessionsOffset.value[workspaceId] = list.length
+      workspaceSessionsHasMore.value[workspaceId] =
+        list.length === SESSIONS_PAGE_SIZE && list.length < MAX_SESSIONS_PER_WORKSPACE
+      for (const s of list) {
+        indexAcpSession(s)
+      }
+      const cur = currentId.value
+      if (cur !== null && !sessions.value.some((s) => s.id === cur)) {
+        const curWs = sessions.value.find((s) => s.id === cur)?.workspaceId
+        if (curWs === workspaceId) {
+          void resolveSession(cur)
+        }
+      }
+    } catch (e) {
+      workspaceSessionsError.value[workspaceId] = e instanceof Error ? e.message : String(e)
+      throw e
+    } finally {
+      workspaceSessionsLoading.value[workspaceId] = false
+    }
+  }
+
+  /**
+   * 按项目增量加载更多会话（每次 20，累计上限 60）。
+   * 由侧边栏“查看更多”触发。
+   */
+  async function loadMoreSessionsByWorkspace(workspaceId: number): Promise<void> {
+    if (workspaceSessionsLoading.value[workspaceId]) return
+    if (workspaceSessionsHasMore.value[workspaceId] === false) return
+    const offset = workspaceSessionsOffset.value[workspaceId] ?? 0
+    if (offset >= MAX_SESSIONS_PER_WORKSPACE) {
+      workspaceSessionsHasMore.value[workspaceId] = false
+      return
+    }
+    const remaining = MAX_SESSIONS_PER_WORKSPACE - offset
+    const limit = Math.min(SESSIONS_PAGE_SIZE, remaining)
+    workspaceSessionsLoading.value[workspaceId] = true
+    workspaceSessionsError.value[workspaceId] = null
+    try {
+      const list = await fetchSessionsByWorkspace(workspaceId, limit, offset)
+      if (list.length === 0) {
+        workspaceSessionsHasMore.value[workspaceId] = false
+        return
+      }
+      // 去重后追加（offset 可能因 Touch 重排导致重复）
+      const existingIds = new Set(sessions.value.filter((s) => s.workspaceId === workspaceId).map((s) => s.id))
+      const toAdd = list.filter((s) => !existingIds.has(s.id))
+      if (toAdd.length > 0) {
+        const other = sessions.value.filter((s) => s.workspaceId !== workspaceId)
+        const currentWsSessions = sessions.value.filter((s) => s.workspaceId === workspaceId)
+        const merged = [...other, ...currentWsSessions, ...toAdd]
+        merged.sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())
+        sessions.value = merged
+        for (const s of toAdd) indexAcpSession(s)
+      }
+      const newOffset = offset + list.length
+      workspaceSessionsOffset.value[workspaceId] = newOffset
+      workspaceSessionsHasMore.value[workspaceId] =
+        list.length === limit && newOffset < MAX_SESSIONS_PER_WORKSPACE
+    } catch (e) {
+      workspaceSessionsError.value[workspaceId] = e instanceof Error ? e.message : String(e)
+      throw e
+    } finally {
+      workspaceSessionsLoading.value[workspaceId] = false
+    }
   }
 
   async function loadSessions() {
-    // 不传 limit：用 API 默认值 1000（后端上限 1000），避免会话多时被截断；
-    // 渲染截断在侧栏组件层（每项目 30/60 条）。
-    const list = await fetchRecentSessions()
-    // 保护本地草稿：后端列表按约定过滤 is_draft=true，但草稿可能正被
-    // NewSessionPane 使用（loadInitial 与草稿创建/转正存在竞态窗口）。
-    // 仅当后端列表没有该 id 时才补回，避免与转正后的正式记录重复。
-    const drafts = sessions.value.filter((s) => s.isDraft)
-    sessions.value = [
-      ...list,
-      ...drafts.filter((d) => !list.some((s) => s.id === d.id)),
-    ]
-    // 重建 ACP session 反向索引（WS 事件按 ACP id 路由到 DB id）
-    dbIdByAcpSession.clear()
-    for (const s of sessions.value) {
-      indexAcpSession(s)
+    // 兼容旧调用：全局 1000 条已废弃，改为刷新已加载项目的会话（按需）
+    // 若尚未按项目加载过，回退到旧行为以兼容直接访问 /sessions/:id 的场景
+    if (loadedWorkspaceIds.value.size === 0) {
+      // 首次未按项目加载时，保持旧逻辑但限 200 条以避免暴力（过渡期）
+      const list = await fetchRecentSessions(200)
+      const drafts = sessions.value.filter((s) => s.isDraft)
+      sessions.value = [
+        ...list,
+        ...drafts.filter((d) => !list.some((s) => s.id === d.id)),
+      ]
+      dbIdByAcpSession.clear()
+      for (const s of sessions.value) {
+        indexAcpSession(s)
+      }
+      const cur = currentId.value
+      if (cur !== null && !sessions.value.some((s) => s.id === cur)) {
+        void resolveSession(cur)
+      }
+      return
     }
-
-    // 竞态兜底：用户已进入 /sessions/:id（currentId 已设置）但列表未包含目标会话
-    // （如 resolveSession 的 upsert 先于 loadSessions 被整体覆盖 / 列表截断），
-    // 重新触发解析，避免 activeSession 缺失而状态已是 ready 时无限「加载中」。
-    const cur = currentId.value
-    if (cur !== null && !sessions.value.some((s) => s.id === cur)) {
-      void resolveSession(cur)
-    }
+    // 已按项目加载过：刷新所有已加载项目（重置分页）
+    await Promise.allSettled(
+      [...loadedWorkspaceIds.value].map((id) => loadSessionsByWorkspace(id, true)),
+    )
   }
 
   /**
@@ -580,7 +701,7 @@ export const useSessionStore = defineStore('session', () => {
   }
 
   /**
-   * 首屏初始化：工作区 + 会话并行拉取。
+   * 首屏初始化：仅拉取工作区列表（会话按项目懒加载，点击项目时触发）。
    * 幂等：进行中的加载复用同一 promise（路由守卫与 AppShell 可能并发触发），
    * 完成后保留 resolved promise，后续调用直接使用内存中最新数据。
    */
@@ -589,7 +710,7 @@ export const useSessionStore = defineStore('session', () => {
     if (!initialPromise) {
       loading.value = true
       loadingError.value = null
-      const pending = Promise.all([loadWorkspaces(), loadSessions()])
+      const pending = loadWorkspaces()
         .then(() => {})
         .catch((e) => {
           loadingError.value = e instanceof Error ? e.message : String(e)
@@ -1656,6 +1777,11 @@ export const useSessionStore = defineStore('session', () => {
     fileListVersion,
     bumpFileList,
     sessions,
+    loadedWorkspaceIds,
+    workspaceSessionsLoading,
+    workspaceSessionsError,
+    workspaceSessionsOffset,
+    workspaceSessionsHasMore,
     messagesById,
     messagesStatus,
     currentId,
@@ -1689,6 +1815,9 @@ export const useSessionStore = defineStore('session', () => {
     loadWorkspaces,
     createWorkspace,
     removeWorkspace,
+    loadSessions,
+    loadSessionsByWorkspace,
+    loadMoreSessionsByWorkspace,
     loadMessages,
     loadConfigOptions,
     loadSlashCommands,

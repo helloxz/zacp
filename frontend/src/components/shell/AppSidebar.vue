@@ -7,7 +7,7 @@ import { useMessage } from 'naive-ui'
 import SidebarSessionList from '@/components/shell/SidebarSessionList.vue'
 import UserFooter from '@/components/shell/UserFooter.vue'
 import DirectoryPicker from '@/components/shell/DirectoryPicker.vue'
-import { useSessionStore } from '@/stores/session'
+import { useSessionStore, MAX_WORKSPACES } from '@/stores/session'
 import { useAppStore } from '@/stores/app'
 
 /** open：移动端抽屉开合（lg 及以上忽略，侧栏常驻流内）；desktop：桌面断点判定（inert 只在移动端关闭态启用）。desktop 必填——漏传且窗口 ≥1024 时流内侧栏会被整体 inert */
@@ -38,6 +38,11 @@ watch(
   () => appStore.newProjectModalOpen,
   (open) => {
     if (open) {
+      if (sessionStore.workspaces.length >= MAX_WORKSPACES) {
+        message.warning(`项目数量已达上限（${MAX_WORKSPACES}个），请先移除旧项目`)
+        appStore.newProjectModalOpen = false
+        return
+      }
       projectPath.value = ''
       showProjectModal.value = true
       appStore.newProjectModalOpen = false
@@ -45,12 +50,17 @@ watch(
   },
 )
 
-/** 打开「新建项目」弹窗 */
+/** 打开「新建项目」弹窗（受 MAX_WORKSPACES 限制） */
 function onNewProject() {
+  if (sessionStore.workspaces.length >= MAX_WORKSPACES) {
+    message.warning(`项目数量已达上限（${MAX_WORKSPACES}个），请先移除旧项目`)
+    return
+  }
   projectPath.value = ''
   showProjectModal.value = true
 }
 
+const canAddProject = computed(() => sessionStore.workspaces.length < MAX_WORKSPACES)
 /**
  * 提交项目路径：POST /api/v1/workspaces（后端校验路径存在 + 自动取末尾段为 name）。
  * 创建成功后直接进入该项目的「新建会话」空态（/new?workspaceId=X），少一步点击。
@@ -87,10 +97,13 @@ async function onCreateProject() {
   >
     <div class="flex items-center gap-1 pt-[max(env(safe-area-inset-top),0.75rem)] pl-[max(env(safe-area-inset-left),0.75rem)] pr-3 pb-3">
       <!-- 新建项目：Tailwind 实现的次级按钮（点击打开与 WelcomeHero 共享的项目弹窗）。
-           注意：不做单独的抽屉关闭按钮——点遮罩区域即可关闭（移动端交互更轻） -->
+           注意：不做单独的抽屉关闭按钮——点遮罩区域即可关闭（移动端交互更轻）
+           超过 MAX_WORKSPACES 时按钮禁用并提示 -->
       <button
         type="button"
-        class="flex cursor-pointer flex-1 items-center justify-center gap-1.5 rounded-lg border border-divider bg-surface-raised px-3 py-2 text-sm font-medium text-ink-secondary shadow-sm transition-colors hover:border-divider hover:bg-surface-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-divider"
+        class="flex cursor-pointer flex-1 items-center justify-center gap-1.5 rounded-lg border border-divider bg-surface-raised px-3 py-2 text-sm font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-divider disabled:cursor-not-allowed disabled:opacity-50"
+        :class="canAddProject ? 'text-ink-secondary shadow-sm hover:border-divider hover:bg-surface-hover' : 'text-ink-muted'"
+        :title="!canAddProject ? `项目数量已达上限（${MAX_WORKSPACES}个）` : undefined"
         @click="onNewProject"
       >
         <AddOutline class="h-4 w-4 shrink-0" />

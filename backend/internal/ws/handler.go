@@ -2,6 +2,7 @@ package ws
 
 import (
 	"context"
+	"encoding/json"
 	"log/slog"
 	"net/http"
 
@@ -103,13 +104,26 @@ func (h *Handler) ServeHTTPWithSession(sessionID, agentID string, bridge *EventB
 
 // BroadcastToSession 向指定会话的所有连接广播消息（按订阅集合匹配：
 // 同一连接可同时订阅多个会话，进行中会话的广播不会因切到其它会话而丢失）
+// 优化：一次性 json.Marshal，N 个订阅者复用结果（省 N-1 次 Marshal），
+// 每客户端拷贝一份 []byte 再入队，避免多 goroutine 共享底层数组的潜在竞态，语义与原逐个 Marshal 等价。
 func (h *Handler) BroadcastToSession(sessionID string, msg ServerMessage) {
+	data, err := json.Marshal(msg)
+	if err != nil {
+		h.log.Error("marshal error", "error", err)
+		return
+	}
 	h.hub.mu.RLock()
 	defer h.hub.mu.RUnlock()
 
 	for client := range h.hub.clients {
 		if client.IsSubscribed(sessionID) {
-			client.Send(msg)
+			cpy := make([]byte, len(data))
+			copy(cpy, data)
+			select {
+			case client.send <- cpy:
+			default:
+				h.log.Warn("send buffer full, dropping message", "sessionID", sessionID)
+			}
 		}
 	}
 }

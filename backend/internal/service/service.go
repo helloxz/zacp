@@ -307,9 +307,9 @@ func (s *SessionService) RenameSession(id uint, title string) error {
 	return s.sessionRepo.UpdateTitle(id, title)
 }
 
-// ListSessions 列出工作目录下的所有会话
-func (s *SessionService) ListSessions(workspaceID uint) ([]model.Session, error) {
-	return s.sessionRepo.ListByWorkspace(workspaceID)
+// ListSessions 列出工作目录下的所有会话（按项目分页，默认 20，上限 100；offset 分页，前端最多 60）
+func (s *SessionService) ListSessions(workspaceID uint, limit, offset int) ([]model.Session, error) {
+	return s.sessionRepo.ListByWorkspace(workspaceID, limit, offset)
 }
 
 // ListRecentSessions 列出最近活跃的会话（全局，侧栏数据源）。

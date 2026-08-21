@@ -8,6 +8,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 
+	"github.com/helloxz/zacp/internal/model"
 	"github.com/helloxz/zacp/internal/service"
 	"github.com/helloxz/zacp/internal/ws"
 )
@@ -103,7 +104,7 @@ func (h *SessionHandler) GetSession(c *gin.Context) {
 }
 
 // ListSessions 列出工作目录下的所有会话
-// GET /api/v1/workspaces/:id/sessions
+// GET /api/v1/workspaces/:id/sessions?limit=20&offset=0
 func (h *SessionHandler) ListSessions(c *gin.Context) {
 	workspaceID, err := strconv.ParseUint(c.Param("id"), 10, 32)
 	if err != nil {
@@ -112,8 +113,26 @@ func (h *SessionHandler) ListSessions(c *gin.Context) {
 		})
 		return
 	}
-
-	sessions, err := h.svc.ListSessions(uint(workspaceID))
+	limit := 20
+	if l := c.Query("limit"); l != "" {
+		if parsed, err := strconv.Atoi(l); err == nil && parsed > 0 {
+			limit = parsed
+		}
+	}
+	if limit > 100 {
+		limit = 100
+	}
+	offset := 0
+	if o := c.Query("offset"); o != "" {
+		if parsed, err := strconv.Atoi(o); err == nil && parsed >= 0 {
+			offset = parsed
+		}
+	}
+	if offset >= 100 {
+		c.JSON(http.StatusOK, gin.H{"sessions": []model.Session{}})
+		return
+	}
+	sessions, err := h.svc.ListSessions(uint(workspaceID), limit, offset)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error": gin.H{"code": "list_sessions_failed", "message": err.Error()},

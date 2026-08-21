@@ -479,12 +479,15 @@ export async function fetchRecentSessions(limit = 1000): Promise<ChatSession[]> 
   return data.sessions
 }
 
-/** GET /api/v1/workspaces/:id/sessions — 按工作区列会话 */
+/** GET /api/v1/workspaces/:id/sessions — 按工作区列会话（分页，单次 20，上限 100，前端最多 60） */
 export async function fetchSessionsByWorkspace(
   workspaceId: number,
+  limit = 20,
+  offset = 0,
 ): Promise<ChatSession[]> {
   const data = await http.get<{ sessions: ChatSession[] }>(
     `/api/v1/workspaces/${workspaceId}/sessions`,
+    { query: { limit, offset } },
   )
   return data.sessions
 }

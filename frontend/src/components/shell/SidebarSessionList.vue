@@ -4,6 +4,7 @@ import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 import {
   AddOutline,
+  ChevronDownOutline,
   FolderOpenOutline,
   FolderOutline,
   TrashOutline,
@@ -71,11 +72,11 @@ const hasAny = computed(
 )
 
 /**
- * 每项目可见会话条数（渲染截断）：默认 20，点「查看更多」+20，最多 40 后按钮消失。
- * 数据仍全量在 store（后端一次返回 ≤1000），只限制 DOM 渲染量，避免长列表压力。
+ * 每项目可见会话条数：默认 20，点「查看更多」+20，最多 60（20*3）后按钮消失。
+ * 配合 store 分页（首包 20，按需增量 20，上限 60），超过本地已拉取时触发后端分页。
  */
 const PAGE_SIZE = 20
-const MAX_VISIBLE = PAGE_SIZE * 2
+const MAX_VISIBLE = PAGE_SIZE * 3
 const visibleCount = reactive<Record<number, number>>({})
 
 /** 当前项目实际渲染的会话（后端已按 updatedAt 倒序，取前 N 条即最近使用） */
@@ -84,15 +85,34 @@ function visibleSessions(group: { workspace: Workspace; sessions: ChatSession[] 
   return group.sessions.slice(0, n)
 }
 
-/** 是否显示「查看更多」：会话数超过当前可见数，且未到上限 40 */
+/** 是否显示「查看更多」：本地有更多未展示或后端还有更多（分页）且未到 60 上限 */
 function canLoadMore(group: { workspace: Workspace; sessions: ChatSession[] }) {
   const n = visibleCount[group.workspace.id] ?? PAGE_SIZE
-  return group.sessions.length > n && n < MAX_VISIBLE
+  if (n >= MAX_VISIBLE) return false
+  if (group.sessions.length > n) return true
+  return !!sessionStore.workspaceSessionsHasMore[group.workspace.id]
 }
 
-/** 点击「查看更多」：每项目最多加 1 次（20 → 40），计数不随列表刷新重置，保持用户已展开的量 */
-function loadMore(wsId: number) {
-  visibleCount[wsId] = Math.min((visibleCount[wsId] ?? PAGE_SIZE) + PAGE_SIZE, MAX_VISIBLE)
+/** 点击「查看更多」：本地有缓存则直接展开，否则触发后端分页（20 条/次） */
+async function loadMore(wsId: number) {
+  const n = visibleCount[wsId] ?? PAGE_SIZE
+  const group = groups.value.find((g) => g.workspace.id === wsId)
+  // 本地已有更多未展示，直接展开
+  if (group && group.sessions.length > n) {
+    visibleCount[wsId] = Math.min(n + PAGE_SIZE, MAX_VISIBLE)
+    return
+  }
+  // 需后端分页
+  if (sessionStore.workspaceSessionsHasMore[wsId]) {
+    try {
+      await sessionStore.loadMoreSessionsByWorkspace(wsId)
+      visibleCount[wsId] = Math.min(n + PAGE_SIZE, MAX_VISIBLE)
+    } catch (e) {
+      message.error(e instanceof Error ? e.message : String(e))
+    }
+    return
+  }
+  visibleCount[wsId] = Math.min(n + PAGE_SIZE, MAX_VISIBLE)
 }
 
 /**
@@ -103,17 +123,30 @@ const expandedIds = ref<Set<number>>(new Set())
 /**
  * 首次加载完成时默认只展开第一个项目（groups[0]，最近使用的），
  * 之后用户手动展开/折叠的状态不被数据刷新重置。
+ * 展开时按需触发会话懒加载（单项目最多 100 条）。
  */
 let expandedInitialized = false
 watch(
   groups,
   (gs) => {
     if (!expandedInitialized && gs.length > 0) {
-      expandedIds.value = new Set([gs[0].workspace.id])
+      const firstId = gs[0].workspace.id
+      expandedIds.value = new Set([firstId])
       expandedInitialized = true
+      void sessionStore.loadSessionsByWorkspace(firstId)
     }
   },
   { immediate: true },
+)
+
+// 已展开项目按需加载会话
+watch(
+  () => [...expandedIds.value],
+  (ids) => {
+    for (const id of ids) {
+      void sessionStore.loadSessionsByWorkspace(id)
+    }
+  },
 )
 
 /**
@@ -145,7 +178,10 @@ function revealCurrentSession() {
     ? s.workspace
     : sessionStore.workspaces.find((w) => w.id === s.workspaceId)
   if (!ws) return
-  expandedIds.value = new Set(expandedIds.value).add(ws.id)
+  if (!expandedIds.value.has(ws.id)) {
+    expandedIds.value = new Set(expandedIds.value).add(ws.id)
+    void sessionStore.loadSessionsByWorkspace(ws.id)
+  }
   // 可见条数：当前会话被截断时提升到包含它（取 max，不回调用户已展开的量）
   const group = groups.value.find((g) => g.workspace.id === ws.id)
   const idx = group?.sessions.findIndex((x) => x.id === id) ?? -1
@@ -170,6 +206,7 @@ function toggleWorkspace(id: number) {
     next.delete(id)
   } else {
     next.add(id)
+    void sessionStore.loadSessionsByWorkspace(id)
   }
   expandedIds.value = next
 }
@@ -289,23 +326,41 @@ async function onRemoveWorkspace(ws: Workspace) {
             </n-tooltip>
           </div>
         </div>
-        <!-- 项目下的会话列表（仅展开时渲染；每项目默认 20 条，超出显示「查看更多」） -->
+        <!-- 项目下的会话列表（仅展开时渲染；按需分页，首包 20，最多 60） -->
         <template v-if="expandedIds.has(group.workspace.id)">
-          <SessionListItem
-            v-for="s in visibleSessions(group)"
-            :key="s.id"
-            :session="s"
-          />
-          <!-- 查看更多：+20 条；达到 40 上限后按钮消失（最多加载 1 次） -->
-          <n-button
-            v-if="canLoadMore(group)"
-            text
-            size="small"
-            class="w-full justify-center text-xs text-ink-muted hover:text-ink-secondary"
-            @click="loadMore(group.workspace.id)"
-          >
-            {{ t('shell.loadMoreSessions') }}
-          </n-button>
+          <div v-if="!sessionStore.loadedWorkspaceIds.has(group.workspace.id) && sessionStore.workspaceSessionsLoading[group.workspace.id]" class="flex justify-center py-4">
+            <n-spin size="small" />
+          </div>
+          <div v-else-if="sessionStore.workspaceSessionsError[group.workspace.id] && !sessionStore.loadedWorkspaceIds.has(group.workspace.id)" class="flex flex-col items-center gap-2 px-2 py-2 text-xs text-red-500">
+            <span>{{ sessionStore.workspaceSessionsError[group.workspace.id] }}</span>
+            <n-button size="tiny" @click="sessionStore.loadSessionsByWorkspace(group.workspace.id, true)">重试</n-button>
+          </div>
+          <template v-else>
+            <SessionListItem
+              v-for="s in visibleSessions(group)"
+              :key="s.id"
+              :session="s"
+            />
+            <div v-if="sessionStore.workspaceSessionsError[group.workspace.id]" class="flex flex-col items-center gap-1 px-2 py-1 text-xs text-red-500">
+              <span>{{ sessionStore.workspaceSessionsError[group.workspace.id] }}</span>
+              <n-button size="tiny" @click="sessionStore.loadMoreSessionsByWorkspace(group.workspace.id)">重试</n-button>
+            </div>
+            <!-- 查看更多：箭头+文字极简态，无背景描边，仅色阶区分，贴合 surface 体系 -->
+            <n-button
+              v-if="canLoadMore(group)"
+              text
+              size="small"
+              block
+              class="w-full justify-center text-xs font-normal text-ink-muted/70 hover:text-ink-secondary transition-colors"
+              :loading="!!sessionStore.workspaceSessionsLoading[group.workspace.id]"
+              @click="loadMore(group.workspace.id)"
+            >
+              <template #icon>
+                <n-icon :size="14"><ChevronDownOutline /></n-icon>
+              </template>
+              {{ t('shell.loadMoreSessions') }}
+            </n-button>
+          </template>
         </template>
       </div>
     </template>
