@@ -643,10 +643,25 @@ export interface LoginResult {
   username: string
 }
 
-export async function login(username: string, password: string): Promise<LoginResult> {
+export async function login(
+  username: string,
+  password: string,
+  captchaId?: string,
+  captcha?: string,
+): Promise<LoginResult> {
   return http.post<LoginResult>('/api/v1/auth/login', {
-    body: { username, password },
+    body: { username, password, captchaId, captcha },
   })
+}
+
+/** GET /api/v1/auth/captcha — 图形验证码（免认证，5 分钟过期单次有效） */
+export interface CaptchaResult {
+  id: string
+  image: string
+}
+
+export async function fetchCaptcha(): Promise<CaptchaResult> {
+  return http.get<CaptchaResult>('/api/v1/auth/captcha')
 }
 
 /** GET /api/v1/auth/status — 认证启用状态（免认证；前端守卫据此决定是否拦截） */

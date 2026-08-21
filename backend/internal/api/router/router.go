@@ -46,6 +46,7 @@ func New(
 		// ---- 免认证端点（登录前可达） ----
 		v1.POST("/auth/login", authHandler.Login)
 		v1.GET("/auth/status", authHandler.Status)
+		v1.GET("/auth/captcha", authHandler.Captcha)
 
 		// 文件直链：双模式校验（Authorization 主 token 或 ?token= 资源 token），
 		// 见 middleware.FileRaw；不能放进认证组，因为 <img src> 直链只带资源 token。

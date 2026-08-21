@@ -60,12 +60,18 @@ export const useAuthStore = defineStore('auth', () => {
   }
 
   /** 登录：成功后写入 token 并同步启用状态 */
-  async function login(usernameInput: string, password: string): Promise<void> {
-    const res = await apiLogin(usernameInput, password)
+  async function login(
+    usernameInput: string,
+    password: string,
+    captchaId?: string,
+    captcha?: string,
+  ): Promise<void> {
+    const res = await apiLogin(usernameInput, password, captchaId, captcha)
     token.value = res.token
     writeAuthToken(res.token)
     applyStatus({ enabled: true, username: res.username })
   }
+
 
   /**
    * 清除本地登录态（登出 / 401 拦截 / 凭证变更后由调用方触发）。
