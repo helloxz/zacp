@@ -227,3 +227,49 @@ body {
 .incremark .incremark-list.task-list {
   padding-left: 0;
 }
+/*
+ * 表格横向滚动（方案 A，全局兜底）：与 MessageItem.vue 的 scoped :deep 互为备份
+ * 解决手机端多列表格被等分压缩、强制换行的问题
+ */
+.incremark .incremark-table-wrapper {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-x: contain;
+  /* 突破 IncremarkContent 的 px-4 + overflow-hidden */
+  margin-left: -16px;
+  margin-right: -16px;
+  padding-left: 16px;
+  padding-right: 16px;
+  max-width: calc(100% + 32px);
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-scrollbar-thumb) transparent;
+}
+.incremark .incremark-table-wrapper::-webkit-scrollbar {
+  height: 6px;
+}
+.incremark .incremark-table-wrapper::-webkit-scrollbar-thumb {
+  background-color: var(--color-scrollbar-thumb);
+  border-radius: 9999px;
+  border: 1px solid transparent;
+  background-clip: content-box;
+}
+.incremark .incremark-table-wrapper::-webkit-scrollbar-thumb:hover {
+  background-color: var(--color-scrollbar-thumb-hover);
+}
+.incremark .incremark-table {
+  width: max-content;
+  min-width: 560px;
+  table-layout: fixed;
+}
+.incremark .incremark-table th,
+.incremark .incremark-table td {
+  white-space: nowrap;
+  min-width: 90px;
+}
+.incremark .incremark-table td:nth-child(2),
+.incremark .incremark-table td:nth-child(3) {
+  white-space: normal;
+  min-width: 140px;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}

@@ -421,6 +421,56 @@ html.dark .loading-dot-sm {
   list-style: none;
 }
 /*
+ * 表格横向滚动（方案 A）：手机端多列表格不强制换行，通过横向滚动保证可读性
+ * - .incremark-table-wrapper 本身已有 overflow-x:auto，需突破父级 IncremarkContent 的 overflow-hidden + px-4
+ *   负 margin 抵消内边距，max-width 校正，避免滚动条被裁剪
+ * - 表格 width:max-content + min-width:560px（6列×90px）保证在窄视口下触发滚动，而非等分压缩
+ * - 单元格默认 nowrap（表头/数字/状态不换行），仅名称/类别列允许换行（避免超长英文撑破）
+ * - 保留 table-layout:fixed 避免打字机流式时列宽抖动
+ */
+:deep(.incremark-table-wrapper) {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-x: contain;
+  margin-left: -16px;
+  margin-right: -16px;
+  padding-left: 16px;
+  padding-right: 16px;
+  max-width: calc(100% + 32px);
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-scrollbar-thumb) transparent;
+}
+:deep(.incremark-table-wrapper)::-webkit-scrollbar {
+  height: 6px;
+}
+:deep(.incremark-table-wrapper)::-webkit-scrollbar-thumb {
+  background-color: var(--color-scrollbar-thumb);
+  border-radius: 9999px;
+  border: 1px solid transparent;
+  background-clip: content-box;
+}
+:deep(.incremark-table-wrapper)::-webkit-scrollbar-thumb:hover {
+  background-color: var(--color-scrollbar-thumb-hover);
+}
+:deep(.incremark-table) {
+  width: max-content;
+  min-width: 560px;
+  table-layout: fixed;
+}
+:deep(.incremark-table th),
+:deep(.incremark-table td) {
+  white-space: nowrap;
+  min-width: 90px;
+}
+/* 名称/类别列允许换行，避免长文本单行过宽 */
+:deep(.incremark-table td:nth-child(2)),
+:deep(.incremark-table td:nth-child(3)) {
+  white-space: normal;
+  min-width: 140px;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+/*
  * 纯英文/长 token 无空格时溢出修复：
  * - user 气泡已用 wrap-anywhere/break-words 兜底；
  * - AI 侧 IncremarkContent 内段落/标题/列表/引用等文本容器同样需强制换行，
