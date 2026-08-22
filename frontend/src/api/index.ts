@@ -154,9 +154,19 @@ export async function saveAgentConfigContent(
 /**
  * GET /api/v1/agents/zlite/default-channel — 读取 zlite 默认渠道设置。
  * 文件不存在/未配置时返回默认值（type=openai.chat，其余为空），可直接回填表单。
+ * 防御：后端历史版本可能将空 models 序列化为 null，此处归一为 [] 避免前端 [...null]。
  */
 export async function fetchZliteDefaultChannel(): Promise<ZliteChannel> {
-  return http.get<ZliteChannel>('/api/v1/agents/zlite/default-channel')
+  const data = await http.get<ZliteChannel>('/api/v1/agents/zlite/default-channel')
+  // 防御后端历史版本 models 为 null 的情况：运行时归一，避免前端 [...null] 抛错
+  const models = Array.isArray(data.models) ? data.models : []
+  return {
+    ...data,
+    type: data.type ?? 'openai.chat',
+    baseUrl: data.baseUrl ?? '',
+    apiKey: data.apiKey ?? '',
+    models,
+  }
 }
 
 /**
@@ -195,9 +205,10 @@ export interface ProviderChannelInput {
 export async function fetchProviderModels(
   input: ProviderChannelInput,
 ): Promise<{ models: string[] }> {
-  return http.post<{ models: string[] }>('/api/v1/providers/models', {
+  const data = await http.post<{ models: string[] }>('/api/v1/providers/models', {
     body: input,
   })
+  return { models: Array.isArray(data.models) ? data.models : [] }
 }
 
 /** POST /api/v1/providers/models/test — 试探指定模型是否可响应（15s 超时，hi/5 token） */

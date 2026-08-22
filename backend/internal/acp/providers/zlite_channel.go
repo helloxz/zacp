@@ -156,16 +156,22 @@ func ReadZliteDefaultChannel() (ZliteDefaultChannel, error) {
 		ch.APIKey = cfgAPIKey
 	}
 
+	// 保证 models 始终为非 nil 切片：未配置/空配置时前端期望 [] 而非 null，
+	// 否则 JSON 序列化为 null 导致前端 `[...data.models]` 报 e.models is not iterable。
+	if ch.Models == nil {
+		ch.Models = []string{}
+	}
+
 	// 历史遗留：config.toml 可能写过非法的 type（手改/旧版本），保持原值返回，
 	// 前端下拉不匹配时显示原值，用户重新选择合法值保存即可。
 	return ch, nil
 }
-
 // parseDefaultChannel 解析 config.toml 文本中 name='default' 的 [[providers]] 块，
 // 返回其字段与 api_key 原文（未匹配到 default 块时返回 Type 默认值）。
 // 独立成函数便于单元测试（不依赖真实 HOME 目录）。
 func parseDefaultChannel(content string) (ch ZliteDefaultChannel, cfgAPIKey string) {
 	ch.Type = ZliteChannelTypeOpenAIChat
+	ch.Models = []string{}
 	lines := splitLines(content)
 	for _, b := range tomledit.ParseArrayBlocks(lines, "providers") {
 		if !blockHasDefaultName(lines, b) {
@@ -186,7 +192,11 @@ func parseDefaultChannel(content string) (ch ZliteDefaultChannel, cfgAPIKey stri
 			case "api_key":
 				cfgAPIKey = tomledit.StringValue(raw)
 			case "models":
-				ch.Models = tomledit.ListValue(raw)
+				if v := tomledit.ListValue(raw); v != nil {
+					ch.Models = v
+				} else {
+					ch.Models = []string{}
+				}
 			}
 		}
 		return ch, cfgAPIKey

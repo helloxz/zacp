@@ -68,7 +68,7 @@ const baseUrlPlaceholder = computed(() =>
 
 /** 底部按钮显隐：获取模型需 baseUrl+apiKey；测试还需至少一个模型 */
 const canFetchVisible = computed(() => form.baseUrl.trim() !== '' && form.apiKey.trim() !== '')
-const canTestVisible = computed(() => canFetchVisible.value && form.models.length > 0)
+const canTestVisible = computed(() => canFetchVisible.value && Array.isArray(form.models) && form.models.length > 0)
 const availableOptions = computed(() =>
   availableModels.value.map((m) => ({ label: m, value: m })),
 )
@@ -111,10 +111,11 @@ async function open() {
   loading.value = true
   try {
     const data = await fetchZliteDefaultChannel()
-    form.type = data.type
-    form.baseUrl = data.baseUrl
-    form.apiKey = data.apiKey
-    form.models = [...data.models]
+    form.type = data.type ?? 'openai.chat'
+    form.baseUrl = data.baseUrl ?? ''
+    form.apiKey = data.apiKey ?? ''
+    // 后端未配置时 models 可能为 null（Go nil slice -> JSON null），此处防御避免 [...null] 抛错
+    form.models = Array.isArray(data.models) ? [...data.models] : []
     formRef.value?.restoreValidation()
   } catch (e) {
     message.error(e instanceof Error ? e.message : t('settings.agent.zliteLoadFailed'))
@@ -179,9 +180,10 @@ async function fetchModels() {
     const baseUrl = form.baseUrl.trim()
     const apiKey = form.apiKey.trim()
     const res = await fetchProviderModels({ type: form.type as ZliteChannel['type'], baseUrl, apiKey })
-    availableModels.value = res.models
+    // 防御后端返回 models 为 null 的情况
+    availableModels.value = Array.isArray(res.models) ? res.models : []
     pickedModel.value = null
-    message.success(t('settings.agent.zliteFetchSuccess', { count: res.models.length }))
+    message.success(t('settings.agent.zliteFetchSuccess', { count: availableModels.value.length }))
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e)
     message.error(msg || t('settings.agent.zliteFetchFailed'))
