@@ -69,10 +69,13 @@ const baseUrlPlaceholder = computed(() =>
 /** 底部按钮显隐：获取模型需 baseUrl+apiKey；测试还需至少一个模型 */
 const canFetchVisible = computed(() => form.baseUrl.trim() !== '' && form.apiKey.trim() !== '')
 const canTestVisible = computed(() => canFetchVisible.value && Array.isArray(form.models) && form.models.length > 0)
-const availableOptions = computed(() =>
-  availableModels.value.map((m) => ({ label: m, value: m })),
-)
-
+/** 可选模型下拉：过滤掉已在上方 tags 中选择的模型（按 trim 后精确匹配去重） */
+const availableOptions = computed(() => {
+  const selected = new Set(form.models.map((m) => m.trim()).filter((m) => m !== ''))
+  return availableModels.value
+    .filter((m) => m.trim() !== '' && !selected.has(m.trim()))
+    .map((m) => ({ label: m, value: m }))
+})
 const rules: FormRules = {
   baseUrl: [
     {
@@ -292,6 +295,7 @@ function fillSingle(value: string | null) {
                 v-model:value="form.type"
                 :options="typeOptions"
                 :placeholder="t('settings.agent.zliteTypeLabel')"
+                :to="'body'"
               />
             </n-form-item>
 
@@ -343,9 +347,9 @@ function fillSingle(value: string | null) {
             >
               <div class="flex items-center justify-between">
                 <span class="text-xs text-ink-muted">
-                  {{ t('settings.agent.zliteAvailableModels', { count: availableModels.length }) }}
+                  {{ t('settings.agent.zliteAvailableModels', { count: availableOptions.length }) }}
                 </span>
-                <n-button size="tiny" type="primary" secondary @click="fillAll">
+                <n-button size="tiny" type="primary" secondary :disabled="availableOptions.length === 0" @click="fillAll">
                   {{ t('settings.agent.zliteFillAll') }}
                 </n-button>
               </div>
@@ -355,6 +359,7 @@ function fillSingle(value: string | null) {
                 :placeholder="t('settings.agent.zlitePickModel')"
                 clearable
                 filterable
+                :to="'body'"
                 @update:value="fillSingle"
               />
             </div>
