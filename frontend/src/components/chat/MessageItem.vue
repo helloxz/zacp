@@ -254,6 +254,15 @@ const blocks = computed<MessageBlock[]>(() => {
   }
 })
 
+/**
+ * 可见消息块：过滤空白纯空行（仅空白/换行的 text 块）。
+ * 后端 AI 有时会输出 "\n" / "\n\n" / "   " 等空白，导致 IncremarkContent
+ * 以空壳渲染（rounded-xl border 仍在，形成空白卡片）。此处统一用 trim 判空，
+ * 工具块不受影响（无 content）。
+ */
+const visibleBlocks = computed<MessageBlock[]>(() =>
+  blocks.value.filter((b) => b.kind !== 'text' || Boolean(b.content && b.content.trim())),
+)
 </script>
 
 <template>
@@ -299,7 +308,7 @@ const blocks = computed<MessageBlock[]>(() => {
 
     <!-- 消息块时间线：按事件顺序交错渲染 AI 文本与工具调用，
          恢复因果关系（每个工具卡紧跟触发它的文字之后） -->
-    <template v-for="(block, idx) in blocks" :key="idx">
+    <template v-for="(block, idx) in visibleBlocks" :key="idx">
       <!-- 文本块：从 message.content 按 contentSplit 位置切片，
            流式期间仅最后一个 text block 有内容（其余为空占位） -->
       <div
@@ -308,14 +317,14 @@ const blocks = computed<MessageBlock[]>(() => {
       >
         <!-- 流式占位：content 为空且 turn 未结束时显示加载动画 -->
         <div
-          v-if="!block.content && !isFinished"
+          v-if="!block.content.trim() && !isFinished"
           class="flex w-full min-w-0 items-center gap-1.5 rounded-xl border border-divider bg-surface-raised px-4 py-3.5 shadow-sm"
           aria-label="loading"
         >
           <span v-for="i in 3" :key="i" class="loading-dot" />
         </div>
         <IncremarkContent
-          v-else-if="block.content"
+          v-else-if="block.content.trim()"
           class="w-full min-w-0 wrap-anywhere break-words [overflow-wrap:anywhere] [word-break:break-word] overflow-hidden rounded-xl border border-divider bg-surface-raised px-4 py-3 text-sm leading-relaxed shadow-sm"
           :content="block.content"
           :is-finished="isFinished"
@@ -332,7 +341,7 @@ const blocks = computed<MessageBlock[]>(() => {
 
     <!-- 流式初始态：streamBlocks 尚无内容时显示加载动画（首个文本块到达后由 IncremarkContent 接管） -->
     <div
-      v-if="isStreamingPlaceholder && !blocks.length"
+      v-if="isStreamingPlaceholder && !visibleBlocks.length"
       class="flex w-full min-w-0 items-center gap-1.5 rounded-xl border border-divider bg-surface-raised px-4 py-3.5 shadow-sm"
       aria-label="loading"
     >
