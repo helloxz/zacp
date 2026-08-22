@@ -273,3 +273,20 @@ body {
   overflow-wrap: anywhere;
   word-break: break-word;
 }
+/*
+ * 行内代码换行粘连优化（方案 C）：降低垂直 padding + 增加行高 + box-decoration-break
+ * 现象：li 内大量 `code`（如 `MessageItem.vue:305`）换行时，4px+8px 的背景在 1.5 行高下重叠粘连
+ * 解法：padding 4px 8px → 2px 4px，行高 1.5 → 1.75，inline 跨行用 clone 独立绘制背景
+ */
+.incremark .incremark-inline-code {
+  padding: 2px 4px;
+  line-height: 1.6;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+  vertical-align: baseline;
+  margin: 1px 0;
+}
+.incremark .incremark-list-item,
+.incremark .incremark-paragraph {
+  line-height: 1.75;
+}

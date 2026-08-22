@@ -488,10 +488,24 @@ html.dark .loading-dot-sm {
  */
 :deep(.incremark-paragraph),
 :deep(.incremark-heading),
-:deep(.incremark-list-item),
 :deep(.incremark-blockquote),
-:deep(.incremark-paragraph a),
+:deep(.incremark-paragraph a) {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+/* 列表/段落行高提升至 1.75，配合 inline-code 的垂直边距，避免换行粘连 */
+:deep(.incremark-list-item),
+:deep(.incremark-paragraph) {
+  line-height: 1.75;
+}
+/* 行内代码：2px 4px + box-decoration-break:clone，解决 li 内大量 `code` 换行背景粘连 */
 :deep(.incremark-inline-code) {
+  padding: 2px 4px;
+  line-height: 1.6;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+  vertical-align: baseline;
+  margin: 1px 0;
   overflow-wrap: anywhere;
   word-break: break-word;
 }
