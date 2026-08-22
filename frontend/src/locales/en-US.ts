@@ -100,6 +100,8 @@ export default {
     errorTitle: 'Something went wrong',
     disconnectedBanner: 'Connection lost — the task is still running in the background; results will sync automatically',
     backToBottom: 'Back to bottom',
+    scrollUp: 'Scroll up',
+    scrollDown: 'Scroll down',
     openTool: 'Open local tool',
     openWebTTY: 'Open Web terminal',
     ttyWorkspaceUnavailable: 'The current session has no usable workspace',
