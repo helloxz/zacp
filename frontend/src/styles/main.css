@@ -192,3 +192,38 @@ body {
     font-size: 16px;
   }
 }
+/*
+ * incremark 列表符号恢复：Tailwind v4 preflight 将所有 ul/ol 置为 list-style:none，
+ * 导致 /sessions/{id} 页面的 AI 回复中 ul/ol 不显示圆点/序号。
+ * incremark 主题本身未显式设置 list-style-type（仅设 padding/margin），被 preflight 覆盖后符号丢失。
+ * 这里在全局层面按 incremark 语义恢复，优先级高于 preflight，且限定在 .incremark 作用域内，
+ * 不影响站内其它非 markdown 列表。任务列表 (task-list) 保持无符号（checkbox 形态）。
+ */
+.incremark ul.incremark-list {
+  list-style-type: disc;
+  list-style-position: outside;
+}
+.incremark ol.incremark-list {
+  list-style-type: decimal;
+  list-style-position: outside;
+}
+.incremark ul.incremark-list,
+.incremark ol.incremark-list {
+  /* 与 @incremark/theme 保持一致：左侧缩进为 2em，给 outside 标记留出空间 */
+  padding-left: 2em;
+}
+/* 嵌套列表：第二级圆圈、第三级方块，与浏览器默认一致 */
+.incremark ul.incremark-list ul {
+  list-style-type: circle;
+}
+.incremark ul.incremark-list ul ul {
+  list-style-type: square;
+}
+/* 任务列表单独处理：保留无符号，checkbox 由主题渲染 */
+.incremark .incremark-list.task-list,
+.incremark .incremark-list-item.task-item {
+  list-style: none;
+}
+.incremark .incremark-list.task-list {
+  padding-left: 0;
+}

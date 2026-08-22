@@ -395,12 +395,30 @@ html.dark .loading-dot-sm {
  * Tailwind v4 preflight 全局移除了 ul/ol 的 list-style（list-style: none），
  * 这里只在 AI markdown 内容区域局部恢复列表符号，不动全局。
  * 任务列表（task-list）保持无圆点（checkbox 形态，主题自带处理）。
+ * 注意：必须使用 :deep()（Vue 3 规范），:::deep 为非法伪元素，lightningcss 会丢弃整条规则。
  */
-::deep(ul.incremark-list) {
-  list-style: disc;
+:deep(ul.incremark-list) {
+  list-style-type: disc;
+  list-style-position: outside;
+  padding-left: 2em;
 }
-::deep(ol.incremark-list) {
-  list-style: decimal;
+:deep(ol.incremark-list) {
+  list-style-type: decimal;
+  list-style-position: outside;
+  padding-left: 2em;
+}
+:deep(ul.incremark-list ul) {
+  list-style-type: circle;
+}
+:deep(ul.incremark-list ul ul) {
+  list-style-type: square;
+}
+:deep(.incremark-list.task-list) {
+  list-style: none;
+  padding-left: 0;
+}
+:deep(.incremark-list-item.task-item) {
+  list-style: none;
 }
 /*
  * 纯英文/长 token 无空格时溢出修复：
@@ -409,12 +427,12 @@ html.dark .loading-dot-sm {
  *   否则超长连续英文会撑破卡片边框（flex + w-full 仍会溢出）。
  * - 代码块（.incremark-code / pre / code）保留横向滚动，不强制换行。
  */
-::deep(.incremark-paragraph),
-::deep(.incremark-heading),
-::deep(.incremark-list-item),
-::deep(.incremark-blockquote),
-::deep(.incremark-paragraph a),
-::deep(.incremark-inline-code) {
+:deep(.incremark-paragraph),
+:deep(.incremark-heading),
+:deep(.incremark-list-item),
+:deep(.incremark-blockquote),
+:deep(.incremark-paragraph a),
+:deep(.incremark-inline-code) {
   overflow-wrap: anywhere;
   word-break: break-word;
 }

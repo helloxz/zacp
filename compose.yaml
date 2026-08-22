@@ -1,22 +1,12 @@
-# zacp + zlite 一体化镜像的 compose 编排
-#
-# 数据持久化约定（bind mount，源路径取宿主用户 $HOME）：
-#   宿主机 ~/.zacp  -> 容器 /app/data/.zacp  （zacp 配置与数据库，ZACP_DATA）
-#   宿主机 ~/.zlite -> 容器 /app/data/.zlite （zlite 数据/二进制）
-#   宿主机 ~/bin    -> 容器 /app/data/bin    （agent 安装的二进制）
-#   宿主机 ~/work   -> 容器 /app/data/work   （agent 工作目录）
-# 容器内 $HOME=/app/data（镜像已设），挂载后一一对应。
-# 容器以 root 运行（compose 不写 user 即默认 root），无需 uid 映射/属主治理。
 services:
   zacp:
-    image: helloz/zacp:0.8.1
+    image: helloz/zacp
     container_name: zacp
-    restart: unless-stopped
+    restart: always
     environment:
-      # 时区：上海
       - TZ=Asia/Shanghai
     ports:
-      # 映射 Web 服务端口（宿主端口可自行调整，如 8681:8680）
       - "8680:8680"
     volumes:
       - ./data:/app/data
+      - ./data/work:/app/data/work
