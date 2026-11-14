@@ -175,11 +175,17 @@ func New(
 				return
 			}
 
-			// 静态资源（assets/*、favicon 等）存在则直接提供，不走 SPA fallback
-			if f, err := staticFS.Open(p); err == nil {
-				f.Close()
-				http.ServeFileFS(c.Writer, c.Request, staticFS, p)
-				return
+			// 静态资源（assets/*、favicon 等）存在则直接提供，不走 SPA fallback。
+			// index.html 交给下面的 SPA 分支：http.ServeFileFS 会把它 301 到 "./"，
+			// 多一次跳转且拿不到统一的 no-cache + ETag。
+			// 缓存头在确认文件存在后才设置——未命中的 /assets/x.js 会回退成
+			// 入口 HTML，绝不能按路径前缀标成 immutable。
+			if p != "index.html" {
+				if f, err := staticFS.Open(p); err == nil {
+					f.Close()
+					middleware.ServeStaticFile(c, staticFS, p, web.FileETag)
+					return
+				}
 			}
 
 			// SPA fallback：前端为 history 路由，所有未匹配页面路径一律回 index.html，
@@ -191,7 +197,7 @@ func New(
 				})
 				return
 			}
-			c.Data(http.StatusOK, "text/html; charset=utf-8", idx)
+			middleware.ServeSPAHTML(c, idx)
 		})
 	}
 	return r

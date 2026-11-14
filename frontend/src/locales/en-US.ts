@@ -92,6 +92,7 @@ export default {
     reasoningLoading: 'Loading thoughts…',
     placeholder: 'Message the agent…',
     enterHint: 'Enter to send · Shift+Enter for a new line',
+    tabSwitchMode: 'Tab switches mode · Shift+Tab goes back',
     send: 'Send',
     stop: 'Stop',
     queued: 'Queued',

@@ -8,7 +8,7 @@ import type { InputInst, SelectGroupOption, SelectOption } from 'naive-ui'
 import { useSessionStore, MAX_TURNS_PER_SESSION, type SessionStreamStatus } from '@/stores/session'
 import { uploadTempFiles } from '@/api'
 import { extractPastedFiles, prepareFile } from '@/utils/fileUpload'
-import type { ConfigOptionValue } from '@/types/models'
+import type { ConfigOption, ConfigOptionValue } from '@/types/models'
 
 /** Composer 提交载荷（card / bar 共用） */
 export interface ComposerSubmitPayload {
@@ -51,6 +51,69 @@ const selectConfigOptions = computed(() =>
 const booleanConfigOptions = computed(() =>
   sessionStore.configOptions.filter((o) => o.type === 'boolean'),
 )
+
+/**
+ * 模式配置项（plan / build 等）：ACP 标准分类为 category=mode，
+ * 老 agent 可能不带 category，用 id=mode 兜底。
+ * 仅当至少 2 个可选项时返回，否则为 null——此时不劫持 Tab，
+ * 保留浏览器原生焦点切换（无障碍优先）。
+ */
+const modeOption = computed<ConfigOption | null>(() => {
+  const list = selectConfigOptions.value
+  const opt =
+    list.find((o) => o.category === 'mode') ?? list.find((o) => o.id === 'mode')
+  return opt && (opt.options?.length ?? 0) >= 2 ? opt : null
+})
+
+/**
+ * 模式切换的「预期目标值」：setConfigOption 是成功后才回写 currentValue，
+ * 连按 Tab 时若直接读 currentValue，两次按键会算出同一个目标值。
+ * 这里记录最近一次请求的目标，下一次按键以它为基准继续前进。
+ * 队列清空（无在途请求）后置空，回落到真实值。
+ */
+const pendingModeValue = ref('')
+/** 模式切换串行队列：保证连按 N 次就按顺序走 N 步，不会乱序/合并 */
+let modeQueue: Promise<void> = Promise.resolve()
+/** 队列中未完成的切换数（发送前等待、以及清空 pendingModeValue 的判定依据） */
+let modePendingCount = 0
+/** 发送中标记：等待模式切换落地期间防止重复提交 */
+const sending = ref(false)
+
+/**
+ * Tab / Shift+Tab 切换模式（direction=1 下一个 / -1 上一个，首尾循环）。
+ * 复用下拉同款 onConfigChange（含失败提示），并把请求串成 Promise 链：
+ * 前一次 set_config_option 落地后再发下一次，避免 agent 侧乱序或重复设置。
+ */
+function cycleMode(direction: 1 | -1) {
+  const opt = modeOption.value
+  const values = opt?.options ?? []
+  if (!opt || values.length < 2) return
+
+  const current = pendingModeValue.value || String(opt.currentValue)
+  const cur = values.findIndex((v) => v.value === current)
+  // 当前值不在列表里（如 agent 刚换了选项集）时：向下取首项、向上取末项
+  const nextIndex =
+    cur < 0
+      ? direction === 1
+        ? 0
+        : values.length - 1
+      : (cur + direction + values.length) % values.length
+  const nextValue = values[nextIndex]?.value
+  if (!nextValue || nextValue === current) return
+
+  const optionId = opt.id
+  pendingModeValue.value = nextValue
+  modePendingCount += 1
+  modeQueue = modeQueue.then(async () => {
+    try {
+      await onConfigChange(optionId, nextValue)
+    } finally {
+      modePendingCount -= 1
+      // 没有后续按键时清空预期值；切换失败时 currentValue 未变，界面自然回落
+      if (modePendingCount === 0) pendingModeValue.value = ''
+    }
+  })
+}
 
 /** 配置项变更失败时的提示（3 秒后自动消失）；成功后清空 */
 const configError = ref('')
@@ -418,20 +481,30 @@ const canSend = computed(
     (props.mode === 'bar' || !!selectedAgentId.value),
 )
 
-function onSend() {
+async function onSend() {
   const payload = text.value.trim()
-  if (!payload || !canSend.value) return
-  emit('submit', {
-    agentId: selectedAgentId.value,
-    text: payload,
-  })
-  text.value = ''
+  if (!payload || !canSend.value || sending.value) return
+  sending.value = true
+  try {
+    // 模式切换还没落地就发送时，先等切换队列完成：配置项走 HTTP、prompt 走 WS，
+    // 两者没有顺序保证，否则用户看到已切到 plan，消息却仍按 build 执行。
+    if (modePendingCount > 0) await modeQueue
+    emit('submit', {
+      agentId: selectedAgentId.value,
+      text: payload,
+    })
+    // 等待期间用户可能已改写文本：仅当内容未变时清空，避免吞掉新输入
+    if (text.value.trim() === payload) text.value = ''
+  } finally {
+    sending.value = false
+  }
 }
 
 /**
  * 键盘处理优先级：
  * 1. / 命令面板可见时：↑↓ 移动高亮、Enter/Tab 确认选中命令、Esc 关闭面板；
- * 2. 否则 Enter 发送 / Shift+Enter 换行（isComposing 避免中文输入法回车误发送）。
+ * 2. agent 下发模式配置项时：Tab 下一个模式 / Shift+Tab 上一个模式（阻止焦点移动）；
+ * 3. 否则 Enter 发送 / Shift+Enter 换行（isComposing 避免中文输入法回车误发送）。
  * 面板不可见时按 Enter 直接发送（如无匹配 /xxx 时按普通消息发送）。
  */
 function onKeydown(e: KeyboardEvent) {
@@ -464,6 +537,19 @@ function onKeydown(e: KeyboardEvent) {
       slashDismissed.value = true
       return
     }
+  }
+  // Tab / Shift+Tab 切换模式：仅当 agent 下发了可切换的 mode 配置项时接管，
+  // 否则保留 Tab 原生行为（键盘用户仍能移出输入框）。带 Ctrl/Cmd/Alt 的组合键不接管。
+  if (
+    e.key === 'Tab' &&
+    !e.ctrlKey &&
+    !e.metaKey &&
+    !e.altKey &&
+    modeOption.value
+  ) {
+    e.preventDefault()
+    cycleMode(e.shiftKey ? -1 : 1)
+    return
   }
   if (e.key === 'Enter' && !e.shiftKey) {
     e.preventDefault()
@@ -552,6 +638,7 @@ function onKeydown(e: KeyboardEvent) {
             :key="opt.id"
             class="shrink-0"
             :class="opt.id === 'model' ? 'w-44' : 'w-28'"
+            :title="opt.id === modeOption?.id ? t('chat.tabSwitchMode') : undefined"
           >
             <n-select
               :value="String(opt.currentValue)"

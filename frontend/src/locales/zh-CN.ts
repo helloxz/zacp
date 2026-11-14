@@ -91,6 +91,7 @@ export default {
     reasoningLoading: '思考过程加载中…',
     placeholder: '给 Agent 发送消息…',
     enterHint: 'Enter 发送 · Shift+Enter 换行',
+    tabSwitchMode: 'Tab 切换模式 · Shift+Tab 反向切换',
     send: '发送',
     stop: '停止',
     queued: '排队中',
