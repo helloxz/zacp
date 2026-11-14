@@ -21,7 +21,7 @@ Go SDK：https://github.com/coder/acp-go-sdk（模块路径 `github.com/coder/ac
 
 | 层级 | 技术 | 说明 |
 |------|------|------|
-| 后端 | Go（当前 go.mod 为 1.25.x） | 模块名 `github.com/helloxz/zacp` |
+| 后端 | Go（go.mod `go` 指令 1.27.3；发布链用 1.27.x 最新补丁） | 模块名 `github.com/helloxz/zacp` |
 | HTTP | Gin `v1.12.x` | REST API、路由、中间件 |
 | WebSocket | **`github.com/coder/websocket`** | 浏览器会话主通道（流式输出、权限、取消）；实现放在 `internal/ws` |
 | 配置 | **TOML + Viper** | 运行时配置 **`~/.zacp/config.toml`**；库 **`github.com/spf13/viper`**；加载在 `internal/config` |
@@ -226,6 +226,9 @@ cmd/server  →  api (router/handlers)  →  service  →  acp/manager|client|pr
 
 # 一键构建单二进制（bun 编译前端 → embed 进后端；包名带版本号）
 ./scripts/build.sh
+
+# 本地默认用 go.mod 要求的 1.27.3 编译；想完全对齐发布产物（吃到 1.27.x 最新安全补丁）：
+GOTOOLCHAIN=go1.27.4 ./scripts/build.sh   # 补丁版本随发布链的 1.27.x 更新
 
 # 发布打包：6 平台 zip（linux 平台 UPX 最高压缩；macOS 被 UPX 官方禁用不压，Windows 按约定不压）
 ./scripts/pack.sh --all        # 或本机单平台 ./scripts/pack.sh

@@ -37,10 +37,19 @@ jobs:
       - name: 安装 bun
         uses: oven-sh/setup-bun@v2
 
+      # 工具链策略：发布链路固定跟随 Go 1.27 的最新补丁版（check-latest），
+      # 不再直接读 go.mod 的 `go` 指令 —— 那里是本地开发的最低版本（1.27.3，
+      # 已修复 CVE-2026-111943 / GO-2026-6809 的 eMudhra 证书信任问题），
+      # 而对外发布的二进制要吃到后续补丁（如 1.27.4 的 net/http 修复）。
+      # 升级大版本时，这里的 '1.27.x' 与 backend/go.mod 的 go 指令需同步调整。
       - name: 安装 Go
         uses: actions/setup-go@v5
         with:
-          go-version-file: backend/go.mod
+          go-version: '1.27.x'
+          check-latest: true
+
+      - name: 输出实际使用的 Go 版本（便于发布日志追溯）
+        run: go version
 
       - name: 安装 UPX（固定 5.1.1 官方 release 二进制）
         run: |
@@ -77,6 +86,12 @@ jobs:
 
       - name: 运行后端测试（发布前 sanity）
         run: cd backend && go test ./...
+
+      - name: 漏洞扫描（govulncheck，发现可达漏洞即终止发布）
+        # 固定 v1.9.0 保证结果可复现；source 模式只报能从 main 到达的漏洞，噪音较小。
+        # 当前基线：Go 1.27.4 + 依赖修复版 → 无漏洞。若这里报错，先升依赖或工具链，
+        # 不要用 --clobber 之类手段绕过。
+        run: cd backend && go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
 
       - name: 全量打包（6 平台 + UPX + tar.gz/zip）
         run: ./scripts/pack.sh --all
