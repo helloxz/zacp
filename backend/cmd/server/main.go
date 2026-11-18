@@ -34,10 +34,12 @@ func main() {
 	//   --data-dir ZACP_DATA 状态根目录；回退 ZACP_DATA 环境变量 → ~/.zacp
 	//   --config   配置文件路径；回退 ZACP_CONFIG 环境变量 → $ZACP_DATA/config.toml
 	//   --no-browser 启动后不自动打开本机浏览器（覆盖配置/环境变量中的 open_browser）
+	//   --lang      Agent 回复语言；回退 ZACP_SESSION_LANG 环境变量 → TOML session.lang → auto
 	addr := flag.String("addr", "", "HTTP listen address (IP:PORT); fallback: ZACP_ADDR env -> config server.addr -> :8680")
 	dataDir := flag.String("data-dir", "", "ZACP_DATA state directory; fallback: ZACP_DATA env -> ~/.zacp")
 	configPath := flag.String("config", envOr("ZACP_CONFIG", ""), "Config file path (default: $ZACP_DATA/config.toml)")
 	noBrowser := flag.Bool("no-browser", false, "Do not auto-open the Web UI in a browser on startup")
+	langFlag := flag.String("lang", "", "Agent reply language: 'auto' (follow UI language) or a tag like vi-VN/en-US/zh-CN; fallback: ZACP_SESSION_LANG env -> config session.lang -> auto")
 	showVersion := flag.Bool("version", false, "Print version info and exit")
 
 	// 自定义 --help/-h 输出（Go flag 包内置支持 -h/--help，但缺省输出较简略）：
@@ -61,6 +63,10 @@ Flags:
         Fallback: --data-dir > ZACP_DATA env > ~/.zacp
   -h, -help
         Show this help and exit.
+  -lang string
+        Agent reply language: "auto" follows the UI display language (default),
+        or force a tag such as vi-VN / en-US / zh-CN.
+        Fallback: --lang > ZACP_SESSION_LANG env > config session.lang > auto
   -no-browser
         Do not auto-open the Web UI in a local browser on startup.
         Equivalent to config server.open_browser=false / ZACP_SERVER_OPEN_BROWSER=false.
@@ -103,6 +109,10 @@ Examples:
 	// 覆盖 TOML server.open_browser 与 ZACP_SERVER_OPEN_BROWSER 环境变量。
 	if *noBrowser {
 		cfg.Server.OpenBrowser = false
+	}
+	// --lang 优先级最高：覆盖 ZACP_SESSION_LANG 环境变量与 TOML session.lang。
+	if *langFlag != "" {
+		cfg.Session.Lang = *langFlag
 	}
 
 	// 统一运行模式：GIN_MODE 环境变量（显式设置时）> TOML server.mode > 默认 debug。
@@ -186,6 +196,7 @@ Examples:
 		AutoApprove: cfg.Session.AutoApprove,
 		DefaultCwd:  cfg.Session.DefaultCwd,
 		IdleTimeout: cfg.Session.IdleTimeout,
+		Lang:        cfg.Session.Lang,
 	})
 	defer mgr.Close()
 

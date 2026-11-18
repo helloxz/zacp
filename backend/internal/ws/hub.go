@@ -202,7 +202,7 @@ func (c *Client) handleMessage(ctx context.Context, msg ClientMessage) {
 		if bridge != nil {
 			wait, release := bridge.newPromptOrderTicket()
 			go func() {
-				if err := bridge.HandlePromptWithOrder(ctx, msg.SessionID, msg.AgentID, msg.Message, wait, release); err != nil {
+				if err := bridge.HandlePromptWithOrder(ctx, msg.SessionID, msg.AgentID, msg.Message, msg.Lang, wait, release); err != nil {
 					c.hub.log.Error("handle prompt error", "error", err)
 					// 错误广播必须带 sessionId：前端按会话路由复位状态，
 					// 避免 A 会话出错误伤排队中的 B。

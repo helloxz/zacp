@@ -35,6 +35,9 @@ type ClientMessage struct {
 	// AgentID 用于无绑定连接（GET /api/v1/ws）时标识 agent；绑定连接可省略。
 	AgentID string `json:"agentId,omitempty"`
 	Message string `json:"message,omitempty"`
+	// Lang 前端当前显示语言（如 "vi-VN"），随 prompt 下发，
+	// 后端据此注入语言指令，保证 agent 回复语言与界面一致。
+	Lang string `json:"lang,omitempty"`
 
 	// permission 消息字段
 	PermissionID string `json:"permissionId,omitempty"`

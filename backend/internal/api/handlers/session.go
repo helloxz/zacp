@@ -364,6 +364,8 @@ func (h *SessionHandler) SendMessage(c *gin.Context) {
 
 	var req struct {
 		Content string `json:"content" binding:"required"`
+		// Lang 前端显示语言（如 "vi-VN"）；缺省时不注入语言指令。
+		Lang string `json:"lang"`
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -373,7 +375,7 @@ func (h *SessionHandler) SendMessage(c *gin.Context) {
 		return
 	}
 
-	message, err := h.svc.SendMessage(c.Request.Context(), uint(id), req.Content)
+	message, err := h.svc.SendMessage(c.Request.Context(), uint(id), req.Content, req.Lang)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error": gin.H{"code": "send_message_failed", "message": err.Error()},

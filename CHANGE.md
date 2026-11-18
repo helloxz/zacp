@@ -1,3 +1,8 @@
+## 20261118
+
+* 新增：`--no-browser` 参数（及 `server.open_browser` / `ZACP_SERVER_OPEN_BROWSER`），可关闭启动时自动打开浏览器
+* 新增：Agent 回复语言跟随界面显示语言（`session.lang = "auto"`），支持全局与单个 Agent 的 `lang` 覆盖；前端每轮 prompt 携带当前语言，后端注入语言指令，避免界面与回复语言不一致
+
 ## 20261114
 
 * 优化：静态资源缓存（/assets 与 workbox 30 天强缓存，入口 HTML/SW 走 no-cache + ETag，减少刷新时的重复下载）

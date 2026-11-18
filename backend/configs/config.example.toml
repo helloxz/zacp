@@ -24,6 +24,10 @@ auto_approve = false
 # 空闲回收：agent 超过该时长无活跃操作即被停止释放内存（下次使用时自动重启）
 # 0 表示禁用空闲回收；格式为 Go duration（如 "30m"、"1h"）
 idle_timeout = "30m"
+# 回复语言策略（默认 "auto"）：
+#   "auto"            = 跟随前端显示的界面语言（推荐；避免界面一种语言、agent 另一种语言）
+#   "zh-CN"/"en-US"/"vi-VN" 或 "English"/"Vietnamese" 等 = 强制使用该语言回复
+lang = "auto"
 
 [database]
 # 相对路径相对于 $ZACP_DATA（默认 ~/.zacp）
@@ -53,6 +57,8 @@ path = "data/zacp.db"
 # args = ["--acp"]
 # 空则用 session.default_cwd
 # cwd = ""
+# 可选：单独覆盖该 agent 的回复语言；留空/"auto" 表示跟随 session.lang
+# lang = "vi-VN"
 
 # 示例：Pi Agent（默认禁用）
 # [[agents]]

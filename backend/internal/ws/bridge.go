@@ -425,16 +425,16 @@ func deriveTitle(message string) string {
 //  5. 落库助手回复、touch 会话（驱动侧栏排序），广播 turn.done
 //
 // HandlePrompt 处理一个不要求 WS 到达顺序的 prompt 调用（兼容 REST/测试调用方）。
-func (b *EventBridge) HandlePrompt(ctx context.Context, sessionID, agentID, message string) error {
-	return b.handlePrompt(ctx, sessionID, agentID, message, nil, nil)
+func (b *EventBridge) HandlePrompt(ctx context.Context, sessionID, agentID, message, lang string) error {
+	return b.handlePrompt(ctx, sessionID, agentID, message, lang, nil, nil)
 }
 
 // HandlePromptWithOrder 处理 WS prompt：等待前序帧完成入队，再进入 Manager 全局 FIFO。
-func (b *EventBridge) HandlePromptWithOrder(ctx context.Context, sessionID, agentID, message string, wait <-chan struct{}, release func()) error {
-	return b.handlePrompt(ctx, sessionID, agentID, message, wait, release)
+func (b *EventBridge) HandlePromptWithOrder(ctx context.Context, sessionID, agentID, message, lang string, wait <-chan struct{}, release func()) error {
+	return b.handlePrompt(ctx, sessionID, agentID, message, lang, wait, release)
 }
 
-func (b *EventBridge) handlePrompt(ctx context.Context, sessionID, agentID, message string, wait <-chan struct{}, release func()) error {
+func (b *EventBridge) handlePrompt(ctx context.Context, sessionID, agentID, message, lang string, wait <-chan struct{}, release func()) error {
 	if release != nil {
 		defer release()
 	}
@@ -483,7 +483,7 @@ func (b *EventBridge) handlePrompt(ctx context.Context, sessionID, agentID, mess
 			return ctx.Err()
 		}
 	}
-	result, err := b.manager.PromptWithAdmission(ctx, agentID, sessionID, message, release)
+	result, err := b.manager.PromptWithAdmission(ctx, agentID, sessionID, message, lang, release)
 	if err != nil && manager.IsUnknownSessionErr(err) {
 		// ACP session 失效（服务端/agent 重启后 DB 记录仍在、agent 端已丢失）：
 		// 自动恢复并重试一次，前端无感知。事件回调由 onStarted 钩子注册，
@@ -491,7 +491,7 @@ func (b *EventBridge) handlePrompt(ctx context.Context, sessionID, agentID, mess
 		b.log.Warn("acp session invalid, recovering", "sessionID", sessionID, "err", err)
 		if newID, ok := b.recoverSession(ctx, dbSession, agentID, sessionID); ok {
 			sessionID = newID
-			result, err = b.manager.PromptWithAdmission(ctx, agentID, sessionID, message, release)
+			result, err = b.manager.PromptWithAdmission(ctx, agentID, sessionID, message, lang, release)
 		}
 	}
 	if err != nil {

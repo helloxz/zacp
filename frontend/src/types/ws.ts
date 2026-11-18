@@ -7,7 +7,7 @@ import type { AvailableCommand, ConfigOption } from '@/types/models'
 
 /** 客户端 → 服务端消息 */
 export type WsClientMessage =
-  | { type: 'prompt'; sessionId: string; agentId: string; message: string }
+  | { type: 'prompt'; sessionId: string; agentId: string; message: string; lang?: string }
   | { type: 'cancel'; sessionId: string; agentId: string }
   | { type: 'resync'; sessionId: string; agentId: string }
   | { type: 'permission'; permissionId: string; optionId: string }
