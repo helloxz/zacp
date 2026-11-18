@@ -10,6 +10,7 @@ const { locale, setLocale } = useLocaleSwitch()
 const options = computed(() => [
   { label: t('locale.zhCN'), value: 'zh-CN' satisfies AppLocale },
   { label: t('locale.enUS'), value: 'en-US' satisfies AppLocale },
+  { label: t('locale.viVN'), value: 'vi-VN' satisfies AppLocale },
 ])
 
 function onUpdate(value: string) {
