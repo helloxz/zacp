@@ -18,6 +18,7 @@ import {
   setConfigOption as apiSetConfigOption,
 } from '@/api'
 import { acpSocket } from '@/composables/useAcpSocket'
+import { useAppStore } from '@/stores/app'
 import { playSuccessTone } from '@/utils/successTone'
 import type { MessageBlock } from '@/composables/useMessageBlocks'
 import type {
@@ -1697,11 +1698,16 @@ export const useSessionStore = defineStore('session', () => {
     sentSessions.set(sessionId, session)
     indexAcpSession(session)
 
+    // 把当前界面显示语言随 prompt 下发：后端据此注入「用该语言回复」的指令，
+    // 避免界面显示一种语言、agent 却用另一种语言回答。语言可在设置里随时切换，
+    // 每轮都带上，保证切换后下一条消息立即生效。
+    const lang = useAppStore().locale
     const sent = acpSocket.send({
       type: 'prompt',
       sessionId: session.acpSessionId,
       agentId: session.agentId,
       message: content,
+      lang,
     })
     if (!sent) {
       // 连接未就绪：提示并回退？P2 简化：置错并结束流式

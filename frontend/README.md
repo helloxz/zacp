@@ -11,7 +11,7 @@ ACP 多 Agent 网关的 Web UI（会话、流式输出、权限确认等）。
 | 样式 | Tailwind CSS v4 |
 | 状态 | Pinia |
 | 路由 | Vue Router |
-| 国际化 | vue-i18n（`zh-CN` / `en-US`） |
+| 国际化 | vue-i18n（`zh-CN` / `en-US` / `vi-VN`） |
 | 包管理 | **仅 Bun**（勿用 npm / pnpm / yarn） |
 | 实时 | 浏览器原生 WebSocket（后端 `/api/v1/ws` 已实现，前端对接为 P2） |
 
@@ -76,7 +76,7 @@ src/
 │   └── shell/     # 壳层组件（AppSidebar / SessionList / SettingsModal…）
 ├── composables/   # 组合式函数（语言切换；WS 封装为 P2）
 ├── layouts/       # 布局（AppShell：侧栏 + 主区）
-├── locales/       # vue-i18n 文案（zh-CN / en-US）
+├── locales/       # vue-i18n 文案（zh-CN / en-US / vi-VN）
 ├── pages/         # 页面（ShellPage 挂 AppShell）
 ├── router/        # Vue Router
 ├── stores/        # Pinia（app / agent / session）
@@ -89,13 +89,13 @@ src/
 
 ## 多语言约定
 
-- 语言：`zh-CN`、`en-US`
-- 解析顺序：`localStorage`（`zacp.locale`）→ `navigator.language`（`zh*` → 中文，否则英文）→ 兜底 `zh-CN`
+- 语言：`zh-CN`、`en-US`、`vi-VN`
+- 解析顺序：`localStorage`（`zacp.locale`）→ `navigator.language`（`zh*` → 中文，`vi*` → 越南语，其余 → 英文）→ 兜底 `zh-CN`
 - 切换入口：设置抽屉 / 顶栏（无 URL 语言前缀）
 - 切换时同步：`vue-i18n` + Naive `NConfigProvider` locale + `document.documentElement.lang`
 - **不翻译** Agent 流式内容、工具调用结果、用户代码
 
-新增文案：同时改 `src/locales/zh-CN.ts` 与 `en-US.ts`，key 保持一致。
+新增文案：同时改 `src/locales/zh-CN.ts`、`en-US.ts` 与 `vi-VN.ts`，key 保持一致。
 
 ## Naive UI 按需引入
 

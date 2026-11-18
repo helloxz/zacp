@@ -211,6 +211,8 @@ func parseAgentKeys(blockLines []string) AgentConfig {
 			cfg.Args = parseStringList(raw)
 		case "env":
 			cfg.Env = parseStringList(raw)
+		case "lang":
+			cfg.Lang = parseString(raw)
 		}
 	}
 	return cfg
@@ -273,6 +275,9 @@ func blockLines(a AgentConfig) []string {
 	}
 	if len(a.Env) > 0 {
 		b = append(b, "env = "+stringListLiteral(a.Env))
+	}
+	if a.Lang != "" {
+		b = append(b, "lang = "+quoteString(a.Lang))
 	}
 	return b
 }

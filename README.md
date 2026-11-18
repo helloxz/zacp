@@ -78,6 +78,38 @@ irm https://raw.githubusercontent.com/helloxz/zacp/main/install.ps1 | iex
 
 首次启动会自动生成配置文件 `~/.zacp/config.toml`，按需编辑其中 `[[agents]]` 的 Agent 命令等；运行时数据（SQLite 数据库）存放在 `~/.zacp/data/`。
 
+**不自动弹出浏览器：**
+
+默认启动后会自动打开本机浏览器访问 Web UI。如需关闭（例如服务器部署 / 无桌面环境），任选一种方式：
+
+```bash
+zacp --no-browser                       # 命令行参数，优先级最高
+ZACP_SERVER_OPEN_BROWSER=false zacp     # 环境变量
+```
+
+或在 `~/.zacp/config.toml` 的 `[server]` 段设置 `open_browser = false`。关闭后服务照常监听，仍可通过终端提示的地址手动访问。
+
+### 回复语言跟随界面语言
+
+前端在设置里切换显示语言（中文 / English / Tiếng Việt）后，发出的每条消息都会带上当前语言，后端据此给 Agent 注入语言指令，避免「界面显示一种语言、Agent 回复另一种语言」。
+
+默认行为由 `~/.zacp/config.toml` 的 `[session] lang` 控制：
+
+```toml
+[session]
+lang = "auto"   # 默认：跟随前端显示语言
+# lang = "vi-VN"  # 也可强制固定为某种语言（忽略前端显示语言）
+```
+
+也可通过启动参数或环境变量强制全局语言（优先级：命令行 > 环境变量 > 配置文件）：
+
+```bash
+zacp --lang vi-VN
+ZACP_SESSION_LANG=vi-VN zacp
+```
+
+如需单独给某个 Agent 指定语言，可在对应 `[[agents]]` 块里加 `lang = "vi-VN"`（留空或 `"auto"` 表示跟随全局设置）。语言指令每轮都会注入，因此对话中途切换界面语言后下一条消息立即生效。
+
 ## 设置登录保护（可选）
 
 默认安装后**无需登录**即可访问（适合本机 / 内网单用户使用）。如需远程访问，请务必开启登录认证：

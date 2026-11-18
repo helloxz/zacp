@@ -459,7 +459,8 @@ func (s *SessionService) DeleteDraftSession(id uint) error {
 }
 
 // SendMessage 发送消息（保存用户消息 + 发送到 ACP + 保存助手回复）
-func (s *SessionService) SendMessage(ctx context.Context, sessionID uint, content string) (*model.Message, error) {
+// lang 为前端当前显示语言，透传给 manager 用于注入回复语言指令。
+func (s *SessionService) SendMessage(ctx context.Context, sessionID uint, content, lang string) (*model.Message, error) {
 	session, err := s.sessionRepo.GetByID(sessionID)
 	if err != nil {
 		return nil, fmt.Errorf("session not found: %w", err)
@@ -481,7 +482,7 @@ func (s *SessionService) SendMessage(ctx context.Context, sessionID uint, conten
 	}
 
 	// 发送到 ACP
-	response, err := s.mgr.Prompt(ctx, session.AgentID, session.ACPSessionID, content)
+	response, err := s.mgr.Prompt(ctx, session.AgentID, session.ACPSessionID, content, lang)
 	if err != nil {
 		if manager.IsUnknownSessionErr(err) {
 			// agent 侧会话已失效（后端/agent 重启后 acp_session_id 在 agent 内存中丢失，
@@ -490,7 +491,7 @@ func (s *SessionService) SendMessage(ctx context.Context, sessionID uint, conten
 			if recErr := s.recoverACPSession(ctx, session); recErr != nil {
 				return nil, fmt.Errorf("session %s lost on agent, recover failed: %w", session.ACPSessionID, recErr)
 			}
-			response, err = s.mgr.Prompt(ctx, session.AgentID, session.ACPSessionID, content)
+			response, err = s.mgr.Prompt(ctx, session.AgentID, session.ACPSessionID, content, lang)
 			if err != nil {
 				return nil, fmt.Errorf("failed to send to agent: %w", err)
 			}

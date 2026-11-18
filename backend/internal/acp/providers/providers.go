@@ -25,6 +25,8 @@ type Provider struct {
 	Env []string
 	// DefaultCwd 是默认工作目录（空则用 session.default_cwd）。
 	DefaultCwd string
+	// Lang 是该 Agent 的回复语言覆盖（空或 "auto" 表示跟随全局 session.lang）。
+	Lang string
 }
 
 // NewFromConfig 从配置创建 Provider。
@@ -52,6 +54,7 @@ func NewFromConfig(cfg config.AgentConfig) (*Provider, error) {
 		Args:       args,
 		Env:        cfg.Env,
 		DefaultCwd: cfg.Cwd,
+		Lang:       cfg.Lang,
 	}, nil
 }
 

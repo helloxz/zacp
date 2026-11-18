@@ -11,6 +11,10 @@ addr = ":8680"
 # release 下日志自动安静：不打印 gin 请求访问日志（[GIN] 行），
 # 且仅输出 warn 及以上级别（权限请求等 info 日志不显示；排查问题可临时切回 debug）
 mode = "release"
+# 启动后是否自动打开本机浏览器访问 Web UI（默认 true）。
+# 设为 false 即不弹出浏览器；命令行 --no-browser 优先级更高，
+# 也可用环境变量 ZACP_SERVER_OPEN_BROWSER=false 覆盖。
+open_browser = true
 
 [session]
 # Agent 默认工作目录（不是 $ZACP_DATA，是代码项目路径）
@@ -20,6 +24,10 @@ auto_approve = false
 # 空闲回收：agent 超过该时长无活跃操作即被停止释放内存（下次使用时自动重启）
 # 0 表示禁用空闲回收；格式为 Go duration（如 "30m"、"1h"）
 idle_timeout = "30m"
+# 回复语言策略（默认 "auto"）：
+#   "auto"            = 跟随前端显示的界面语言（推荐；避免界面一种语言、agent 另一种语言）
+#   "zh-CN"/"en-US"/"vi-VN" 或 "English"/"Vietnamese" 等 = 强制使用该语言回复
+lang = "auto"
 
 [database]
 # 相对路径相对于 $ZACP_DATA（默认 ~/.zacp）
@@ -49,6 +57,8 @@ path = "data/zacp.db"
 # args = ["--acp"]
 # 空则用 session.default_cwd
 # cwd = ""
+# 可选：单独覆盖该 agent 的回复语言；留空/"auto" 表示跟随 session.lang
+# lang = "vi-VN"
 
 # 示例：Pi Agent（默认禁用）
 # [[agents]]

@@ -34,6 +34,8 @@ type Manager struct {
 	autoApprove bool
 	defaultCwd  string
 	idleTimeout time.Duration
+	// lang 全局回复语言策略（session.lang）：默认 "auto" 跟随前端显示语言。
+	lang string
 
 	mu     sync.Mutex
 	agents map[string]*AgentConnection // agentID -> connection；一个连接可承载多个 ACP session
@@ -76,6 +78,8 @@ type Config struct {
 	// IdleTimeout 空闲回收超时：agent 超过该时长无活跃操作（且无进行中 prompt）
 	// 即被停止以释放内存；<=0 表示禁用空闲回收。
 	IdleTimeout time.Duration
+	// Lang 全局回复语言策略（session.lang），默认 "auto" 跟随前端显示语言。
+	Lang string
 }
 
 // New 创建 Manager（不启动任何 agent）。
@@ -92,6 +96,7 @@ func New(log *slog.Logger, cfg Config) *Manager {
 		autoApprove: cfg.AutoApprove,
 		defaultCwd:  cfg.DefaultCwd,
 		idleTimeout: cfg.IdleTimeout,
+		lang:        cfg.Lang,
 		agents:      make(map[string]*AgentConnection),
 		starting:    make(map[string]*startEntry),
 		promptGate:  newPromptGate(maxConcurrentPrompts),
@@ -866,17 +871,18 @@ func (m *Manager) releaseAgent(conn *AgentConnection) {
 }
 
 // Prompt 向指定 session 发送消息，并受全局三槽位 FIFO 调度控制。
-func (m *Manager) Prompt(ctx context.Context, agentID, sessionID, message string) (*PromptResult, error) {
-	return m.prompt(ctx, agentID, sessionID, message, nil)
+// lang 是前端当前显示语言（如 "vi-VN"）；为空时不注入语言指令（兼容老调用方）。
+func (m *Manager) Prompt(ctx context.Context, agentID, sessionID, message, lang string) (*PromptResult, error) {
+	return m.prompt(ctx, agentID, sessionID, message, lang, nil)
 }
 
 // PromptWithAdmission 与 Prompt 相同；admitted 在请求登记进全局 FIFO 后调用，
 // 供 WebSocket 入口按帧到达顺序放行下一条请求，避免前置落库耗时造成 FIFO 反转。
-func (m *Manager) PromptWithAdmission(ctx context.Context, agentID, sessionID, message string, admitted func()) (*PromptResult, error) {
-	return m.prompt(ctx, agentID, sessionID, message, admitted)
+func (m *Manager) PromptWithAdmission(ctx context.Context, agentID, sessionID, message, lang string, admitted func()) (*PromptResult, error) {
+	return m.prompt(ctx, agentID, sessionID, message, lang, admitted)
 }
 
-func (m *Manager) prompt(ctx context.Context, agentID, sessionID, message string, admitted func()) (*PromptResult, error) {
+func (m *Manager) prompt(ctx context.Context, agentID, sessionID, message, lang string, admitted func()) (*PromptResult, error) {
 	key := promptKey{agentID: agentID, sessionID: sessionID}
 	qctx, qcancel := context.WithCancel(ctx)
 	entry := &promptEntry{cancel: qcancel}
@@ -917,7 +923,10 @@ func (m *Manager) prompt(ctx context.Context, agentID, sessionID, message string
 		return nil, err
 	}
 	defer m.releaseAgent(conn)
-	return conn.Prompt(ctx, acp.SessionId(sessionID), message)
+	// 计算语言指令并注入 prompt：保证 agent 回复语言与前端显示语言一致，
+	// 避免「界面显示一种语言、agent 回复另一种语言」。配置可强制覆盖该行为。
+	directive := m.languageDirective(agentID, lang)
+	return conn.Prompt(ctx, acp.SessionId(sessionID), message, directive)
 }
 
 // Cancel 取消指定 session 的 prompt：排队中的撤销 FIFO 等待，执行中的发送 ACP cancel。
@@ -1311,10 +1320,15 @@ type PromptResult struct {
 // Prompt 发送消息并等待响应。
 // Manager 已在调用前取得全局执行槽位；同一 Agent 的多个 session 可以并发向
 // ACP 发送 prompt。事件缓存按 session id 隔离，取消确认也按 session 隔离。
-func (c *AgentConnection) Prompt(ctx context.Context, sessionID acp.SessionId, message string) (*PromptResult, error) {
+// directive 非空时作为语言指令拼到用户消息前面（每轮都带，确保会话中途切换
+// 显示语言后 agent 也能立即跟随，且不依赖 agent 是否记住首轮指令）。
+func (c *AgentConnection) Prompt(ctx context.Context, sessionID acp.SessionId, message, directive string) (*PromptResult, error) {
 	message = strings.TrimSpace(message)
 	if message == "" {
 		return nil, fmt.Errorf("empty message")
+	}
+	if directive != "" {
+		message = directive + "\n\n" + message
 	}
 
 	c.mu.Lock()

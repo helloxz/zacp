@@ -25,6 +25,9 @@ type Config struct {
 type ServerConfig struct {
 	Addr string `mapstructure:"addr"`
 	Mode string `mapstructure:"mode"` // debug | release
+	// OpenBrowser 启动后是否自动打开本机浏览器访问 Web UI，默认 true。
+	// 可由命令行 --no-browser（优先级最高）或环境变量 ZACP_SERVER_OPEN_BROWSER 覆盖。
+	OpenBrowser bool `mapstructure:"open_browser"`
 }
 
 // SessionConfig 会话默认参数。
@@ -36,6 +39,10 @@ type SessionConfig struct {
 	// IdleTimeout 空闲回收超时：agent 超过该时长无活跃操作（无进行中 prompt）
 	// 且无未回收条件时会被停掉释放内存；0 表示禁用空闲回收。
 	IdleTimeout time.Duration `mapstructure:"idle_timeout"`
+	// Lang 回复语言策略，默认 "auto"：
+	//   - "auto"：跟随前端传入的显示语言（WS/REST 的 lang 字段），保证「界面显示什么语言，agent 就用什么语言回复」；
+	//   - 具体语言（如 "zh-CN"/"en-US"/"vi-VN" 或 "Vietnamese"）：强制使用该语言，忽略前端显示语言。
+	Lang string `mapstructure:"lang"`
 }
 
 // DatabaseConfig 数据库配置。
@@ -55,6 +62,8 @@ type AgentConfig struct {
 	Cwd       string   `mapstructure:"cwd"` // 空则用 session.default_cwd
 	// Env 额外环境变量（key=value 格式），不在此处写密钥。
 	Env []string `mapstructure:"env"`
+	// Lang 单个 Agent 的回复语言覆盖（可选）：留空或 "auto" 表示跟随 session.lang。
+	Lang string `mapstructure:"lang,omitempty"`
 }
 
 // AuthConfig 单用户账号认证配置。
@@ -73,13 +82,15 @@ type AuthConfig struct {
 func DefaultConfig() *Config {
 	return &Config{
 		Server: ServerConfig{
-			Addr: ":8680",
-			Mode: "debug",
+			Addr:        ":8680",
+			Mode:        "debug",
+			OpenBrowser: true,
 		},
 		Session: SessionConfig{
 			DefaultCwd:  ".",
 			AutoApprove: false,
 			IdleTimeout: 30 * time.Minute,
+			Lang:        "auto",
 		},
 		Database: DatabaseConfig{
 			Path: "data/zacp.db",
@@ -155,9 +166,11 @@ func (c *Config) ResolveDBPath(homeDir string) string {
 func setDefaults(v *viper.Viper) {
 	v.SetDefault("server.addr", ":8680")
 	v.SetDefault("server.mode", "debug")
+	v.SetDefault("server.open_browser", true)
 	v.SetDefault("session.default_cwd", ".")
 	v.SetDefault("session.auto_approve", false)
 	v.SetDefault("session.idle_timeout", "30m")
+	v.SetDefault("session.lang", "auto")
 	v.SetDefault("database.path", "data/zacp.db")
 }
 

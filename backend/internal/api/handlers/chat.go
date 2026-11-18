@@ -15,6 +15,8 @@ type ChatHandler struct {
 
 type chatRequest struct {
 	Message string `json:"message" binding:"required"`
+	// Lang 前端显示语言（如 "vi-VN"）；缺省时不注入语言指令。
+	Lang string `json:"lang"`
 }
 
 // Health 返回服务状态。
@@ -81,7 +83,7 @@ func (h *ChatHandler) Chat(c *gin.Context) {
 		sessionID = newSessionID
 	}
 
-	result, err := h.Mgr.Prompt(c.Request.Context(), agentID, sessionID, req.Message)
+	result, err := h.Mgr.Prompt(c.Request.Context(), agentID, sessionID, req.Message, req.Lang)
 	if err != nil {
 		c.JSON(http.StatusBadGateway, gin.H{
 			"error": gin.H{"code": "agent_error", "message": err.Error()},

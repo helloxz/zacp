@@ -20,6 +20,7 @@ import { http } from './http'
 import { ApiError, type ApiErrorBody } from './types'
 import { apiUrl } from '@/config/env'
 import { readAuthToken } from '@/utils/authStorage'
+import { resolveInitialLocale } from '@/utils/locale'
 import type {
   AddAgentInput,
   AddedAgent,
@@ -609,7 +610,7 @@ export async function sendMessage(
 ): Promise<ChatMessage> {
   const data = await http.post<{ message: ChatMessage }>(
     `/api/v1/sessions/${sessionId}/messages`,
-    { body: { content }, signal },
+    { body: { content, lang: resolveInitialLocale() }, signal },
   )
   return data.message
 }
