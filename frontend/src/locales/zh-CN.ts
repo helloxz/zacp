@@ -351,5 +351,6 @@ export default {
   locale: {
     zhCN: '简体中文',
     enUS: 'English',
+    viVN: 'Tiếng Việt',
   },
 }
