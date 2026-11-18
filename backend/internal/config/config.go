@@ -25,6 +25,9 @@ type Config struct {
 type ServerConfig struct {
 	Addr string `mapstructure:"addr"`
 	Mode string `mapstructure:"mode"` // debug | release
+	// OpenBrowser 启动后是否自动打开本机浏览器访问 Web UI，默认 true。
+	// 可由命令行 --no-browser（优先级最高）或环境变量 ZACP_SERVER_OPEN_BROWSER 覆盖。
+	OpenBrowser bool `mapstructure:"open_browser"`
 }
 
 // SessionConfig 会话默认参数。
@@ -73,8 +76,9 @@ type AuthConfig struct {
 func DefaultConfig() *Config {
 	return &Config{
 		Server: ServerConfig{
-			Addr: ":8680",
-			Mode: "debug",
+			Addr:        ":8680",
+			Mode:        "debug",
+			OpenBrowser: true,
 		},
 		Session: SessionConfig{
 			DefaultCwd:  ".",
@@ -155,6 +159,7 @@ func (c *Config) ResolveDBPath(homeDir string) string {
 func setDefaults(v *viper.Viper) {
 	v.SetDefault("server.addr", ":8680")
 	v.SetDefault("server.mode", "debug")
+	v.SetDefault("server.open_browser", true)
 	v.SetDefault("session.default_cwd", ".")
 	v.SetDefault("session.auto_approve", false)
 	v.SetDefault("session.idle_timeout", "30m")

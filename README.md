@@ -78,6 +78,17 @@ irm https://raw.githubusercontent.com/helloxz/zacp/main/install.ps1 | iex
 
 首次启动会自动生成配置文件 `~/.zacp/config.toml`，按需编辑其中 `[[agents]]` 的 Agent 命令等；运行时数据（SQLite 数据库）存放在 `~/.zacp/data/`。
 
+**不自动弹出浏览器：**
+
+默认启动后会自动打开本机浏览器访问 Web UI。如需关闭（例如服务器部署 / 无桌面环境），任选一种方式：
+
+```bash
+zacp --no-browser                       # 命令行参数，优先级最高
+ZACP_SERVER_OPEN_BROWSER=false zacp     # 环境变量
+```
+
+或在 `~/.zacp/config.toml` 的 `[server]` 段设置 `open_browser = false`。关闭后服务照常监听，仍可通过终端提示的地址手动访问。
+
 ## 设置登录保护（可选）
 
 默认安装后**无需登录**即可访问（适合本机 / 内网单用户使用）。如需远程访问，请务必开启登录认证：

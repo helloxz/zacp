@@ -11,6 +11,10 @@ addr = ":8680"
 # release 下日志自动安静：不打印 gin 请求访问日志（[GIN] 行），
 # 且仅输出 warn 及以上级别（权限请求等 info 日志不显示；排查问题可临时切回 debug）
 mode = "release"
+# 启动后是否自动打开本机浏览器访问 Web UI（默认 true）。
+# 设为 false 即不弹出浏览器；命令行 --no-browser 优先级更高，
+# 也可用环境变量 ZACP_SERVER_OPEN_BROWSER=false 覆盖。
+open_browser = true
 
 [session]
 # Agent 默认工作目录（不是 $ZACP_DATA，是代码项目路径）
