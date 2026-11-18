@@ -13,7 +13,7 @@
 | UI | Naive UI（按需：`unplugin-vue-components` + `NaiveUiResolver`） |
 | 样式 | Tailwind CSS v4 |
 | 状态 / 路由 | Pinia + Vue Router |
-| 国际化 | vue-i18n（`zh-CN` / `en-US`） |
+| 国际化 | vue-i18n（`zh-CN` / `en-US` / `vi-VN`） |
 | 包管理 | **仅 Bun**（勿用 npm / pnpm / yarn） |
 | HTTP | 原生 `fetch` 封装（`src/api`），**不上 axios** |
 | 实时 | 浏览器原生 `WebSocket` |

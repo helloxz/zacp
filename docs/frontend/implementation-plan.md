@@ -81,7 +81,7 @@
 
 ### 2.5 i18n
 
-- [x] 新增 `shell.*` / `chat.*` / `settings.*` key，`zh-CN.ts` / `en-US.ts` 同步
+- [x] 新增 `shell.*` / `chat.*` / `settings.*` key，`zh-CN.ts` / `en-US.ts` / `vi-VN.ts` 同步
 - [x] 相对时间：`src/utils/relativeTime.ts`（今天 / 昨天 / N 天前，自写不引库）
 
 ### 2.6 P0 验收
