@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 import type { NDateLocale, NLocale } from 'naive-ui'
-import { dateEnUS, dateZhCN, enUS, zhCN } from 'naive-ui'
+import { dateEnUS, dateViVN, dateZhCN, enUS, viVN, zhCN } from 'naive-ui'
 import type { AppLocale } from '@/types/locale'
 import { persistLocale, resolveInitialLocale } from '@/utils/locale'
 
@@ -17,6 +17,22 @@ export type ThemeMode = 'light' | 'dark'
 
 /** 本地存储 key：右侧边栏自动展开偏好（仅本机；与会话页右侧面板手动切换双向同步） */
 const RIGHT_PANEL_AUTO_EXPAND_KEY = 'zacp.autoExpandRightPanel'
+
+/**
+ * AppLocale → Naive UI 文案/日期 locale 映射。
+ * Naive UI 自带 viVN/dateViVN，直接复用即可保证其组件（日期选择、分页等）与 vue-i18n 同步。
+ */
+const NAIVE_LOCALES: Record<AppLocale, NLocale> = {
+  'zh-CN': zhCN,
+  'en-US': enUS,
+  'vi-VN': viVN,
+}
+
+const NAIVE_DATE_LOCALES: Record<AppLocale, NDateLocale> = {
+  'zh-CN': dateZhCN,
+  'en-US': dateEnUS,
+  'vi-VN': dateViVN,
+}
 
 function readStoredRightPanelAutoExpand(): boolean {
   if (typeof localStorage === 'undefined') {
@@ -59,13 +75,9 @@ function applyThemeClass(mode: ThemeMode) {
 export const useAppStore = defineStore('app', () => {
   const locale = ref<AppLocale>(resolveInitialLocale())
 
-  const naiveLocale = computed<NLocale>(() =>
-    locale.value === 'zh-CN' ? zhCN : enUS,
-  )
+  const naiveLocale = computed<NLocale>(() => NAIVE_LOCALES[locale.value])
 
-  const naiveDateLocale = computed<NDateLocale>(() =>
-    locale.value === 'zh-CN' ? dateZhCN : dateEnUS,
-  )
+  const naiveDateLocale = computed<NDateLocale>(() => NAIVE_DATE_LOCALES[locale.value])
 
   /**
    * 切换语言并持久化；调用方需同步 i18n.global.locale。

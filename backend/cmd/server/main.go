@@ -33,9 +33,11 @@ func main() {
 	//   --addr     监听地址 IP:PORT；回退 ZACP_ADDR 环境变量 → TOML server.addr → :8680
 	//   --data-dir ZACP_DATA 状态根目录；回退 ZACP_DATA 环境变量 → ~/.zacp
 	//   --config   配置文件路径；回退 ZACP_CONFIG 环境变量 → $ZACP_DATA/config.toml
+	//   --no-browser 启动后不自动打开本机浏览器（覆盖配置/环境变量中的 open_browser）
 	addr := flag.String("addr", "", "HTTP listen address (IP:PORT); fallback: ZACP_ADDR env -> config server.addr -> :8680")
 	dataDir := flag.String("data-dir", "", "ZACP_DATA state directory; fallback: ZACP_DATA env -> ~/.zacp")
 	configPath := flag.String("config", envOr("ZACP_CONFIG", ""), "Config file path (default: $ZACP_DATA/config.toml)")
+	noBrowser := flag.Bool("no-browser", false, "Do not auto-open the Web UI in a browser on startup")
 	showVersion := flag.Bool("version", false, "Print version info and exit")
 
 	// 自定义 --help/-h 输出（Go flag 包内置支持 -h/--help，但缺省输出较简略）：
@@ -59,6 +61,9 @@ Flags:
         Fallback: --data-dir > ZACP_DATA env > ~/.zacp
   -h, -help
         Show this help and exit.
+  -no-browser
+        Do not auto-open the Web UI in a local browser on startup.
+        Equivalent to config server.open_browser=false / ZACP_SERVER_OPEN_BROWSER=false.
   -version
         Print version info (version, commit, build time) and exit.
 
@@ -92,6 +97,12 @@ Examples:
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "failed to load config: %v\n", err)
 		os.Exit(1)
+	}
+
+	// --no-browser 优先级最高：显式关闭启动后自动打开本机浏览器，
+	// 覆盖 TOML server.open_browser 与 ZACP_SERVER_OPEN_BROWSER 环境变量。
+	if *noBrowser {
+		cfg.Server.OpenBrowser = false
 	}
 
 	// 统一运行模式：GIN_MODE 环境变量（显式设置时）> TOML server.mode > 默认 debug。
@@ -282,7 +293,8 @@ Examples:
 	fmt.Println("Press Ctrl+C to stop.")
 	// 生产单二进制内嵌前端时自动打开本机浏览器；开发模式前端由 Vite 独立提供，
 	// 不自动打开后端端口，避免直接落到没有静态资源的 404 页面。
-	if web.StaticEnabled() {
+	// --no-browser / server.open_browser=false / ZACP_SERVER_OPEN_BROWSER=false 时不自动打开。
+	if web.StaticEnabled() && cfg.Server.OpenBrowser {
 		go func() {
 			url, err := web.OpenLocalBrowserWhenReady(listenAddr, 5*time.Second)
 			if err != nil {

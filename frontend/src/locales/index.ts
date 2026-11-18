@@ -1,11 +1,13 @@
 import { createI18n } from 'vue-i18n'
 import { resolveInitialLocale } from '@/utils/locale'
 import enUS from './en-US'
+import viVN from './vi-VN'
 import zhCN from './zh-CN'
 
 export const messages = {
   'zh-CN': zhCN,
   'en-US': enUS,
+  'vi-VN': viVN,
 }
 
 /**

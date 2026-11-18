@@ -9,7 +9,7 @@ export function isAppLocale(value: string | null | undefined): value is AppLocal
 /**
  * 解析初始语言：
  * 1. localStorage 用户选择（优先生效）
- * 2. navigator.language（zh* → zh-CN，其余 → en-US）
+ * 2. navigator.language（zh* → zh-CN，vi* → vi-VN，其余 → en-US）
  * 3. 兜底 zh-CN
  */
 export function resolveInitialLocale(): AppLocale {
@@ -25,7 +25,10 @@ export function resolveInitialLocale(): AppLocale {
     if (lang.startsWith('zh')) {
       return 'zh-CN'
     }
-    // 非中文环境默认英文
+    if (lang.startsWith('vi')) {
+      return 'vi-VN'
+    }
+    // 其它语言环境默认英文
     return 'en-US'
   }
 

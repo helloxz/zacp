@@ -21,7 +21,7 @@
 | UI | Naive UI（按需引入） |
 | 样式 | Tailwind CSS v4 |
 | 状态 / 路由 | Pinia + Vue Router |
-| 国际化 | vue-i18n（`zh-CN` / `en-US`） |
+| 国际化 | vue-i18n（`zh-CN` / `en-US` / `vi-VN`） |
 | 包管理 | Bun only |
 | 开发端口 | `0.0.0.0:8681` |
 
@@ -348,7 +348,7 @@ ui:      sidebarCollapsed, settingsOpen（也可组件本地 ref）
 
 ## 7. 国际化
 
-- 所有壳层可见字符串走 `vue-i18n`（`zh-CN` / `en-US`）  
+- 所有壳层可见字符串走 `vue-i18n`（`zh-CN` / `en-US` / `vi-VN`）  
 - 建议 key 前缀：  
   - `shell.*` 侧栏、用户区  
   - `chat.*` 问候、输入、空态、发送/停止  
